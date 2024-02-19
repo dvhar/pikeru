@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 import glob
 import tkinter as tk
 from PIL import Image, ImageTk
@@ -21,17 +22,17 @@ class FilePicker(tk.Frame):
 
     def add_image(self, image_path, row, col):
         img = Image.open(image_path)
-        img.thumbnail((200,200))
+        img.thumbnail((180,180))
         img = ImageTk.PhotoImage(img)
-        label = tk.Label(self.images_frame, image=img)
+        label = tk.Label(self.images_frame, image=img, text=image_path, compound='top')
         label.image = img
         label.grid(row=row, column=col)
 
 root = tk.Tk()
-root.geometry('610x300')
+root.geometry('610x400')
 grid = FilePicker(root)
 grid.frame.pack(fill='both', expand=True)
-for i, path in enumerate(glob.glob('*png')):
+for i, path in enumerate(glob.glob('pics/*png')):
     grid.add_image(path, i//3, i%3)
 root.wm_title('File Picker')
 root.mainloop()
