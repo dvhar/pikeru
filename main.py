@@ -24,9 +24,27 @@ class FilePicker(tk.Frame):
         img = Image.open(image_path)
         img.thumbnail((180,180))
         img = ImageTk.PhotoImage(img)
-        label = tk.Label(self.images_frame, image=img, text=image_path, compound='top')
+        label = tk.Label(self.images_frame, image=img, text=image_path, compound='top', bd=2)
+        label.__setattr__('sel', 0)
         label.image = img
         label.grid(row=row, column=col)
+        # label.bind("<Enter>", lambda e: self.highlight_image(label))
+        # label.bind("<Leave>", lambda e: self.unhighlight_image(label))
+        label.bind("<Button-1>", lambda e: self.toggle_border(label))
+
+    def highlight_image(self, label):
+        label.config(relief="solid", bg='red')
+
+    def unhighlight_image(self, label):
+        label.config(relief="flat", bg='black')
+
+    def toggle_border(self, label):
+        if label.sel == 0:
+            label.config(relief="solid", bg='red')
+            label.sel = 1
+        else:
+            label.config(relief="flat", bg='black')
+            label.sel = 0
 
 root = tk.Tk()
 root.geometry('610x400')
