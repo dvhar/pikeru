@@ -16,6 +16,12 @@ class FilePicker(tk.Frame):
         self.images_frame = tk.Frame(self.canvas)
         self.canvas.create_window((0,0), window=self.images_frame, anchor='nw')
         self.images_frame.bind('<Configure>', self.on_frame_configure)
+        self.bind_scroll(self.canvas)
+        self.bind_scroll(self.images_frame)
+
+    def bind_scroll(self, thing):
+        thing.bind('<Button-4>', lambda e: self.canvas.yview_scroll(-2,'units'))
+        thing.bind('<Button-5>', lambda e: self.canvas.yview_scroll(2,'units'))
 
     def on_frame_configure(self, event=None):
         self.canvas.configure(scrollregion=self.canvas.bbox('all'))
@@ -31,6 +37,7 @@ class FilePicker(tk.Frame):
         # label.bind("<Enter>", lambda e: self.highlight_image(label))
         # label.bind("<Leave>", lambda e: self.unhighlight_image(label))
         label.bind("<Button-1>", lambda e: self.toggle_border(label))
+        self.bind_scroll(label)
 
     def highlight_image(self, label):
         label.config(relief="solid", bg='red')
