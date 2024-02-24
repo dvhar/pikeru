@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import glob
+import itertools
 import os, sys
 import tkinter as tk
 from PIL import Image, ImageTk
@@ -30,7 +31,7 @@ class FilePicker(tk.Frame):
 
         self.open_button = tk.Button(self.button_frame, width=10, text="Open", command=self.on_open)
         self.open_button.pack(side='right')
-        self.cancel_button = tk.Button(self.button_frame, width=10, text="Cancel", command=self.on_cancel)
+        self.cancel_button = tk.Button(self.button_frame, width=10, text="Cancel", command=root.destroy)
         self.cancel_button.pack(side='right')
         self.up_dir_button = tk.Button(self.button_frame, width=10, text="Up Dir", command=self.on_up_dir)
         self.up_dir_button.pack(side='right')
@@ -69,21 +70,19 @@ class FilePicker(tk.Frame):
             img = Image.open(image_path)
             img.thumbnail((180,180))
             img = ImageTk.PhotoImage(img)
-            label = tk.Label(self.images_frame, image=img, text=image_path, compound='top', bd=2)
-            label.__setattr__('sel', 0)
-            label.__setattr__('image', img)
+            name = os.path.basename(image_path)
+            if len(name) > 20:
+                name = name[len(name)-19:]
+            label = tk.Label(self.images_frame, image=img, text=name, compound='top', bd=2)
+            label.full_path = image_path
+            label.sel = 0
+            label.image = img
             label.grid(row=self.num_images//3, column=self.num_images%3)
             label.bind("<Button-1>", lambda e: self.toggle_border(label))
             self.bind_scroll(label)
             self.num_images += 1
         except Exception as e:
             sys.stderr.write(f'Error loading image: {e}\n')
-
-    def highlight_image(self, label):
-        label.config(relief="solid", bg='red')
-
-    def unhighlight_image(self, label):
-        label.config(relief="flat", bg='black')
 
     def toggle_border(self, label):
         if label.sel == 0:
@@ -96,11 +95,8 @@ class FilePicker(tk.Frame):
             self.cancel_button.config(state='normal')
 
     def on_open(self):
-        selected_files = [label['text'] for label in self.images_frame.winfo_children() if label.sel]
+        selected_files = [label.full_path for label in self.images_frame.winfo_children() if label.sel]
         print('\n'.join(selected_files))
-        root.destroy()
-
-    def on_cancel(self):
         root.destroy()
 
     def on_up_dir(self):
@@ -125,7 +121,9 @@ class FilePicker(tk.Frame):
         self.bind_scroll(self.canvas)
         self.bind_scroll(self.images_frame)
         self.num_images = 0
-        for path in glob.glob(os.path.join(os.getcwd(), '*.png')):
+        paths = itertools.chain(glob.glob(os.path.join(os.getcwd(), '*.png')),
+            glob.glob(os.path.join(os.getcwd(), '*.jpg')))
+        for path in paths:
             self.enqueue_image(path)
 
 root = tk.Tk()
