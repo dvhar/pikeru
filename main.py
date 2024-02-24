@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 import glob
-import itertools
 import os, sys
 import tkinter as tk
 from PIL import Image, ImageTk
 import threading
 import queue
+
+asset_dir = os.path.dirname(os.path.abspath(__file__))
 
 class FilePicker(tk.Frame):
     def __init__(self, master=None, **kwargs):
@@ -39,11 +40,11 @@ class FilePicker(tk.Frame):
         self.directory_entry = tk.Entry(self.frame)
         self.directory_entry.grid(row=1, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
         self.directory_entry.insert(0, os.getcwd())
-        self.directory_entry.bind("<Return>", self.on_change_dir)
+        self.directory_entry.bind("<Return>", self.on_type_dir)
 
-        self.num_images = 0
+        self.num_items = 0
         self.queue = queue.Queue()
-        self.loading_thread = threading.Thread(target=self.load_images)
+        self.loading_thread = threading.Thread(target=self.load_items)
         self.loading_thread.daemon = True
         self.loading_thread.start()
 
@@ -54,35 +55,56 @@ class FilePicker(tk.Frame):
     def on_frame_configure(self, event=None):
         self.canvas.configure(scrollregion=self.canvas.bbox('all'))
 
-    def enqueue_image(self, image_path):
-        self.queue.put(image_path)
+    def enqueue_item(self, item_path):
+        self.queue.put(item_path)
 
-    def load_images(self):
+    def load_items(self):
         while True:
             try:
-                image_path = self.queue.get(timeout=1)
+                item_path = self.queue.get(timeout=1)
             except queue.Empty:
                 continue
-            self.load_image(image_path)
+            self.load_item(item_path)
 
-    def load_image(self, image_path):
+    def load_item(self, item_path):
         try:
-            img = Image.open(image_path)
-            img.thumbnail((180,180))
-            img = ImageTk.PhotoImage(img)
-            name = os.path.basename(image_path)
-            if len(name) > 20:
-                name = name[len(name)-19:]
-            label = tk.Label(self.images_frame, image=img, text=name, compound='top', bd=2)
-            label.full_path = image_path
-            label.sel = 0
-            label.image = img
-            label.grid(row=self.num_images//3, column=self.num_images%3)
-            label.bind("<Button-1>", lambda e: self.toggle_border(label))
-            self.bind_scroll(label)
-            self.num_images += 1
+            base_path = os.path.basename(item_path)
+            name = base_path if len(base_path) < 20 else base_path[len(base_path)-19:]
+            if os.path.isfile(item_path):
+                ext = os.path.splitext(base_path)[-1].lower()
+                if ext in [".png", ".jpg", ".jpeg"]:
+                    img = Image.open(item_path)
+                    img.thumbnail((180,180))
+                    img = ImageTk.PhotoImage(img)
+                    label = tk.Label(self.images_frame, image=img, text=name, compound='top', bd=2)
+                    label.full_path = item_path
+                    label.sel = 0
+                    label.image = img
+                    label.grid(row=self.num_items//3, column=self.num_items%3)
+                    label.bind("<Button-1>", lambda e: self.toggle_border(label))
+                    self.bind_scroll(label)
+                elif ext in [".txt", ".pdf", ".doc", ".docx"]:
+                    label = tk.Label(self.images_frame, text=name, compound='top', bd=2)
+                    label.full_path = item_path
+                    label.sel = 0
+                    label.grid(row=self.num_items//3, column=self.num_items%3)
+                    label.bind("<Button-1>", lambda e: self.toggle_border(label))
+                else:
+                    # Handle other file types here if needed
+                    pass
+            elif os.path.isdir(item_path):
+                dir_icon = tk.PhotoImage(file=asset_dir+'/folder.png')
+                label = tk.Label(self.images_frame, image=dir_icon, text=name, compound='top', bd=2)
+                label.full_path = item_path
+                label.sel = 0
+                label.image = dir_icon
+                label.grid(row=self.num_items//3, column=self.num_items%3)
+                label.bind("<Button-1>", lambda e: self.toggle_border(label))
+                label.bind("<Double-Button-1>", self.on_double_click_dir)
+                self.bind_scroll(label)
+            self.num_items += 1
         except Exception as e:
-            sys.stderr.write(f'Error loading image: {e}\n')
+            sys.stderr.write(f'Error loading item: {e}\n')
 
     def toggle_border(self, label):
         if label.sel == 0:
@@ -99,38 +121,42 @@ class FilePicker(tk.Frame):
         print('\n'.join(selected_files))
         root.destroy()
 
-    def on_up_dir(self):
-        current_dir = self.directory_entry.get()
-        new_dir = os.path.dirname(current_dir)
-        if os.path.isdir(new_dir):
-            self.directory_entry.delete(0, 'end')
-            self.directory_entry.insert(0, new_dir)
-            self.refresh_images()
-
-    def on_change_dir(self, event):
-        new_dir = self.directory_entry.get()
+    def change_dir(self, new_dir):
         if os.path.isdir(new_dir):
             os.chdir(new_dir)
-            self.refresh_images()
+            self.directory_entry.delete(0, 'end')
+            self.directory_entry.insert(0, new_dir)
+            self.refresh_items()
 
-    def refresh_images(self):
+    def on_up_dir(self):
+        new_dir = os.path.dirname(self.directory_entry.get())
+        self.change_dir(new_dir)
+
+    def on_double_click_dir(self, event):
+        new_dir = event.widget.full_path
+        self.change_dir(new_dir)
+
+    def on_type_dir(self, event):
+        new_dir = self.directory_entry.get()
+        self.change_dir(new_dir)
+
+    def refresh_items(self):
         self.images_frame.destroy()
         self.images_frame = tk.Frame(self.canvas)
         self.canvas.create_window((0,0), window=self.images_frame, anchor='nw')
         self.images_frame.bind('<Configure>', self.on_frame_configure)
         self.bind_scroll(self.canvas)
         self.bind_scroll(self.images_frame)
-        self.num_images = 0
-        paths = itertools.chain(glob.glob(os.path.join(os.getcwd(), '*.png')),
-            glob.glob(os.path.join(os.getcwd(), '*.jpg')))
+        self.num_items = 0
+        paths = glob.glob(os.path.join(os.getcwd(), '*'))
         for path in paths:
-            self.enqueue_image(path)
+            self.enqueue_item(path)
 
 root = tk.Tk()
 root.geometry('610x400')
 grid = FilePicker(root)
 grid.frame.pack(fill='both', expand=True)
-for i, path in enumerate(glob.glob('pics/*png')):
-    grid.enqueue_image(path)
+for i, path in enumerate(glob.glob('pics/*')):
+    grid.enqueue_item(path)
 root.wm_title('File Picker')
 root.mainloop()
