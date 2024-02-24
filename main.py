@@ -6,6 +6,8 @@ from PIL import Image, ImageTk
 import threading
 import queue
 
+THUMBNAIL_WIDTH = 140
+THUMBNAIL_HEIGHT = 140
 asset_dir = os.path.dirname(os.path.abspath(__file__))
 
 class FilePicker(tk.Frame):
@@ -47,6 +49,8 @@ class FilePicker(tk.Frame):
         self.loading_thread = threading.Thread(target=self.load_items)
         self.loading_thread.daemon = True
         self.loading_thread.start()
+        self.frame.bind('<Configure>', self.on_resize)
+        self.recalculate_max_cols()
 
     def bind_scroll(self, thing):
         thing.bind('<Button-4>', lambda e: self.canvas.yview_scroll(-2,'units'))
@@ -74,20 +78,20 @@ class FilePicker(tk.Frame):
                 ext = os.path.splitext(base_path)[-1].lower()
                 if ext in [".png", ".jpg", ".jpeg"]:
                     img = Image.open(item_path)
-                    img.thumbnail((180,180))
+                    img.thumbnail((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
                     img = ImageTk.PhotoImage(img)
                     label = tk.Label(self.images_frame, image=img, text=name, compound='top', bd=2)
                     label.full_path = item_path
                     label.sel = 0
                     label.image = img
-                    label.grid(row=self.num_items//3, column=self.num_items%3)
+                    label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
                     label.bind("<Button-1>", lambda e: self.toggle_border(label))
                     self.bind_scroll(label)
                 elif ext in [".txt", ".pdf", ".doc", ".docx"]:
                     label = tk.Label(self.images_frame, text=name, compound='top', bd=2)
                     label.full_path = item_path
                     label.sel = 0
-                    label.grid(row=self.num_items//3, column=self.num_items%3)
+                    label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
                     label.bind("<Button-1>", lambda e: self.toggle_border(label))
                 else:
                     # Handle other file types here if needed
@@ -98,13 +102,17 @@ class FilePicker(tk.Frame):
                 label.full_path = item_path
                 label.sel = 0
                 label.image = dir_icon
-                label.grid(row=self.num_items//3, column=self.num_items%3)
+                label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
                 label.bind("<Button-1>", lambda e: self.toggle_border(label))
                 label.bind("<Double-Button-1>", self.on_double_click_dir)
                 self.bind_scroll(label)
             self.num_items += 1
         except Exception as e:
             sys.stderr.write(f'Error loading item: {e}\n')
+
+    def recalculate_max_cols(self):
+        max_width = self.frame.winfo_width()
+        self.max_cols = max(1, int(max_width / THUMBNAIL_WIDTH))
 
     def toggle_border(self, label):
         if label.sel == 0:
@@ -127,6 +135,7 @@ class FilePicker(tk.Frame):
             self.directory_entry.delete(0, 'end')
             self.directory_entry.insert(0, new_dir)
             self.refresh_items()
+            self.canvas.yview_moveto(0)
 
     def on_up_dir(self):
         new_dir = os.path.dirname(self.directory_entry.get())
@@ -151,6 +160,9 @@ class FilePicker(tk.Frame):
         paths = glob.glob(os.path.join(os.getcwd(), '*'))
         for path in paths:
             self.enqueue_item(path)
+
+    def on_resize(self, event=None):
+        self.recalculate_max_cols()
 
 root = tk.Tk()
 root.geometry('610x400')
