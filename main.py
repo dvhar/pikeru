@@ -27,10 +27,10 @@ class FilePicker(tk.Frame):
         self.button_frame.grid(row=1, column=0, sticky='e')
         self.frame.grid_rowconfigure(1, weight=0)
 
-        self.open_button = tk.Button(self.button_frame, width=10, text="Open")
+        self.open_button = tk.Button(self.button_frame, width=10, text="Open", command=self.on_open)
         self.open_button.pack(side='right')
 
-        self.cancel_button = tk.Button(self.button_frame, width=10, text="Cancel")
+        self.cancel_button = tk.Button(self.button_frame, width=10, text="Cancel", command=self.on_cancel)
         self.cancel_button.pack(side='right')
 
         self.num_images = 0
@@ -63,7 +63,7 @@ class FilePicker(tk.Frame):
         img = ImageTk.PhotoImage(img)
         label = tk.Label(self.images_frame, image=img, text=image_path, compound='top', bd=2)
         label.__setattr__('sel', 0)
-        label.image = img
+        label.__setattr__('image', img)
         label.grid(row=self.num_images//3, column=self.num_images%3)
         label.bind("<Button-1>", lambda e: self.toggle_border(label))
         self.bind_scroll(label)
@@ -84,6 +84,14 @@ class FilePicker(tk.Frame):
             label.sel = 0
             self.open_button.config(state='normal')
             self.cancel_button.config(state='normal')
+
+    def on_open(self):
+        selected_files = [label['text'] for label in self.images_frame.winfo_children() if label.sel]
+        print('\n'.join(selected_files))
+        root.destroy()
+
+    def on_cancel(self):
+        root.destroy()
 
 root = tk.Tk()
 root.geometry('610x400')
