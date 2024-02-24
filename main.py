@@ -11,8 +11,11 @@ THUMBNAIL_HEIGHT = 140
 asset_dir = os.path.dirname(os.path.abspath(__file__))
 
 class FilePicker(tk.Frame):
-    def __init__(self, master=None, **kwargs):
-        self.frame = tk.Frame(master, **kwargs)
+    def __init__(self, start_path, **kwargs):
+        self.root = tk.Tk()
+        self.root.geometry('640x480')
+        self.root.wm_title('File Picker')
+        self.frame = tk.Frame(self.root, **kwargs)
         self.frame.grid_columnconfigure(0, weight=1)
         self.frame.grid_rowconfigure(0, weight=1)
 
@@ -22,11 +25,11 @@ class FilePicker(tk.Frame):
         self.scrollbar.grid(row=0, column=1, sticky='ns')
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
-        self.images_frame = tk.Frame(self.canvas)
-        self.canvas.create_window((0,0), window=self.images_frame, anchor='nw')
-        self.images_frame.bind('<Configure>', self.on_frame_configure)
+        self.items_frame = tk.Frame(self.canvas)
+        self.canvas.create_window((0,0), window=self.items_frame, anchor='nw')
+        self.items_frame.bind('<Configure>', self.on_frame_configure)
         self.bind_scroll(self.canvas)
-        self.bind_scroll(self.images_frame)
+        self.bind_scroll(self.items_frame)
 
         self.button_frame = tk.Frame(self.frame)
         self.button_frame.grid(row=2, column=0, sticky='e')
@@ -34,7 +37,7 @@ class FilePicker(tk.Frame):
 
         self.open_button = tk.Button(self.button_frame, width=10, text="Open", command=self.on_open)
         self.open_button.pack(side='right')
-        self.cancel_button = tk.Button(self.button_frame, width=10, text="Cancel", command=root.destroy)
+        self.cancel_button = tk.Button(self.button_frame, width=10, text="Cancel", command=self.root.destroy)
         self.cancel_button.pack(side='right')
         self.up_dir_button = tk.Button(self.button_frame, width=10, text="Up Dir", command=self.on_up_dir)
         self.up_dir_button.pack(side='right')
@@ -51,6 +54,13 @@ class FilePicker(tk.Frame):
         self.loading_thread.start()
         self.frame.bind('<Configure>', self.on_resize)
         self.recalculate_max_cols()
+        self.folder_icon = tk.PhotoImage(file=asset_dir+'/folder.png')
+
+        self.frame.pack(fill='both', expand=True)
+        self.change_dir(start_path)
+
+    def run(self):
+        self.root.mainloop()
 
     def bind_scroll(self, thing):
         thing.bind('<Button-4>', lambda e: self.canvas.yview_scroll(-2,'units'))
@@ -64,10 +74,7 @@ class FilePicker(tk.Frame):
 
     def load_items(self):
         while True:
-            try:
-                item_path = self.queue.get(timeout=1)
-            except queue.Empty:
-                continue
+            item_path = self.queue.get()
             self.load_item(item_path)
 
     def load_item(self, item_path):
@@ -80,39 +87,52 @@ class FilePicker(tk.Frame):
                     img = Image.open(item_path)
                     img.thumbnail((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
                     img = ImageTk.PhotoImage(img)
-                    label = tk.Label(self.images_frame, image=img, text=name, compound='top', bd=2)
+                    label = tk.Label(self.items_frame, image=img, text=name, compound='top', bd=2)
                     label.full_path = item_path
                     label.sel = 0
                     label.image = img
                     label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
                     label.bind("<Button-1>", lambda e: self.toggle_border(label))
                     self.bind_scroll(label)
+                    label.bind("<Double-Button-1>", self.on_double_click_file)
                 elif ext in [".txt", ".pdf", ".doc", ".docx"]:
-                    label = tk.Label(self.images_frame, text=name, compound='top', bd=2)
+                    label = tk.Label(self.items_frame, text=name, compound='top', bd=2)
                     label.full_path = item_path
                     label.sel = 0
                     label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
                     label.bind("<Button-1>", lambda e: self.toggle_border(label))
+                    label.bind("<Double-Button-1>", self.on_double_click_file)
                 else:
                     # Handle other file types here if needed
                     pass
             elif os.path.isdir(item_path):
-                dir_icon = tk.PhotoImage(file=asset_dir+'/folder.png')
-                label = tk.Label(self.images_frame, image=dir_icon, text=name, compound='top', bd=2)
+                label = tk.Label(self.items_frame, image=self.folder_icon, text=name, compound='top', bd=2)
                 label.full_path = item_path
                 label.sel = 0
-                label.image = dir_icon
+                label.image = self.folder_icon
                 label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
                 label.bind("<Button-1>", lambda e: self.toggle_border(label))
                 label.bind("<Double-Button-1>", self.on_double_click_dir)
                 self.bind_scroll(label)
+            else:
+                return
             self.num_items += 1
         except Exception as e:
             sys.stderr.write(f'Error loading item: {e}\n')
 
+    def reorganize_items(self):
+        num_child_rows = self.num_items // self.max_cols + (1 if self.num_items % self.max_cols != 0 else 0)
+        all_items = self.items_frame.winfo_children()
+        for row in range(num_child_rows):
+            start = row * self.max_cols
+            for col in range(self.max_cols):
+                index = start + col
+                if index < len(all_items):
+                    all_items[index].grid(row=row, column=col)
+
     def recalculate_max_cols(self):
         max_width = self.frame.winfo_width()
-        self.max_cols = max(1, int(max_width / THUMBNAIL_WIDTH))
+        self.max_cols = max(1, int(max_width / (THUMBNAIL_WIDTH+6))) # figure out proper width calculation
 
     def toggle_border(self, label):
         if label.sel == 0:
@@ -125,9 +145,13 @@ class FilePicker(tk.Frame):
             self.cancel_button.config(state='normal')
 
     def on_open(self):
-        selected_files = [label.full_path for label in self.images_frame.winfo_children() if label.sel]
+        selected_files = [label.full_path for label in self.items_frame.winfo_children() if label.sel]
         print('\n'.join(selected_files))
-        root.destroy()
+        self.root.destroy()
+
+    def on_double_click_file(self, event):
+        print(event.widget.full_path)
+        self.root.destroy()
 
     def change_dir(self, new_dir):
         if os.path.isdir(new_dir):
@@ -150,25 +174,22 @@ class FilePicker(tk.Frame):
         self.change_dir(new_dir)
 
     def refresh_items(self):
-        self.images_frame.destroy()
-        self.images_frame = tk.Frame(self.canvas)
-        self.canvas.create_window((0,0), window=self.images_frame, anchor='nw')
-        self.images_frame.bind('<Configure>', self.on_frame_configure)
+        self.items_frame.destroy()
+        self.items_frame = tk.Frame(self.canvas)
+        self.canvas.create_window((0,0), window=self.items_frame, anchor='nw')
+        self.items_frame.bind('<Configure>', self.on_frame_configure)
         self.bind_scroll(self.canvas)
-        self.bind_scroll(self.images_frame)
+        self.bind_scroll(self.items_frame)
         self.num_items = 0
         paths = glob.glob(os.path.join(os.getcwd(), '*'))
         for path in paths:
             self.enqueue_item(path)
 
     def on_resize(self, event=None):
+        old = self.max_cols
         self.recalculate_max_cols()
+        if old != self.max_cols:
+            self.reorganize_items()
 
-root = tk.Tk()
-root.geometry('610x400')
-grid = FilePicker(root)
-grid.frame.pack(fill='both', expand=True)
-for i, path in enumerate(glob.glob('pics/*')):
-    grid.enqueue_item(path)
-root.wm_title('File Picker')
-root.mainloop()
+picker = FilePicker(os.getcwd())
+picker.run()
