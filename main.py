@@ -2,6 +2,8 @@
 import glob
 import tkinter as tk
 from PIL import Image, ImageTk
+import threading
+import queue
 
 class FilePicker(tk.Frame):
     def __init__(self, master=None, **kwargs):
@@ -31,6 +33,12 @@ class FilePicker(tk.Frame):
         self.cancel_button = tk.Button(self.button_frame, width=10, text="Cancel")
         self.cancel_button.pack(side='right')
 
+        self.num_images = 0
+        self.queue = queue.Queue()
+        self.loading_thread = threading.Thread(target=self.load_images)
+        self.loading_thread.daemon = True
+        self.loading_thread.start()
+
     def bind_scroll(self, thing):
         thing.bind('<Button-4>', lambda e: self.canvas.yview_scroll(-2,'units'))
         thing.bind('<Button-5>', lambda e: self.canvas.yview_scroll(2,'units'))
@@ -38,16 +46,28 @@ class FilePicker(tk.Frame):
     def on_frame_configure(self, event=None):
         self.canvas.configure(scrollregion=self.canvas.bbox('all'))
 
-    def add_image(self, image_path, row, col):
+    def enqueue_image(self, image_path):
+        self.queue.put(image_path)
+
+    def load_images(self):
+        while True:
+            try:
+                image_path = self.queue.get(timeout=1)
+            except queue.Empty:
+                continue
+            self.load_image(image_path)
+
+    def load_image(self, image_path):
         img = Image.open(image_path)
         img.thumbnail((180,180))
         img = ImageTk.PhotoImage(img)
         label = tk.Label(self.images_frame, image=img, text=image_path, compound='top', bd=2)
         label.__setattr__('sel', 0)
         label.image = img
-        label.grid(row=row, column=col)
+        label.grid(row=self.num_images//3, column=self.num_images%3)
         label.bind("<Button-1>", lambda e: self.toggle_border(label))
         self.bind_scroll(label)
+        self.num_images += 1
 
     def highlight_image(self, label):
         label.config(relief="solid", bg='red')
@@ -70,6 +90,6 @@ root.geometry('610x400')
 grid = FilePicker(root)
 grid.frame.pack(fill='both', expand=True)
 for i, path in enumerate(glob.glob('pics/*png')):
-    grid.add_image(path, i//3, i%3)
+    grid.enqueue_image(path)
 root.wm_title('File Picker')
 root.mainloop()
