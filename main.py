@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import argparse
 import glob
 import os, sys
 import tkinter as tk
@@ -8,13 +9,17 @@ import queue
 
 THUMBNAIL_WIDTH = 140
 THUMBNAIL_HEIGHT = 140
+
+# https://icon-icons.com
 asset_dir = os.path.dirname(os.path.abspath(__file__))
 
 class FilePicker(tk.Frame):
-    def __init__(self, start_path, **kwargs):
+    def __init__(self, args: argparse.Namespace, **kwargs):
         self.root = tk.Tk()
+        if args.parent:
+            self.root.transient(args.parent)
         self.root.geometry('640x480')
-        self.root.wm_title('File Picker')
+        self.root.wm_title(args.title or 'File Picker')
         self.frame = tk.Frame(self.root, **kwargs)
         self.frame.grid_columnconfigure(0, weight=1)
         self.frame.grid_rowconfigure(0, weight=1)
@@ -32,7 +37,7 @@ class FilePicker(tk.Frame):
         self.bind_scroll(self.items_frame)
 
         self.button_frame = tk.Frame(self.frame)
-        self.button_frame.grid(row=2, column=0, sticky='e')
+        self.button_frame.grid(row=2, column=0, sticky='we')
         self.frame.grid_rowconfigure(1, weight=0)
 
         self.open_button = tk.Button(self.button_frame, width=10, text="Open", command=self.on_open)
@@ -40,11 +45,11 @@ class FilePicker(tk.Frame):
         self.cancel_button = tk.Button(self.button_frame, width=10, text="Cancel", command=self.root.destroy)
         self.cancel_button.pack(side='right')
         self.up_dir_button = tk.Button(self.button_frame, width=10, text="Up Dir", command=self.on_up_dir)
-        self.up_dir_button.pack(side='right')
+        self.up_dir_button.pack(side='left')
 
         self.directory_entry = tk.Entry(self.frame)
         self.directory_entry.grid(row=1, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
-        self.directory_entry.insert(0, os.getcwd())
+        self.directory_entry.insert(0, args.path)
         self.directory_entry.bind("<Return>", self.on_type_dir)
 
         self.num_items = 0
@@ -57,7 +62,7 @@ class FilePicker(tk.Frame):
         self.folder_icon = tk.PhotoImage(file=asset_dir+'/folder.png')
 
         self.frame.pack(fill='both', expand=True)
-        self.change_dir(start_path)
+        self.change_dir(args.path)
 
     def run(self):
         self.root.mainloop()
@@ -191,5 +196,17 @@ class FilePicker(tk.Frame):
         if old != self.max_cols:
             self.reorganize_items()
 
-picker = FilePicker(os.getcwd())
-picker.run()
+def main():
+    parser = argparse.ArgumentParser(description="Command Line Interface for File Picker")
+    parser.add_argument("-e", "--parent", help="window id of the window this one is transient to")
+    parser.add_argument("-t", "--title", default="File Picker", help="title of the filepicker window")
+    parser.add_argument("-k", "--type", choices=['file', 'files', 'dir', 'save'], help="type of file selection. One of [file files dir save]")
+    parser.add_argument("-p", "--path", default=os.getcwd(), help="path of initial directory")
+    parser.add_argument("-i", "--mime_list", nargs="*", help="list of allowed mime types. Can be empty.")
+    args = parser.parse_args()
+    
+    picker = FilePicker(args)
+    picker.run()
+
+if __name__ == "__main__":
+    main()
