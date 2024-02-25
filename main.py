@@ -60,6 +60,8 @@ class FilePicker(tk.Frame):
         self.frame.bind('<Configure>', self.on_resize)
         self.recalculate_max_cols()
         self.folder_icon = tk.PhotoImage(file=asset_dir+'/folder.png')
+        self.doc_icon = tk.PhotoImage(file=asset_dir+'/document.png')
+        self.unknown_icon = tk.PhotoImage(file=asset_dir+'/unknown.png')
 
         self.frame.pack(fill='both', expand=True)
         self.change_dir(args.path)
@@ -82,6 +84,14 @@ class FilePicker(tk.Frame):
             item_path = self.queue.get()
             self.load_item(item_path)
 
+    def prep_file(self, label, item_path):
+        label.sel = 0
+        label.full_path = item_path
+        self.bind_scroll(label)
+        label.bind("<Button-1>", lambda e: self.toggle_border(label))
+        label.bind("<Double-Button-1>", self.on_double_click_file)
+        label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
+
     def load_item(self, item_path):
         try:
             base_path = os.path.basename(item_path)
@@ -93,30 +103,18 @@ class FilePicker(tk.Frame):
                     img.thumbnail((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
                     img = ImageTk.PhotoImage(img)
                     label = tk.Label(self.items_frame, image=img, text=name, compound='top', bd=2)
-                    label.full_path = item_path
-                    label.sel = 0
-                    label.image = img
-                    label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
-                    label.bind("<Button-1>", lambda e: self.toggle_border(label))
-                    self.bind_scroll(label)
-                    label.bind("<Double-Button-1>", self.on_double_click_file)
+                    label.__setattr__('img', img)
+                    self.prep_file(label, item_path)
                 elif ext in [".txt", ".pdf", ".doc", ".docx"]:
-                    label = tk.Label(self.items_frame, text=name, compound='top', bd=2)
-                    label.full_path = item_path
-                    label.sel = 0
-                    label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
-                    label.bind("<Button-1>", lambda e: self.toggle_border(label))
-                    label.bind("<Double-Button-1>", self.on_double_click_file)
+                    label = tk.Label(self.items_frame, image=self.doc_icon, text=name, compound='top', bd=2)
+                    self.prep_file(label, item_path)
                 else:
-                    # Handle other file types here if needed
-                    pass
+                    label = tk.Label(self.items_frame, image=self.unknown_icon, text=name, compound='top', bd=2)
+                    self.prep_file(label, item_path)
             elif os.path.isdir(item_path):
                 label = tk.Label(self.items_frame, image=self.folder_icon, text=name, compound='top', bd=2)
                 label.full_path = item_path
-                label.sel = 0
-                label.image = self.folder_icon
                 label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
-                label.bind("<Button-1>", lambda e: self.toggle_border(label))
                 label.bind("<Double-Button-1>", self.on_double_click_dir)
                 self.bind_scroll(label)
             else:
@@ -163,6 +161,8 @@ class FilePicker(tk.Frame):
             os.chdir(new_dir)
             self.directory_entry.delete(0, 'end')
             self.directory_entry.insert(0, new_dir)
+            while self.queue.qsize() > 0:
+                self.queue.get()
             self.refresh_items()
             self.canvas.yview_moveto(0)
 
