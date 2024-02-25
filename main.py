@@ -14,6 +14,12 @@ THUMBNAIL_HEIGHT = 140
 # https://icon-icons.com
 asset_dir = os.path.dirname(os.path.abspath(__file__))
 
+class PathInfo(str):
+    def __new__(cls, path):
+        obj = str.__new__(cls, path)
+        obj.time = os.path.getmtime(path)
+        return obj
+
 class FilePicker(tk.Frame):
     def __init__(self, args: argparse.Namespace, **kwargs):
         self.select_dir = args.type == 'dir'
@@ -22,6 +28,7 @@ class FilePicker(tk.Frame):
         self.save_filename = None
         if self.select_save and not os.path.isdir(args.path):
             self.save_filename = os.path.basename(args.path)
+        self.sort_by = 'name'
 
         self.root = tk.Tk()
         # if args.parent:
@@ -233,9 +240,16 @@ class FilePicker(tk.Frame):
         self.bind_scroll(self.canvas)
         self.bind_scroll(self.items_frame)
         self.num_items = 0
-        paths = glob.glob(os.path.join(os.getcwd(), '*'))
+        paths = [PathInfo(p) for p in glob.glob(os.path.join(os.getcwd(), '*'))]
+        self.sort(paths)
         for path in paths:
             self.enqueue_item(path)
+
+    def sort(self, paths: list):
+        sort = lambda p: (not os.path.isdir(p), p.lower())
+        if self.sort_by == 'time':
+            sort = lambda p: (not os.path.isdir(p), p.time)
+        paths.sort(key=sort)
 
     def on_resize(self, event=None):
         old = self.max_cols
