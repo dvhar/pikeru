@@ -19,10 +19,14 @@ class FilePicker(tk.Frame):
         self.select_dir = args.type == 'dir'
         self.select_multi = not self.select_dir and args.type == 'files'
         self.select_save = args.type == 'save'
+        self.save_filename = None
+        if self.select_save and not os.path.isdir(args.path):
+            self.save_filename = os.path.basename(args.path)
 
         self.root = tk.Tk()
-        if args.parent:
-            self.root.transient(args.parent)
+        # if args.parent:
+            # self.root.transient(args.parent)
+            # TODO: make this work with X window id
         self.root.geometry('640x480')
         self.root.wm_title(args.title or 'File Picker')
         self.frame = tk.Frame(self.root, **kwargs)
@@ -170,6 +174,8 @@ class FilePicker(tk.Frame):
             self.prev_sel = None
             os.chdir(new_dir)
             self.path_textfield.delete(0, 'end')
+            if self.save_filename:
+                new_dir += '/' + self.save_filename
             self.path_textfield.insert(0, new_dir)
             while self.queue.qsize() > 0:
                 self.queue.get()
@@ -178,6 +184,8 @@ class FilePicker(tk.Frame):
 
     def on_up_dir(self):
         new_dir = os.path.dirname(self.path_textfield.get())
+        if self.select_save:
+            new_dir = os.path.dirname(new_dir)
         self.change_dir(new_dir)
 
     def on_double_click_dir(self, event):
@@ -188,9 +196,10 @@ class FilePicker(tk.Frame):
         if self.select_save and os.path.isfile(selection):
             msg = f'Overwrite file {os.path.basename(selection)}?'
             overwrite = askyesno(title='Confirm Overwrite', message=msg)
-            if overwrite:
-                print(selection)
-                self.root.destroy()
+            if not overwrite:
+                return
+        print(selection)
+        self.root.destroy()
 
     def on_double_click_file(self, event):
         if self.select_save:
