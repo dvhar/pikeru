@@ -45,7 +45,7 @@ class FilePicker(tk.Frame):
         self.cancel_button = tk.Button(self.button_frame, width=10, text="Cancel", command=self.root.destroy)
         self.cancel_button.pack(side='right')
         self.up_dir_button = tk.Button(self.button_frame, width=10, text="Up Dir", command=self.on_up_dir)
-        self.up_dir_button.pack(side='left')
+        self.up_dir_button.pack(side='right')
 
         self.directory_entry = tk.Entry(self.frame)
         self.directory_entry.grid(row=1, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
@@ -62,6 +62,8 @@ class FilePicker(tk.Frame):
         self.folder_icon = tk.PhotoImage(file=asset_dir+'/folder.png')
         self.doc_icon = tk.PhotoImage(file=asset_dir+'/document.png')
         self.unknown_icon = tk.PhotoImage(file=asset_dir+'/unknown.png')
+        self.prev_sel = None
+        self.multi = args.type == 'files'
 
         self.frame.pack(fill='both', expand=True)
         self.change_dir(args.path)
@@ -85,10 +87,10 @@ class FilePicker(tk.Frame):
             self.load_item(item_path)
 
     def prep_file(self, label, item_path):
-        label.sel = 0
-        label.full_path = item_path
+        label.sel = False
+        label.path = item_path
         self.bind_scroll(label)
-        label.bind("<Button-1>", lambda e: self.toggle_border(label))
+        label.bind("<Button-1>", lambda e: self.on_click_file(label))
         label.bind("<Double-Button-1>", self.on_double_click_file)
         label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
 
@@ -98,22 +100,24 @@ class FilePicker(tk.Frame):
             name = base_path if len(base_path) < 20 else base_path[len(base_path)-19:]
             if os.path.isfile(item_path):
                 ext = os.path.splitext(base_path)[-1].lower()
-                if ext in [".png", ".jpg", ".jpeg"]:
-                    img = Image.open(item_path)
-                    img.thumbnail((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
-                    img = ImageTk.PhotoImage(img)
-                    label = tk.Label(self.items_frame, image=img, text=name, compound='top', bd=2)
-                    label.__setattr__('img', img)
-                    self.prep_file(label, item_path)
-                elif ext in [".txt", ".pdf", ".doc", ".docx"]:
-                    label = tk.Label(self.items_frame, image=self.doc_icon, text=name, compound='top', bd=2)
-                    self.prep_file(label, item_path)
-                else:
-                    label = tk.Label(self.items_frame, image=self.unknown_icon, text=name, compound='top', bd=2)
-                    self.prep_file(label, item_path)
+                match ext:
+                    case '.png'|'.jpg'|'.jpeg'|'.gif':
+                        img = Image.open(item_path)
+                        img.thumbnail((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
+                        img = ImageTk.PhotoImage(img)
+                        label = tk.Label(self.items_frame, image=img, text=name, compound='top', bd=2)
+                        label.__setattr__('img', img)
+                        self.prep_file(label, item_path)
+                    case '.txt'|'.pdf'|'.doc'|'.docx':
+                        label = tk.Label(self.items_frame, image=self.doc_icon, text=name, compound='top', bd=2)
+                        self.prep_file(label, item_path)
+                    case _:
+                        label = tk.Label(self.items_frame, image=self.unknown_icon, text=name, compound='top', bd=2)
+                        self.prep_file(label, item_path)
             elif os.path.isdir(item_path):
                 label = tk.Label(self.items_frame, image=self.folder_icon, text=name, compound='top', bd=2)
-                label.full_path = item_path
+                label.path = item_path
+                label.sel = False
                 label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
                 label.bind("<Double-Button-1>", self.on_double_click_dir)
                 self.bind_scroll(label)
@@ -137,23 +141,28 @@ class FilePicker(tk.Frame):
         max_width = self.frame.winfo_width()
         self.max_cols = max(1, int(max_width / (THUMBNAIL_WIDTH+6))) # figure out proper width calculation
 
-    def toggle_border(self, label):
-        if label.sel == 0:
+    def on_click_file(self, label):
+        if label.sel == False:
             label.config(relief="solid", bg='red')
-            label.sel = 1
+            label.sel = True
         else:
             label.config(relief="flat", bg='black')
-            label.sel = 0
+            label.sel = False
             self.open_button.config(state='normal')
             self.cancel_button.config(state='normal')
+        if label.sel:
+            if not self.multi and self.prev_sel and self.prev_sel is not label:
+                self.prev_sel.sel = False
+                self.prev_sel.config(relief="flat", bg='black')
+            self.prev_sel = label
 
     def on_open(self):
-        selected_files = [label.full_path for label in self.items_frame.winfo_children() if label.sel]
+        selected_files = [label.path for label in self.items_frame.winfo_children() if label.sel]
         print('\n'.join(selected_files))
         self.root.destroy()
 
     def on_double_click_file(self, event):
-        print(event.widget.full_path)
+        print(event.widget.path)
         self.root.destroy()
 
     def change_dir(self, new_dir):
@@ -171,7 +180,7 @@ class FilePicker(tk.Frame):
         self.change_dir(new_dir)
 
     def on_double_click_dir(self, event):
-        new_dir = event.widget.full_path
+        new_dir = event.widget.path
         self.change_dir(new_dir)
 
     def on_type_dir(self, event):
