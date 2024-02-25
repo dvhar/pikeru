@@ -4,6 +4,7 @@ import glob
 import os, sys
 import tkinter as tk
 from PIL import Image, ImageTk
+from tkinter.messagebox import askyesno
 import threading
 import queue
 
@@ -15,6 +16,10 @@ asset_dir = os.path.dirname(os.path.abspath(__file__))
 
 class FilePicker(tk.Frame):
     def __init__(self, args: argparse.Namespace, **kwargs):
+        self.select_dir = args.type == 'dir'
+        self.select_multi = not self.select_dir and args.type == 'files'
+        self.select_save = args.type == 'save'
+
         self.root = tk.Tk()
         if args.parent:
             self.root.transient(args.parent)
@@ -40,17 +45,18 @@ class FilePicker(tk.Frame):
         self.button_frame.grid(row=2, column=0, sticky='we')
         self.frame.grid_rowconfigure(1, weight=0)
 
-        self.open_button = tk.Button(self.button_frame, width=10, text="Open", command=self.on_open)
+        button_text = "Save" if self.select_save else "Open"
+        self.open_button = tk.Button(self.button_frame, width=10, text=button_text, command=self.on_select_button)
         self.open_button.pack(side='right')
         self.cancel_button = tk.Button(self.button_frame, width=10, text="Cancel", command=self.root.destroy)
         self.cancel_button.pack(side='right')
         self.up_dir_button = tk.Button(self.button_frame, width=10, text="Up Dir", command=self.on_up_dir)
         self.up_dir_button.pack(side='right')
 
-        self.directory_entry = tk.Entry(self.frame)
-        self.directory_entry.grid(row=1, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
-        self.directory_entry.insert(0, args.path)
-        self.directory_entry.bind("<Return>", self.on_type_dir)
+        self.path_textfield = tk.Entry(self.frame)
+        self.path_textfield.grid(row=1, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
+        self.path_textfield.insert(0, args.path)
+        self.path_textfield.bind("<Return>", self.on_type_enter)
 
         self.num_items = 0
         self.queue = queue.Queue()
@@ -63,8 +69,6 @@ class FilePicker(tk.Frame):
         self.doc_icon = tk.PhotoImage(file=asset_dir+'/document.png')
         self.unknown_icon = tk.PhotoImage(file=asset_dir+'/unknown.png')
         self.prev_sel = None
-        self.select_dir = args.type == 'dir'
-        self.select_multi = not self.select_dir and args.type == 'files'
 
         self.frame.pack(fill='both', expand=True)
         self.change_dir(args.path)
@@ -161,37 +165,56 @@ class FilePicker(tk.Frame):
                 self.prev_sel.config(relief="flat", bg='black')
             self.prev_sel = label
 
-    def on_open(self):
-        selected_files = [label.path for label in self.items_frame.winfo_children() if label.sel]
-        print('\n'.join(selected_files))
-        self.root.destroy()
-
-    def on_double_click_file(self, event):
-        print(event.widget.path)
-        self.root.destroy()
-
     def change_dir(self, new_dir):
         if os.path.isdir(new_dir):
             self.prev_sel = None
             os.chdir(new_dir)
-            self.directory_entry.delete(0, 'end')
-            self.directory_entry.insert(0, new_dir)
+            self.path_textfield.delete(0, 'end')
+            self.path_textfield.insert(0, new_dir)
             while self.queue.qsize() > 0:
                 self.queue.get()
             self.refresh_items()
             self.canvas.yview_moveto(0)
 
     def on_up_dir(self):
-        new_dir = os.path.dirname(self.directory_entry.get())
+        new_dir = os.path.dirname(self.path_textfield.get())
         self.change_dir(new_dir)
 
     def on_double_click_dir(self, event):
         new_dir = event.widget.path
         self.change_dir(new_dir)
 
-    def on_type_dir(self, event):
-        new_dir = self.directory_entry.get()
-        self.change_dir(new_dir)
+    def final_selection(self, selection):
+        if self.select_save and os.path.isfile(selection):
+            msg = f'Overwrite file {os.path.basename(selection)}?'
+            overwrite = askyesno(title='Confirm Overwrite', message=msg)
+            if overwrite:
+                print(selection)
+                self.root.destroy()
+
+    def on_double_click_file(self, event):
+        if self.select_save:
+            self.final_selection(event.widget.path)
+        else:
+            print(event.widget.path)
+            self.root.destroy()
+
+    def on_select_button(self):
+        selected_files = [label.path for label in self.items_frame.winfo_children() if label.sel]
+        if self.select_save and len(selected_files) == 0:
+            self.final_selection(self.path_textfield.get())
+        elif self.select_save:
+            self.final_selection(selected_files[0])
+        else:
+            print('\n'.join(selected_files))
+            self.root.destroy()
+
+    def on_type_enter(self, event):
+        txt = self.path_textfield.get()
+        if os.path.isdir(txt):
+            self.change_dir(txt)
+        elif self.select_save and txt[-1] != '/':
+            self.final_selection(txt)
 
     def refresh_items(self):
         self.items_frame.destroy()
