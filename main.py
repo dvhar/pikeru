@@ -13,11 +13,14 @@ THUMBNAIL_HEIGHT = 140
 
 # https://icon-icons.com
 asset_dir = os.path.dirname(os.path.abspath(__file__))
+home_dir = os.environ['HOME']
 
 class PathInfo(str):
     def __new__(cls, path):
         obj = str.__new__(cls, path)
         obj.time = os.path.getmtime(path)
+        obj.lname = os.path.basename(path).lower()
+        obj.isdir = os.path.isdir(path)
         return obj
 
 class FilePicker(tk.Frame):
@@ -31,7 +34,7 @@ class FilePicker(tk.Frame):
         self.sort_by = 'name'
 
         self.root = tk.Tk()
-        self.root.geometry('640x480')
+        self.root.geometry('720x480')
         self.root.wm_title(args.title or 'File Picker')
         self.frame = tk.Frame(self.root, **kwargs)
         self.frame.grid_columnconfigure(0, weight=1)
@@ -89,9 +92,10 @@ class FilePicker(tk.Frame):
         self.unknown_icon = tk.PhotoImage(file=asset_dir+'/unknown.png')
         self.prev_sel = None
 
-        self.bookmarks = ['Home', 'Documents', 'Pictures', 'Downloads']
+        self.bookmarks = ['', 'Documents', 'Pictures', 'Downloads']
         for i, bookmark in enumerate(self.bookmarks):
-            btn = tk.Button(self.bookmark_frame, text=bookmark)
+            btn = tk.Button(self.bookmark_frame, text=bookmark if bookmark else 'Home')
+            btn.path = os.path.join(home_dir, bookmark)
             btn.grid(row=i, column=0, sticky='news')
             btn.bind("<Button-1>", self.on_bookmark_click)
 
@@ -154,11 +158,30 @@ class FilePicker(tk.Frame):
                 if self.select_dir:
                     label.bind("<Button-1>", self.on_click_file)
                 self.bind_scroll(label)
+                label.bind("<ButtonRelease-1>", self.on_drag_dir_end)
             else:
                 return
             self.num_items += 1
         except Exception as e:
             sys.stderr.write(f'Error loading item: {e}\n')
+
+    def on_drag_dir_end(self, event):
+        source = event.widget
+        target = source.winfo_containing(event.x_root, event.y_root)
+        if target != self.bookmark_frame:
+            return
+        bookmarks =  self.bookmark_frame.winfo_children()
+        for child in bookmarks:
+            if source.path == child.path:
+                return
+        path = source.path
+        new_bookmark = tk.Button(self.bookmark_frame, text=os.path.basename(path), command=lambda: self.change_dir(path))
+        new_bookmark.path = path
+        new_bookmark.grid(row=len(bookmarks), column=0, sticky='news')
+        self.bookmark_frame.update_idletasks()
+
+    def on_bookmark_click(self, event):
+        self.change_dir(event.widget.path)
 
     def reorganize_items(self):
         num_child_rows = self.num_items // self.max_cols + (1 if self.num_items % self.max_cols != 0 else 0)
@@ -260,9 +283,9 @@ class FilePicker(tk.Frame):
             self.enqueue_item(path)
 
     def sort(self, paths: list):
-        sort = lambda p: (not os.path.isdir(p), p.lower())
+        sort = lambda p: (not p.isdir, p.lname)
         if self.sort_by == 'time':
-            sort = lambda p: (not os.path.isdir(p), p.time)
+            sort = lambda p: (not p.isdir, p.time)
         paths.sort(key=sort)
 
     def on_resize(self, event=None):
@@ -270,17 +293,6 @@ class FilePicker(tk.Frame):
         self.recalculate_max_cols()
         if old != self.max_cols:
             self.reorganize_items()
-
-    def on_bookmark_click(self, event):
-        bookmark = event.widget.cget('text')
-        if bookmark == 'Home':
-            self.change_dir(os.path.expanduser('~'))
-        elif bookmark == 'Documents':
-            self.change_dir(os.path.join(os.environ['HOME'], 'Documents'))
-        elif bookmark == 'Pictures':
-            self.change_dir(os.path.join(os.environ['HOME'], 'Pictures'))
-        elif bookmark == 'Downloads':
-            self.change_dir(os.path.join(os.environ['HOME'], 'Downloads'))
 
 def main():
     parser = argparse.ArgumentParser(description="A filepicker with proper thumbnail support")
