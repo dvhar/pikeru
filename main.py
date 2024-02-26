@@ -31,7 +31,6 @@ class FilePicker(tk.Frame):
         self.save_filename = None
         if self.select_save and not os.path.isdir(args.path):
             self.save_filename = os.path.basename(args.path)
-        self.sort_by = 'name'
 
         self.root = tk.Tk()
         self.root.geometry('720x480')
@@ -79,6 +78,8 @@ class FilePicker(tk.Frame):
         self.cancel_button.pack(side='right')
         self.up_dir_button = tk.Button(self.button_frame, width=10, text="Up Dir", command=self.on_up_dir)
         self.up_dir_button.pack(side='right')
+        self.sort_button = tk.Button(self.button_frame, width=10, text="Sort", command=self.show_sort_menu)
+        self.sort_button.pack(side='right')
 
         self.num_items = 0
         self.queue = queue.Queue()
@@ -205,8 +206,6 @@ class FilePicker(tk.Frame):
         else:
             label.config(relief="flat", bg='black')
             label.sel = False
-            self.open_button.config(state='normal')
-            self.cancel_button.config(state='normal')
         if label.sel:
             if not self.select_multi and self.prev_sel and self.prev_sel is not label:
                 self.prev_sel.sel = False
@@ -223,7 +222,7 @@ class FilePicker(tk.Frame):
             self.path_textfield.insert(0, new_dir)
             while self.queue.qsize() > 0:
                 self.queue.get()
-            self.refresh_items()
+            self.load_dir()
             self.canvas.yview_moveto(0)
 
     def on_up_dir(self):
@@ -269,7 +268,7 @@ class FilePicker(tk.Frame):
         elif self.select_save and txt[-1] != '/':
             self.final_selection(txt)
 
-    def refresh_items(self):
+    def load_dir(self):
         self.items_frame.destroy()
         self.items_frame = tk.Frame(self.canvas)
         self.canvas.create_window((0,0), window=self.items_frame, anchor='nw')
@@ -278,15 +277,34 @@ class FilePicker(tk.Frame):
         self.bind_scroll(self.items_frame)
         self.num_items = 0
         paths = [PathInfo(p) for p in glob.glob(os.path.join(os.getcwd(), '*'))]
-        self.sort(paths)
+        paths.sort(key=lambda p: (not p.isdir, p.lname))
         for path in paths:
             self.enqueue_item(path)
 
-    def sort(self, paths: list):
-        sort = lambda p: (not p.isdir, p.lname)
-        if self.sort_by == 'time':
-            sort = lambda p: (not p.isdir, p.time)
-        paths.sort(key=sort)
+    def show_sort_menu(self):
+        self.sort_popup = tk.Menu(self.root, tearoff=False)
+        self.sort_popup.add_command(label="Name asc", command=lambda :self.on_sort('name', True))
+        self.sort_popup.add_command(label="Name desc", command=lambda :self.on_sort('name', False))
+        self.sort_popup.add_command(label="Date asc", command=lambda :self.on_sort('time', True))
+        self.sort_popup.add_command(label="Date desc", command=lambda :self.on_sort('time', False))
+        self.sort_popup.post(self.sort_button.winfo_rootx(), self.sort_button.winfo_rooty())
+
+    def on_sort(self, by, asc):
+        match (by, asc):
+            case ('name', True): sort = lambda w: (not w.path.isdir, w.path.lname)
+            case ('name', False): sort = lambda w: (w.path.isdir, w.path.lname)
+            case ('time', True): sort = lambda w: (not w.path.isdir, w.path.time)
+            case ('time', False): sort = lambda w: (w.path.isdir, w.path.time)
+            case _: quit(1)
+        all_items = self.items_frame.winfo_children()
+        all_items.sort(key=sort, reverse=not asc)
+        num_rows = self.num_items // self.max_cols + (1 if self.num_items % self.max_cols != 0 else 0)
+        for row in range(num_rows):
+            start = row * self.max_cols
+            for col in range(self.max_cols):
+                index = start + col
+                if index < len(all_items):
+                    all_items[index].grid(row=row, column=col)
 
     def on_resize(self, event=None):
         old = self.max_cols
