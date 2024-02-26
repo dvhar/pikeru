@@ -31,19 +31,29 @@ class FilePicker(tk.Frame):
         self.sort_by = 'name'
 
         self.root = tk.Tk()
-        # if args.parent:
-            # self.root.transient(args.parent)
-            # TODO: make this work with X window id
         self.root.geometry('640x480')
         self.root.wm_title(args.title or 'File Picker')
         self.frame = tk.Frame(self.root, **kwargs)
         self.frame.grid_columnconfigure(0, weight=1)
         self.frame.grid_rowconfigure(0, weight=1)
+        self.frame.grid_rowconfigure(1, weight=0)
 
-        self.canvas = tk.Canvas(self.frame)
-        self.canvas.grid(row=0, column=0, sticky='news')
-        self.scrollbar = tk.Scrollbar(self.frame, orient='vertical', command=self.canvas.yview)
-        self.scrollbar.grid(row=0, column=1, sticky='ns')
+        upper_frame = tk.Frame(self.frame)
+        upper_frame.grid(row=0, column=0, sticky='news')
+        upper_frame.grid_columnconfigure(0, weight=0)
+        upper_frame.grid_columnconfigure(1, weight=1)
+        upper_frame.grid_rowconfigure(0, weight=1)
+
+        lower_frame = tk.Frame(self.frame)
+        lower_frame.grid(row=1, column=0, sticky='news')
+        lower_frame.grid_columnconfigure(0, weight=1)
+
+        self.bookmark_frame = tk.Frame(upper_frame)
+        self.bookmark_frame.grid(row=0, column=0, sticky='news')
+        self.canvas = tk.Canvas(upper_frame)
+        self.canvas.grid(row=0, column=1, sticky='news')
+        self.scrollbar = tk.Scrollbar(upper_frame, orient='vertical', command=self.canvas.yview)
+        self.scrollbar.grid(row=0, column=2, sticky='ns')
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
         self.items_frame = tk.Frame(self.canvas)
@@ -52,10 +62,13 @@ class FilePicker(tk.Frame):
         self.bind_scroll(self.canvas)
         self.bind_scroll(self.items_frame)
 
-        self.button_frame = tk.Frame(self.frame)
-        self.button_frame.grid(row=2, column=0, sticky='we')
-        self.frame.grid_rowconfigure(1, weight=0)
+        self.path_textfield = tk.Entry(lower_frame)
+        self.path_textfield.grid(row=0, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
+        self.path_textfield.insert(0, args.path)
+        self.path_textfield.bind("<Return>", self.on_type_enter)
 
+        self.button_frame = tk.Frame(lower_frame)
+        self.button_frame.grid(row=1, column=0, sticky='we')
         button_text = "Save" if self.select_save else "Open"
         self.open_button = tk.Button(self.button_frame, width=10, text=button_text, command=self.on_select_button)
         self.open_button.pack(side='right')
@@ -63,11 +76,6 @@ class FilePicker(tk.Frame):
         self.cancel_button.pack(side='right')
         self.up_dir_button = tk.Button(self.button_frame, width=10, text="Up Dir", command=self.on_up_dir)
         self.up_dir_button.pack(side='right')
-
-        self.path_textfield = tk.Entry(self.frame)
-        self.path_textfield.grid(row=1, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
-        self.path_textfield.insert(0, args.path)
-        self.path_textfield.bind("<Return>", self.on_type_enter)
 
         self.num_items = 0
         self.queue = queue.Queue()
@@ -80,6 +88,12 @@ class FilePicker(tk.Frame):
         self.doc_icon = tk.PhotoImage(file=asset_dir+'/document.png')
         self.unknown_icon = tk.PhotoImage(file=asset_dir+'/unknown.png')
         self.prev_sel = None
+
+        self.bookmarks = ['Home', 'Documents', 'Pictures', 'Downloads']
+        for i, bookmark in enumerate(self.bookmarks):
+            btn = tk.Button(self.bookmark_frame, text=bookmark)
+            btn.grid(row=i, column=0, sticky='news')
+            btn.bind("<Button-1>", self.on_bookmark_click)
 
         self.frame.pack(fill='both', expand=True)
         self.change_dir(args.path)
@@ -157,7 +171,7 @@ class FilePicker(tk.Frame):
                     all_items[index].grid(row=row, column=col)
 
     def recalculate_max_cols(self):
-        max_width = self.frame.winfo_width()
+        max_width = self.frame.winfo_width() - self.bookmark_frame.winfo_width()
         self.max_cols = max(1, int(max_width / (THUMBNAIL_WIDTH+6))) # figure out proper width calculation
 
     def on_click_file(self, event):
@@ -257,8 +271,19 @@ class FilePicker(tk.Frame):
         if old != self.max_cols:
             self.reorganize_items()
 
+    def on_bookmark_click(self, event):
+        bookmark = event.widget.cget('text')
+        if bookmark == 'Home':
+            self.change_dir(os.path.expanduser('~'))
+        elif bookmark == 'Documents':
+            self.change_dir(os.path.join(os.environ['HOME'], 'Documents'))
+        elif bookmark == 'Pictures':
+            self.change_dir(os.path.join(os.environ['HOME'], 'Pictures'))
+        elif bookmark == 'Downloads':
+            self.change_dir(os.path.join(os.environ['HOME'], 'Downloads'))
+
 def main():
-    parser = argparse.ArgumentParser(description="Command Line Interface for File Picker")
+    parser = argparse.ArgumentParser(description="A filepicker with proper thumbnail support")
     parser.add_argument("-e", "--parent", help="window id of the window this one is transient to")
     parser.add_argument("-t", "--title", default="File Picker", help="title of the filepicker window")
     parser.add_argument("-k", "--type", choices=['file', 'files', 'dir', 'save'], help="type of file selection. One of [file files dir save]")
