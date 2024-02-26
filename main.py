@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import argparse
+import argparse, configparser
 import glob
 import os, sys
 import tkinter as tk
@@ -14,6 +14,7 @@ THUMBNAIL_HEIGHT = 140
 # https://icon-icons.com
 asset_dir = os.path.dirname(os.path.abspath(__file__))
 home_dir = os.environ['HOME']
+config_file = '/tmp/pickeru.conf'
 
 class PathInfo(str):
     def __new__(cls, path):
@@ -31,6 +32,7 @@ class FilePicker(tk.Frame):
         self.save_filename = None
         if self.select_save and not os.path.isdir(args.path):
             self.save_filename = os.path.basename(args.path)
+        self.load_config()
 
         self.root = tk.Tk()
         self.root.geometry('720x480')
@@ -93,10 +95,9 @@ class FilePicker(tk.Frame):
         self.unknown_icon = tk.PhotoImage(file=asset_dir+'/unknown.png')
         self.prev_sel = None
 
-        self.bookmarks = ['', 'Documents', 'Pictures', 'Downloads']
-        for i, bookmark in enumerate(self.bookmarks):
-            btn = tk.Button(self.bookmark_frame, text=bookmark if bookmark else 'Home')
-            btn.path = os.path.join(home_dir, bookmark)
+        for i, (name, path) in enumerate(self.bookmarks.items()):
+            btn = tk.Button(self.bookmark_frame, text=name)
+            btn.path = path
             btn.grid(row=i, column=0, sticky='news')
             btn.bind("<Button-1>", self.on_bookmark_click)
 
@@ -176,10 +177,13 @@ class FilePicker(tk.Frame):
             if source.path == child.path:
                 return
         path = source.path
-        new_bookmark = tk.Button(self.bookmark_frame, text=os.path.basename(path), command=lambda: self.change_dir(path))
+        basename = os.path.basename(path)
+        new_bookmark = tk.Button(self.bookmark_frame, text=basename, command=lambda: self.change_dir(path))
         new_bookmark.path = path
         new_bookmark.grid(row=len(bookmarks), column=0, sticky='news')
         self.bookmark_frame.update_idletasks()
+        with open(config_file, 'a') as f:
+            f.write(f'{basename}={path}\n')
 
     def on_bookmark_click(self, event):
         self.change_dir(event.widget.path)
@@ -311,6 +315,29 @@ class FilePicker(tk.Frame):
         self.recalculate_max_cols()
         if old != self.max_cols:
             self.reorganize_items()
+
+    def load_config(self):
+        if not os.path.isfile(config_file):
+            with open(config_file, 'w') as f:
+                f.write(f'[Bookmarks]\nHome={home_dir}\n')
+                f.writelines([f'{bm}={os.path.join(home_dir, bm)}\n' for bm in ["Documents", "Pictures", "Downloads"]])
+        config = CaseConfigParser()
+        config.read(os.path.expanduser(config_file))
+        self.bookmarks = config['Bookmarks']
+
+    # def save_bookmarks(self):
+        # config = configparser.ConfigParser()
+        # for bookmark in self.bookmarks[1:]:
+            # if bookmark:
+                # config["{}_bookmark".format(bookmark)] = {"path": bookmark}
+        # with open(os.path.expanduser(config_file), "w") as configfile:
+            # config.write(configfile)
+
+class CaseConfigParser(configparser.RawConfigParser):
+    def __init__(self, defaults=None):
+        super().__init__(defaults)
+    def optionxform(self, optionstr):
+        return optionstr
 
 def main():
     parser = argparse.ArgumentParser(description="A filepicker with proper thumbnail support")
