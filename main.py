@@ -6,15 +6,17 @@ import tkinter as tk
 from PIL import Image, ImageTk
 from tkinter.messagebox import askyesno
 import threading
+from multiprocessing import cpu_count
 import queue
 
 THUMBNAIL_WIDTH = 140
 THUMBNAIL_HEIGHT = 140
 
 # https://icon-icons.com
-asset_dir = os.path.dirname(os.path.abspath(__file__))
+asset_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
 home_dir = os.environ['HOME']
-config_file = '/tmp/pickeru.conf'
+config_file = os.path.join(home_dir,'.config','pickeru.conf')
+threads = max(cpu_count()-1, 1)
 
 class PathInfo(str):
     def __new__(cls, path):
@@ -33,6 +35,7 @@ class FilePicker(tk.Frame):
         if self.select_save and not os.path.isdir(args.path):
             self.save_filename = os.path.basename(args.path)
         self.load_config()
+        self.num_items = 0
 
         self.root = tk.Tk()
         self.root.geometry('720x480')
@@ -83,16 +86,21 @@ class FilePicker(tk.Frame):
         self.sort_button = tk.Button(self.button_frame, width=10, text="Sort", command=self.show_sort_menu)
         self.sort_button.pack(side='right')
 
-        self.num_items = 0
         self.queue = queue.Queue()
-        self.loading_thread = threading.Thread(target=self.load_items)
-        self.loading_thread.daemon = True
-        self.loading_thread.start()
+        self.lock = threading.Lock()
+        self.threads = []
+        for i in range(cpu_count()):
+            loading_thread = threading.Thread(target=self.load_items)
+            loading_thread.daemon = True
+            loading_thread.start()
+            self.threads.append(loading_thread)
+
         self.frame.bind('<Configure>', self.on_resize)
         self.recalculate_max_cols()
         self.folder_icon = tk.PhotoImage(file=asset_dir+'/folder.png')
         self.doc_icon = tk.PhotoImage(file=asset_dir+'/document.png')
         self.unknown_icon = tk.PhotoImage(file=asset_dir+'/unknown.png')
+        self.error_icon = tk.PhotoImage(file=asset_dir+'/error.png')
         self.prev_sel = None
 
         for i, (name, path) in enumerate(self.bookmarks.items()):
@@ -129,7 +137,9 @@ class FilePicker(tk.Frame):
         if not self.select_dir:
             label.bind("<Button-1>", self.on_click_file)
             label.bind("<Double-Button-1>", self.on_double_click_file)
-        label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
+        self.lock.acquire()
+        label.grid(row=item_path.idx//self.max_cols, column=item_path.idx%self.max_cols)
+        self.lock.release()
 
     def load_item(self, item_path):
         try:
@@ -142,20 +152,22 @@ class FilePicker(tk.Frame):
                         img = Image.open(item_path)
                         img.thumbnail((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
                         img = ImageTk.PhotoImage(img)
-                        label = tk.Label(self.items_frame, image=img, text=name, compound='top', bd=2)
+                        label = tk.Label(self.items_frame, image=img, text=name, compound='top')
                         label.__setattr__('img', img)
                         self.prep_file(label, item_path)
                     case '.txt'|'.pdf'|'.doc'|'.docx':
-                        label = tk.Label(self.items_frame, image=self.doc_icon, text=name, compound='top', bd=2)
+                        label = tk.Label(self.items_frame, image=self.doc_icon, text=name, compound='top')
+                        label.__setattr__('img', self.doc_icon)
                         self.prep_file(label, item_path)
                     case _:
-                        label = tk.Label(self.items_frame, image=self.unknown_icon, text=name, compound='top', bd=2)
+                        label = tk.Label(self.items_frame, image=self.unknown_icon, text=name, compound='top')
+                        label.__setattr__('img', self.unknown_icon)
                         self.prep_file(label, item_path)
             elif os.path.isdir(item_path):
-                label = tk.Label(self.items_frame, image=self.folder_icon, text=name, compound='top', bd=2)
+                label = tk.Label(self.items_frame, image=self.folder_icon, text=name, compound='top')
                 label.path = item_path
                 label.sel = False
-                label.grid(row=self.num_items//self.max_cols, column=self.num_items%self.max_cols)
+                label.grid(row=item_path.idx//self.max_cols, column=item_path.idx%self.max_cols)
                 label.bind("<Double-Button-1>", self.on_double_click_dir)
                 if self.select_dir:
                     label.bind("<Button-1>", self.on_click_file)
@@ -163,8 +175,10 @@ class FilePicker(tk.Frame):
                 label.bind("<ButtonRelease-1>", self.on_drag_dir_end)
             else:
                 return
-            self.num_items += 1
         except Exception as e:
+            label = tk.Label(self.items_frame, image=self.error_icon, text=name, compound='top')
+            label.__setattr__('img', self.unknown_icon)
+            self.prep_file(label, item_path)
             sys.stderr.write(f'Error loading item: {e}\n')
 
     def on_drag_dir_end(self, event):
@@ -279,10 +293,11 @@ class FilePicker(tk.Frame):
         self.items_frame.bind('<Configure>', self.on_frame_configure)
         self.bind_scroll(self.canvas)
         self.bind_scroll(self.items_frame)
-        self.num_items = 0
         paths = [PathInfo(p) for p in glob.glob(os.path.join(os.getcwd(), '*'))]
+        self.num_items = len(paths)
         paths.sort(key=lambda p: (not p.isdir, p.lname))
-        for path in paths:
+        for i, path in enumerate(paths):
+            path.idx = i
             self.enqueue_item(path)
 
     def show_sort_menu(self):
@@ -324,14 +339,6 @@ class FilePicker(tk.Frame):
         config = CaseConfigParser()
         config.read(os.path.expanduser(config_file))
         self.bookmarks = config['Bookmarks']
-
-    # def save_bookmarks(self):
-        # config = configparser.ConfigParser()
-        # for bookmark in self.bookmarks[1:]:
-            # if bookmark:
-                # config["{}_bookmark".format(bookmark)] = {"path": bookmark}
-        # with open(os.path.expanduser(config_file), "w") as configfile:
-            # config.write(configfile)
 
 class CaseConfigParser(configparser.RawConfigParser):
     def __init__(self, defaults=None):
