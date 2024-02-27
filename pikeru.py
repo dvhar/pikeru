@@ -8,6 +8,7 @@ from tkinter.messagebox import askyesno
 import threading
 from multiprocessing import cpu_count
 import queue
+import hashlib
 
 THUMBNAIL_WIDTH = 140
 THUMBNAIL_HEIGHT = 140
@@ -16,6 +17,7 @@ THUMBNAIL_HEIGHT = 140
 asset_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
 home_dir = os.environ['HOME']
 config_file = os.path.join(home_dir,'.config','pikeru.conf')
+cache_dir = '/tmp/pcache'
 
 class PathInfo(str):
     def __new__(cls, path):
@@ -161,9 +163,7 @@ class FilePicker(tk.Frame):
                 ext = os.path.splitext(base_path)[-1].lower()
                 match ext:
                     case '.png'|'.jpg'|'.jpeg'|'.gif':
-                        img = Image.open(item_path)
-                        img.thumbnail((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
-                        img = ImageTk.PhotoImage(img)
+                        img = self.prepare_cached_thumbnail(item_path)
                         label = tk.Label(self.items_frame, image=img, text=name, compound='top')
                         label.__setattr__('img', img)
                         label.bind("<Button-3>", self.on_view_image)
@@ -186,6 +186,20 @@ class FilePicker(tk.Frame):
             label.__setattr__('img', self.unknown_icon)
             self.prep_file(label, item_path)
             sys.stderr.write(f'Error loading item: {e}\n')
+
+    def prepare_cached_thumbnail(self, item_path):
+        md5hash = hashlib.md5(item_path.encode()).hexdigest()
+        cache_path = os.path.join(cache_dir, f'{md5hash}.png')
+        if os.path.isfile(cache_path):
+            img = Image.open(cache_path)
+            img = ImageTk.PhotoImage(img)
+            return img
+        else:
+            img = Image.open(item_path)
+            img.thumbnail((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
+            img.save(cache_path)
+            img = ImageTk.PhotoImage(img)
+            return img
 
     def on_drag_dir_end(self, event):
         source = event.widget
