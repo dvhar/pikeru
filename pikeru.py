@@ -136,7 +136,21 @@ class FilePicker(tk.Frame):
             label.bind("<Button-1>", self.on_click_file)
             label.bind("<Double-Button-1>", self.on_double_click_file)
         self.lock.acquire()
-        label.grid(row=item_path.idx//self.max_cols, column=item_path.idx%self.max_cols)
+        if os.path.dirname(item_path) == os.getcwd():
+            label.grid(row=item_path.idx//self.max_cols, column=item_path.idx%self.max_cols)
+        self.lock.release()
+
+    def prep_dir(self, label, item_path):
+        label.path = item_path
+        label.sel = False
+        self.bind_scroll(label)
+        label.bind("<Double-Button-1>", self.on_double_click_dir)
+        if self.select_dir:
+            label.bind("<Button-1>", self.on_click_file)
+        label.bind("<ButtonRelease-1>", self.on_drag_dir_end)
+        self.lock.acquire()
+        if os.path.dirname(item_path) == os.getcwd():
+            label.grid(row=item_path.idx//self.max_cols, column=item_path.idx%self.max_cols)
         self.lock.release()
 
     def load_item(self, item_path):
@@ -163,14 +177,7 @@ class FilePicker(tk.Frame):
                         self.prep_file(label, item_path)
             elif os.path.isdir(item_path):
                 label = tk.Label(self.items_frame, image=self.folder_icon, text=name, compound='top')
-                label.path = item_path
-                label.sel = False
-                label.grid(row=item_path.idx//self.max_cols, column=item_path.idx%self.max_cols)
-                label.bind("<Double-Button-1>", self.on_double_click_dir)
-                if self.select_dir:
-                    label.bind("<Button-1>", self.on_click_file)
-                self.bind_scroll(label)
-                label.bind("<ButtonRelease-1>", self.on_drag_dir_end)
+                self.prep_dir(label, item_path)
             else:
                 return
         except Exception as e:
@@ -235,7 +242,9 @@ class FilePicker(tk.Frame):
     def change_dir(self, new_dir):
         if os.path.isdir(new_dir):
             self.prev_sel = None
+            self.lock.acquire()
             os.chdir(new_dir)
+            self.lock.release()
             self.path_textfield.delete(0, 'end')
             if self.save_filename:
                 new_dir += '/' + self.save_filename
