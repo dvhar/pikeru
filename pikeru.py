@@ -222,11 +222,15 @@ class FilePicker(tk.Frame):
         else:
             label.config(relief="flat", bg='black')
             label.sel = False
+            self.path_textfield.delete(0, 'end')
+            self.path_textfield.insert(0, os.getcwd())
         if label.sel:
             if not self.select_multi and self.prev_sel and self.prev_sel is not label:
                 self.prev_sel.sel = False
                 self.prev_sel.config(relief="flat", bg='black')
             self.prev_sel = label
+            self.path_textfield.delete(0, 'end')
+            self.path_textfield.insert(0, label.path)
 
     def change_dir(self, new_dir):
         if os.path.isdir(new_dir):
@@ -242,9 +246,7 @@ class FilePicker(tk.Frame):
             self.canvas.yview_moveto(0)
 
     def on_up_dir(self):
-        new_dir = os.path.dirname(self.path_textfield.get())
-        if self.select_save:
-            new_dir = os.path.dirname(new_dir)
+        new_dir = os.path.dirname(os.getcwd())
         self.change_dir(new_dir)
 
     def on_double_click_dir(self, event):
