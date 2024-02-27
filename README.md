@@ -2,6 +2,8 @@
 
 Pikeru is the only filepicker for linux that has working thumbnails and works on any desktop environment or window manager. The Gtk patch for getting thumbnails in the filepicker proves that implementing thumbnails correctly at the toolkit level is never going to happen and a standalone program is needed.
 
+![screenshot](screenshot.jpg)
+
 ## Command Line Arguments
 Pikeru takes several command line args and returns the selected file(s) to stdout separated by newlines.
 
