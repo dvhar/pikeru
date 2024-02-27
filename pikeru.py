@@ -115,9 +115,14 @@ class FilePicker(tk.Frame):
     def run(self):
         self.root.mainloop()
 
+    def mouse_nav(self, event):
+        match event.num:
+            case 4: self.canvas.yview_scroll(-2,'units')
+            case 5: self.canvas.yview_scroll(2,'units')
+            case 8: self.on_up_dir()
+
     def bind_scroll(self, thing):
-        thing.bind('<Button-4>', lambda _: self.canvas.yview_scroll(-2,'units'))
-        thing.bind('<Button-5>', lambda _: self.canvas.yview_scroll(2,'units'))
+        thing.bind('<Button>', self.mouse_nav)
 
     def on_frame_configure(self, event=None):
         self.canvas.configure(scrollregion=self.canvas.bbox('all'))
@@ -137,10 +142,8 @@ class FilePicker(tk.Frame):
         if not self.select_dir:
             label.bind("<Button-1>", self.on_click_file)
             label.bind("<Double-Button-1>", self.on_double_click_file)
-        self.lock.acquire()
         if os.path.dirname(item_path) == os.getcwd():
             label.grid(row=item_path.idx//self.max_cols, column=item_path.idx%self.max_cols)
-        self.lock.release()
 
     def prep_dir(self, label, item_path):
         label.path = item_path
@@ -150,15 +153,13 @@ class FilePicker(tk.Frame):
         if self.select_dir:
             label.bind("<Button-1>", self.on_click_file)
         label.bind("<ButtonRelease-1>", self.on_drag_dir_end)
-        self.lock.acquire()
         if os.path.dirname(item_path) == os.getcwd():
             label.grid(row=item_path.idx//self.max_cols, column=item_path.idx%self.max_cols)
-        self.lock.release()
 
     def load_item(self, item_path):
+        base_path = os.path.basename(item_path)
+        name = base_path if len(base_path) < 20 else base_path[len(base_path)-19:]
         try:
-            base_path = os.path.basename(item_path)
-            name = base_path if len(base_path) < 20 else base_path[len(base_path)-19:]
             if os.path.isfile(item_path):
                 ext = os.path.splitext(base_path)[-1].lower()
                 match ext:
@@ -185,7 +186,7 @@ class FilePicker(tk.Frame):
             label = tk.Label(self.items_frame, image=self.error_icon, text=name, compound='top')
             label.__setattr__('img', self.unknown_icon)
             self.prep_file(label, item_path)
-            sys.stderr.write(f'Error loading item: {e}\n')
+            sys.stderr.write(f'Error loading item: {e}\t{item_path}\n')
 
     def prepare_cached_thumbnail(self, item_path):
         md5hash = hashlib.md5(item_path.encode()).hexdigest()
@@ -294,9 +295,7 @@ class FilePicker(tk.Frame):
     def change_dir(self, new_dir):
         if os.path.isdir(new_dir):
             self.prev_sel = None
-            self.lock.acquire()
             os.chdir(new_dir)
-            self.lock.release()
             self.path_textfield.delete(0, 'end')
             if self.save_filename:
                 new_dir += '/' + self.save_filename
@@ -415,6 +414,7 @@ def main():
     parser.add_argument("-p", "--path", default=os.getcwd(), help="path of initial directory")
     parser.add_argument("-i", "--mime_list", nargs="*", help="list of allowed mime types. Can be empty.")
     args = parser.parse_args()
+    os.makedirs(cache_dir, exist_ok=True)
     
     picker = FilePicker(args)
     picker.run()
