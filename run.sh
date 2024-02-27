@@ -1,5 +1,7 @@
 #!/bin/zsh
+
+debuglog=/tmp/pikeru.log
 cd `dirname $0`
-echo "$*" > /tmp/errlog
-echo '------' >> /tmp/errlog
-./main.py $@ 2>> /tmp/errlog | tee /tmp/fplog
+echo "$*" > $debuglog
+echo '------' >> $debuglog
+./pikeru.py $@ 2>&1 >> $debuglog

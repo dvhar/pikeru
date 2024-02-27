@@ -15,8 +15,7 @@ THUMBNAIL_HEIGHT = 140
 # https://icon-icons.com
 asset_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
 home_dir = os.environ['HOME']
-config_file = os.path.join(home_dir,'.config','pickeru.conf')
-threads = max(cpu_count()-1, 1)
+config_file = os.path.join(home_dir,'.config','pikeru.conf')
 
 class PathInfo(str):
     def __new__(cls, path):
@@ -90,8 +89,7 @@ class FilePicker(tk.Frame):
         self.lock = threading.Lock()
         self.threads = []
         for i in range(cpu_count()):
-            loading_thread = threading.Thread(target=self.load_items)
-            loading_thread.daemon = True
+            loading_thread = threading.Thread(target=self.load_items, daemon=True)
             loading_thread.start()
             self.threads.append(loading_thread)
 
