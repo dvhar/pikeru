@@ -28,7 +28,7 @@ class PathInfo(str):
 class FilePicker(tk.Frame):
     def __init__(self, args: argparse.Namespace, **kwargs):
         self.select_dir = args.type == 'dir'
-        self.select_multi = not self.select_dir and args.type == 'files'
+        self.select_multi = args.type == 'files'
         self.select_save = args.type == 'save'
         self.save_filename = None
         if self.select_save and not os.path.isdir(args.path):
