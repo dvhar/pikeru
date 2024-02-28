@@ -27,7 +27,9 @@ Most current software is not designed to use a standalone filepicker, but it is 
 git apply < /path/to/chromium.patch
 # then build as usual
 ```
-Then to use it set the environment variable `CUSTOM_FILEPICKER=/path/to/this/program/main.py`
+Then to use it set the environment variable `CUSTOM_FILEPICKER=/path/to/this/program/run.sh`.
+
+If using a venv, set the venv variable in `run.sh`.
 
 ## Roadmap to get a proper filepicker on linux
 1. Write a basic but useable and good filepicker (this one).

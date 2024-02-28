@@ -1,15 +1,15 @@
 #!/bin/bash
 
-# comment out or set to your venv
-. ~/stuff/v1/bin/activate
-
+venv=~/stuff/v1/bin/activate
+debug=1
 
 TITLE="File Picker"
 MODE="file"
 DIR="$(pwd)"
 MIME_LIST=""
 
-while getopts "e:t:k:p:i:" opt; do
+[ -z $debug ] || echo "launcher args: $*" > /tmp/pkerr
+while getopts "e:t:m:p:i:" opt; do
   case $opt in
     e)
       PARENT="$OPTARG"
@@ -27,20 +27,25 @@ while getopts "e:t:k:p:i:" opt; do
       MIME_LIST="$OPTARG"
       ;;
     \?)
-      echo "Invalid option: -$OPTARG" >&2
+      [ -z $debug ] || echo "Invalid option: -$opt -$OPTARG" >> /tmp/pkerr
       exit 1
       ;;
   esac
 done
 
 if [[ ! "$MODE" =~ ^(file|files|dir|save)$ ]]; then
-  echo "Error: Invalid mode flag value (-m). It should be one of [file files dir save]." >&2
+  [ -z $debug ] || echo "Error: Invalid mode flag value (-m). It should be one of [file files dir save]." >> /tmp/pkerr
   exit 1
 fi
 
-python ./pikeru.py \
-  --title "${TITLE}" \
-  --mode "${MODE}" \
-  --path "${DIR}" \
-  --mime_list "${MIME_LIST[@]:-}" \
-  --parent "${PARENT:-}"
+[ -z "$venv" ] || . ~/stuff/v1/bin/activate
+
+#not using title flag but you can if you want
+cmd="python ./pikeru.py \
+	--mode '${MODE}' \
+	--path '${DIR}' \
+	--mime_list '${MIME_LIST[@]:-}' \
+	--parent '${PARENT:-}'" 
+[ -z $debug ] || echo "cmd: $cmd" >> /tmp/pkerr
+cd `dirname $0`
+eval $cmd
