@@ -9,7 +9,7 @@ import threading
 from multiprocessing import cpu_count
 import queue
 import hashlib
-from moviepy.editor import VideoFileClip
+import cv2
 
 THUMBNAIL_WIDTH = 140
 THUMBNAIL_HEIGHT = 140
@@ -174,6 +174,7 @@ class FilePicker(tk.Frame):
                         img = self.prepare_cached_thumbnail(item_path, 'vid')
                         label = tk.Label(self.items_frame, image=img, text=name, compound='top')
                         label.__setattr__('img', img)
+                        label.__setattr__('vid', True)
                         label.bind("<Button-3>", self.on_view_image)
                         self.prep_file(label, item_path)
                     case '.txt'|'.pdf'|'.doc'|'.docx':
@@ -210,8 +211,12 @@ class FilePicker(tk.Frame):
                 img = ImageTk.PhotoImage(img)
                 return img
             else:
-                clip = VideoFileClip(item_path)
-                frame = clip.get_frame(0)
+                cap = cv2.VideoCapture(item_path)
+                ret, frame = cap.read()
+                cap.release()
+                if not ret:
+                    return self.error_icon
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 img = Image.fromarray(frame)
                 img.thumbnail((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
                 img.save(cache_path)
@@ -272,8 +277,18 @@ class FilePicker(tk.Frame):
             self.path_textfield.insert(0, label.path)
 
     def on_view_image(self, event):
-        if event.widget.__getattribute__("img"):
-            img = Image.open(event.widget.path)
+        label = event.widget
+        if label.__getattribute__("img"):
+            if label.vid:
+                cap = cv2.VideoCapture(label.path)
+                ret, frame = cap.read()
+                cap.release()
+                if not ret:
+                    return
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(frame)
+            else:
+                img = Image.open(label.path)
             m = min(self.canvas.winfo_height() / img.height, self.canvas.winfo_width() / img.width)
             img.thumbnail((img.width * m, img.height * m))
             expanded_img = ImageTk.PhotoImage(img)
