@@ -18,7 +18,7 @@ THUMBNAIL_HEIGHT = 140
 asset_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
 home_dir = os.environ['HOME']
 config_file = os.path.join(home_dir,'.config','pikeru.conf')
-cache_dir = '/tmp/pcache'
+cache_dir = os.path.join(home_dir,'.cache','pikeru')
 
 class PathInfo(str):
     def __new__(cls, path):
@@ -277,32 +277,33 @@ class FilePicker(tk.Frame):
             self.path_textfield.insert(0, label.path)
 
     def on_view_image(self, event):
-        label = event.widget
-        if label.__getattribute__("img"):
-            if label.vid:
-                cap = cv2.VideoCapture(label.path)
-                ret, frame = cap.read()
-                cap.release()
-                if not ret:
-                    return
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                img = Image.fromarray(frame)
-            else:
-                img = Image.open(label.path)
-            m = min(self.canvas.winfo_height() / img.height, self.canvas.winfo_width() / img.width)
-            img.thumbnail((img.width * m, img.height * m))
-            expanded_img = ImageTk.PhotoImage(img)
-            temp_label = tk.Label(self.canvas, image=expanded_img, bd=0)
-            temp_label.img = expanded_img
-            self.current_y = self.canvas.yview()[0]
-            self.canvas.yview_moveto(0)
-            self.canvas.delete("all")
-            x_pos = (self.canvas.winfo_width() - temp_label.winfo_width()) // 2
-            y_pos = (self.canvas.winfo_height() - temp_label.winfo_height()) // 2
-            self.canvas.create_window(x_pos, y_pos, window=temp_label, anchor='center')
-            temp_label.bind("<Button-2>", self.close_expanded_image)
-            temp_label.bind("<Button-3>", self.close_expanded_image)
-            temp_label.bind("<Double-Button-1>",lambda _: self.on_double_click_file(event))
+        label : tk.Label = event.widget
+        if not hasattr(label, 'img'):
+            return
+        if hasattr(label, 'vid'):
+            cap = cv2.VideoCapture(label.path)
+            ret, frame = cap.read()
+            cap.release()
+            if not ret:
+                return
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(frame)
+        else:
+            img = Image.open(label.path)
+        m = min(self.canvas.winfo_height() / img.height, self.canvas.winfo_width() / img.width)
+        img.thumbnail((img.width * m, img.height * m))
+        expanded_img = ImageTk.PhotoImage(img)
+        temp_label = tk.Label(self.canvas, image=expanded_img, bd=0)
+        temp_label.img = expanded_img
+        self.current_y = self.canvas.yview()[0]
+        self.canvas.yview_moveto(0)
+        self.canvas.delete("all")
+        x_pos = (self.canvas.winfo_width() - temp_label.winfo_width()) // 2
+        y_pos = (self.canvas.winfo_height() - temp_label.winfo_height()) // 2
+        self.canvas.create_window(x_pos, y_pos, window=temp_label, anchor='center')
+        temp_label.bind("<Button-2>", self.close_expanded_image)
+        temp_label.bind("<Button-3>", self.close_expanded_image)
+        temp_label.bind("<Double-Button-1>",lambda _: self.on_double_click_file(event))
         if not event.widget.sel:
             self.on_click_file(event)
             self.unselect = event
