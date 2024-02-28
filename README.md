@@ -8,7 +8,7 @@ Pikeru is the only filepicker for linux that has working thumbnails and works on
 Pikeru takes several command line args and returns the selected file(s) to stdout separated by newlines.
 
 - `-t title`: Sets the title displayed at the top of the Pikeru window.
-- `-k type`: Determines the type of file selection operation:
+- `-m mode`: Determines the mode of file selection operation:
   - `file`: Select a single file.
   - `files`: Select multiple files.
   - `dir`: Select a single directory.
