@@ -13,6 +13,8 @@ import cv2
 
 THUMBNAIL_WIDTH = 140
 THUMBNAIL_HEIGHT = 140
+INIT_WIDTH = 720
+INIT_HEIGHT = 480
 
 # https://icon-icons.com
 asset_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
@@ -40,7 +42,7 @@ class FilePicker(tk.Frame):
         self.num_items = 0
 
         self.root = tk.Tk()
-        self.root.geometry('720x480')
+        self.root.geometry(f'{INIT_WIDTH}x{INIT_HEIGHT}')
         self.root.wm_title(args.title or 'File Picker')
         self.frame = tk.Frame(self.root, **kwargs)
         self.frame.grid_columnconfigure(0, weight=1)
@@ -97,7 +99,8 @@ class FilePicker(tk.Frame):
             self.threads.append(loading_thread)
 
         self.frame.bind('<Configure>', self.on_resize)
-        self.recalculate_max_cols()
+        max_width = INIT_WIDTH - self.bookmark_frame.winfo_width()
+        self.max_cols = max(1, int(max_width / (THUMBNAIL_WIDTH+6)))
         self.folder_icon = tk.PhotoImage(file=asset_dir+'/folder.png')
         self.doc_icon = tk.PhotoImage(file=asset_dir+'/document.png')
         self.unknown_icon = tk.PhotoImage(file=asset_dir+'/unknown.png')
@@ -392,8 +395,8 @@ class FilePicker(tk.Frame):
         self.sort_popup = tk.Menu(self.root, tearoff=False)
         self.sort_popup.add_command(label="Name asc", command=lambda :self.on_sort('name', True))
         self.sort_popup.add_command(label="Name desc", command=lambda :self.on_sort('name', False))
-        self.sort_popup.add_command(label="Date asc", command=lambda :self.on_sort('time', True))
-        self.sort_popup.add_command(label="Date desc", command=lambda :self.on_sort('time', False))
+        self.sort_popup.add_command(label="Date oldest first", command=lambda :self.on_sort('time', True))
+        self.sort_popup.add_command(label="Date newest first", command=lambda :self.on_sort('time', False))
         self.sort_popup.post(self.sort_button.winfo_rootx(), self.sort_button.winfo_rooty())
 
     def on_sort(self, by, asc):
