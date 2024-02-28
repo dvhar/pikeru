@@ -378,7 +378,7 @@ index 0000000000..c3325a5e2b
 +      " that takes these cmdline arguments and prints the selected files to stdout:\n"
 +      "	-e PARENT_WINDOW:	browser window to embed the filepicker into\n"
 +      "	-t TITLE:	title of the filepicker window\n"
-+      "	-k TYPE:	type of file selection. One of [file files dir save]\n"
++      "	-m MODE:	mode of file selection. One of [file files dir save]\n"
 +      "	-p PATH:	path of initial directory\n"
 +      "	-i MIME_LIST:	list of allowed mime types. Can be empty.";
 +  }
@@ -409,7 +409,7 @@ index 0000000000..c3325a5e2b
 +    command_line->AppendArg("-t");
 +    command_line->AppendArg(title);
 +  }
-+  command_line->AppendArg("-k");
++  command_line->AppendArg("-m");
 +  command_line->AppendArg(type);
 +  // The path should never be empty. If it is, set it to PWD.
 +  command_line->AppendArg("-p");

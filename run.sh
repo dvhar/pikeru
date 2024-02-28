@@ -5,7 +5,7 @@
 
 
 TITLE="File Picker"
-TYPE="file"
+MODE="file"
 DIR="$(pwd)"
 MIME_LIST=""
 
@@ -17,8 +17,8 @@ while getopts "e:t:k:p:i:" opt; do
     t)
       TITLE="$OPTARG"
       ;;
-    k)
-      TYPE="$OPTARG"
+    m)
+      MODE="$OPTARG"
       ;;
     p)
       DIR="$OPTARG"
@@ -33,14 +33,14 @@ while getopts "e:t:k:p:i:" opt; do
   esac
 done
 
-if [[ ! "$TYPE" =~ ^(file|files|dir|save)$ ]]; then
-  echo "Error: Invalid type flag value (-k). It should be one of [file files dir save]." >&2
+if [[ ! "$MODE" =~ ^(file|files|dir|save)$ ]]; then
+  echo "Error: Invalid mode flag value (-m). It should be one of [file files dir save]." >&2
   exit 1
 fi
 
 python ./pikeru.py \
   --title "${TITLE}" \
-  --type "${TYPE}" \
+  --mode "${MODE}" \
   --path "${DIR}" \
   --mime_list "${MIME_LIST[@]:-}" \
   --parent "${PARENT:-}"

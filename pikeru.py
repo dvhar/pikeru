@@ -30,9 +30,9 @@ class PathInfo(str):
 
 class FilePicker(tk.Frame):
     def __init__(self, args: argparse.Namespace, **kwargs):
-        self.select_dir = args.type == 'dir'
-        self.select_multi = args.type == 'files'
-        self.select_save = args.type == 'save'
+        self.select_dir = args.mode == 'dir'
+        self.select_multi = args.mode == 'files'
+        self.select_save = args.mode == 'save'
         self.save_filename = None
         if self.select_save and not os.path.isdir(args.path):
             self.save_filename = os.path.basename(args.path)
@@ -438,7 +438,7 @@ def main():
     parser = argparse.ArgumentParser(description="A filepicker with proper thumbnail support")
     parser.add_argument("-e", "--parent", help="window id of the window this one is transient to")
     parser.add_argument("-t", "--title", default="File Picker", help="title of the filepicker window")
-    parser.add_argument("-k", "--type", choices=['file', 'files', 'dir', 'save'], help="type of file selection. One of [file files dir save]")
+    parser.add_argument("-m", "--mode", choices=['file', 'files', 'dir', 'save'], help="Mode of file selection. One of [file files dir save]")
     parser.add_argument("-p", "--path", default=os.getcwd(), help="path of initial directory")
     parser.add_argument("-i", "--mime_list", nargs="*", help="list of allowed mime types. Can be empty.")
     args = parser.parse_args()
