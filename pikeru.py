@@ -255,42 +255,38 @@ class FilePicker(tk.Frame):
             self.path_textfield.delete(0, 'end')
             self.path_textfield.insert(0, label.path)
 
-    def resize_image(self, img, desired_width, desired_height):
-        """Resize the given image to fit within the specified dimensions."""
-        img.thumbnail((desired_width, desired_height))
-        return img
-
     def on_view_image(self, event):
         if event.widget.__getattribute__("img"):
-            orig_img = Image.open(event.widget.path)
-            img_aspect = orig_img.width / orig_img.height
-            # Calculate the maximum height/width based on the available space
-            viewable_width = self.canvas.winfo_width()
-            viewable_height = self.canvas.winfo_height()
-            max_height = min(viewable_height, img_aspect * viewable_width)
-            max_width = min(viewable_width, viewable_height * (1 / img_aspect))
-            # Resize the image to fit the available space
-            scaled_img = self.resize_image(orig_img, max_width, max_height)
-            full_size_img = ImageTk.PhotoImage(scaled_img)
-            # Create temporary Label to store full-sized image
-            temp_label = tk.Label(self.canvas, image=full_size_img, bd=0)
-            temp_label.img = full_size_img
-            # Replace current canvas content with the full-sized image Label
+            img = Image.open(event.widget.path)
+            m = min(self.canvas.winfo_height() / img.height, self.canvas.winfo_width() / img.width)
+            img.thumbnail((img.width * m, img.height * m))
+            expanded_img = ImageTk.PhotoImage(img)
+            temp_label = tk.Label(self.canvas, image=expanded_img, bd=0)
+            temp_label.img = expanded_img
+            self.current_y = self.canvas.yview()[0]
+            self.canvas.yview_moveto(0)
             self.canvas.delete("all")
-            self.canvas.create_window(0, 0, window=temp_label, anchor='nw')
-            # Hide original items Frame
-            self.items_frame.grid_remove()
-            # Bind left mouse button release to close the full-sized image Viewer
-            temp_label.bind("<ButtonRelease-1>", self.close_full_size_image)
+            x_pos = (self.canvas.winfo_width() - temp_label.winfo_width()) // 2
+            y_pos = (self.canvas.winfo_height() - temp_label.winfo_height()) // 2
+            self.canvas.create_window(x_pos, y_pos, window=temp_label, anchor='center')
+            temp_label.bind("<Button-2>", self.close_expanded_image)
+            temp_label.bind("<Button-3>", self.close_expanded_image)
+            temp_label.bind("<Double-Button-1>",lambda _: self.on_double_click_file(event))
+        if not event.widget.sel:
+            self.on_click_file(event)
+            self.unselect = event
+        else:
+            self.unselect = None
 
-    def close_full_size_image(self, event):
-        # Destroy temporary Label containing the full-sized image
+    def close_expanded_image(self, event):
         event.widget.destroy()
-        # Restore original items Frame
+        self.canvas.yview_moveto(self.current_y)
         self.items_frame.grid()
-        # Recreate canvas content
         self.canvas.delete("all")
         self.canvas.create_window(0, 0, window=self.items_frame, anchor='nw')
+        if self.unselect:
+            self.on_click_file(self.unselect)
+            self.unselect = None
 
     def change_dir(self, new_dir):
         if os.path.isdir(new_dir):
