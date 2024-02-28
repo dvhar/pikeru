@@ -9,6 +9,7 @@ import threading
 from multiprocessing import cpu_count
 import queue
 import hashlib
+from moviepy.editor import VideoFileClip
 
 THUMBNAIL_WIDTH = 140
 THUMBNAIL_HEIGHT = 140
@@ -164,7 +165,13 @@ class FilePicker(tk.Frame):
                 ext = os.path.splitext(base_path)[-1].lower()
                 match ext:
                     case '.png'|'.jpg'|'.jpeg'|'.gif':
-                        img = self.prepare_cached_thumbnail(item_path)
+                        img = self.prepare_cached_thumbnail(item_path, 'pic')
+                        label = tk.Label(self.items_frame, image=img, text=name, compound='top')
+                        label.__setattr__('img', img)
+                        label.bind("<Button-3>", self.on_view_image)
+                        self.prep_file(label, item_path)
+                    case '.mp4'|'.avi'|'.mkv'|'.webm':
+                        img = self.prepare_cached_thumbnail(item_path, 'vid')
                         label = tk.Label(self.items_frame, image=img, text=name, compound='top')
                         label.__setattr__('img', img)
                         label.bind("<Button-3>", self.on_view_image)
@@ -188,7 +195,7 @@ class FilePicker(tk.Frame):
             self.prep_file(label, item_path)
             sys.stderr.write(f'Error loading item: {e}\t{item_path}\n')
 
-    def prepare_cached_thumbnail(self, item_path):
+    def prepare_cached_thumbnail(self, item_path, imtype):
         md5hash = hashlib.md5(item_path.encode()).hexdigest()
         cache_path = os.path.join(cache_dir, f'{md5hash}.png')
         if os.path.isfile(cache_path):
@@ -196,11 +203,20 @@ class FilePicker(tk.Frame):
             img = ImageTk.PhotoImage(img)
             return img
         else:
-            img = Image.open(item_path)
-            img.thumbnail((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
-            img.save(cache_path)
-            img = ImageTk.PhotoImage(img)
-            return img
+            if imtype == 'pic':
+                img = Image.open(item_path)
+                img.thumbnail((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
+                img.save(cache_path)
+                img = ImageTk.PhotoImage(img)
+                return img
+            else:
+                clip = VideoFileClip(item_path)
+                frame = clip.get_frame(0)
+                img = Image.fromarray(frame)
+                img.thumbnail((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT))
+                img.save(cache_path)
+                img = ImageTk.PhotoImage(img)
+                return img
 
     def on_drag_dir_end(self, event):
         source = event.widget
