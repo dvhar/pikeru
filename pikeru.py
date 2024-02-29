@@ -10,6 +10,8 @@ from multiprocessing import cpu_count
 import queue
 import hashlib
 import cv2
+from tkinterdnd2 import *
+import requests
 
 THUMBNAIL_WIDTH = 140
 THUMBNAIL_HEIGHT = 140
@@ -22,14 +24,6 @@ home_dir = os.environ['HOME']
 config_file = os.path.join(home_dir,'.config','pikeru.conf')
 cache_dir = os.path.join(home_dir,'.cache','pikeru')
 
-class PathInfo(str):
-    def __new__(cls, path):
-        obj = str.__new__(cls, path)
-        obj.time = os.path.getmtime(path)
-        obj.lname = os.path.basename(path).lower()
-        obj.isdir = os.path.isdir(path)
-        return obj
-
 class FilePicker(tk.Frame):
     def __init__(self, args: argparse.Namespace, **kwargs):
         self.select_dir = args.mode == 'dir'
@@ -41,7 +35,7 @@ class FilePicker(tk.Frame):
         self.load_config()
         self.num_items = 0
 
-        self.root = tk.Tk()
+        self.root = TkinterDnD.Tk()
         self.root.geometry(f'{INIT_WIDTH}x{INIT_HEIGHT}')
         self.root.wm_title(args.title or 'File Picker')
         x = (self.root.winfo_screenwidth() / 2) - (INIT_WIDTH / 2)
@@ -51,6 +45,9 @@ class FilePicker(tk.Frame):
         self.frame.grid_columnconfigure(0, weight=1)
         self.frame.grid_rowconfigure(0, weight=1)
         self.frame.grid_rowconfigure(1, weight=0)
+
+        self.root.drop_target_register(DND_FILES, DND_TEXT)
+        self.root.dnd_bind('<<Drop>>', self.drop_data)
 
         upper_frame = tk.Frame(self.frame)
         upper_frame.grid(row=0, column=0, sticky='news')
@@ -73,8 +70,8 @@ class FilePicker(tk.Frame):
         self.items_frame = tk.Frame(self.canvas)
         self.canvas.create_window((0,0), window=self.items_frame, anchor='nw')
         self.items_frame.bind('<Configure>', self.on_frame_configure)
-        self.bind_scroll(self.canvas)
-        self.bind_scroll(self.items_frame)
+        self.bind_listeners(self.canvas)
+        self.bind_listeners(self.items_frame)
 
         self.path_textfield = tk.Entry(lower_frame)
         self.path_textfield.grid(row=0, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
@@ -119,6 +116,20 @@ class FilePicker(tk.Frame):
         self.frame.pack(fill='both', expand=True)
         self.change_dir(args.path)
 
+    def drop_data(self, event):
+        url = event.data
+        if url.startswith('http://') or url.startswith('https://'):
+            response = requests.get(url)
+            filename = os.path.basename(url)
+            filepath = os.path.join(os.getcwd(), filename)
+            with open(filepath, 'wb') as f:
+                f.write(response.content)
+            item = PathInfo(filepath)
+            item.idx = len(self.items_frame.winfo_children())
+            self.load_item(item)
+            self.on_click_file(FakeEvent(self.items_frame.winfo_children()[-1]))
+            self.num_items += 1
+
     def run(self):
         self.root.mainloop()
 
@@ -128,7 +139,7 @@ class FilePicker(tk.Frame):
             case 5: self.canvas.yview_scroll(2,'units')
             case 8: self.on_up_dir()
 
-    def bind_scroll(self, thing):
+    def bind_listeners(self, thing):
         thing.bind('<Button>', self.mouse_nav)
 
     def on_frame_configure(self, event=None):
@@ -145,7 +156,7 @@ class FilePicker(tk.Frame):
     def prep_file(self, label, item_path):
         label.sel = False
         label.path = item_path
-        self.bind_scroll(label)
+        self.bind_listeners(label)
         if not self.select_dir:
             label.bind("<Button-1>", self.on_click_file)
             label.bind("<Double-Button-1>", self.on_double_click_file)
@@ -155,7 +166,7 @@ class FilePicker(tk.Frame):
     def prep_dir(self, label, item_path):
         label.path = item_path
         label.sel = False
-        self.bind_scroll(label)
+        self.bind_listeners(label)
         label.bind("<Double-Button-1>", self.on_double_click_dir)
         if self.select_dir:
             label.bind("<Button-1>", self.on_click_file)
@@ -385,8 +396,8 @@ class FilePicker(tk.Frame):
         self.items_frame = tk.Frame(self.canvas)
         self.canvas.create_window((0,0), window=self.items_frame, anchor='nw')
         self.items_frame.bind('<Configure>', self.on_frame_configure)
-        self.bind_scroll(self.canvas)
-        self.bind_scroll(self.items_frame)
+        self.bind_listeners(self.canvas)
+        self.bind_listeners(self.items_frame)
         paths = [PathInfo(p) for p in glob.glob(os.path.join(os.getcwd(), '*'))]
         self.num_items = len(paths)
         paths.sort(key=lambda p: (not p.isdir, p.lname))
@@ -433,6 +444,18 @@ class FilePicker(tk.Frame):
         config = CaseConfigParser()
         config.read(os.path.expanduser(config_file))
         self.bookmarks = config['Bookmarks']
+
+class FakeEvent:
+    def __init__(self, widget):
+        self.widget = widget
+
+class PathInfo(str):
+    def __new__(cls, path):
+        obj = str.__new__(cls, path)
+        obj.time = os.path.getmtime(path)
+        obj.lname = os.path.basename(path).lower()
+        obj.isdir = os.path.isdir(path)
+        return obj
 
 class CaseConfigParser(configparser.RawConfigParser):
     def __init__(self, defaults=None):
