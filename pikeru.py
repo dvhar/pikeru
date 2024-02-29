@@ -13,8 +13,8 @@ import cv2
 
 THUMBNAIL_WIDTH = 140
 THUMBNAIL_HEIGHT = 140
-INIT_WIDTH = 720
-INIT_HEIGHT = 480
+INIT_WIDTH = 1024
+INIT_HEIGHT = 720
 
 # https://icon-icons.com
 asset_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
@@ -44,6 +44,9 @@ class FilePicker(tk.Frame):
         self.root = tk.Tk()
         self.root.geometry(f'{INIT_WIDTH}x{INIT_HEIGHT}')
         self.root.wm_title(args.title or 'File Picker')
+        x = (self.root.winfo_screenwidth() / 2) - (INIT_WIDTH / 2)
+        y = (self.root.winfo_screenheight() / 2) - (INIT_HEIGHT / 2)
+        self.root.geometry(f'+{int(x)}+{int(y)}')
         self.frame = tk.Frame(self.root, **kwargs)
         self.frame.grid_columnconfigure(0, weight=1)
         self.frame.grid_rowconfigure(0, weight=1)
