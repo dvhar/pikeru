@@ -73,7 +73,7 @@ class FilePicker(tk.Frame):
         self.bind_listeners(self.canvas)
         self.bind_listeners(self.items_frame)
 
-        self.path_textfield = tk.Entry(lower_frame)
+        self.path_textfield = tk.Entry(lower_frame, insertbackground='red')
         self.path_textfield.grid(row=0, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
         self.path_textfield.insert(0, args.path)
         self.path_textfield.bind("<Return>", self.on_type_enter)
