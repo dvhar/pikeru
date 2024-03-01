@@ -5,6 +5,7 @@ import os, sys
 import tkinter as tk
 from PIL import Image, ImageTk
 from tkinter.messagebox import askyesno
+from tkinter import ttk
 import threading
 from multiprocessing import cpu_count
 import queue
@@ -12,6 +13,7 @@ import hashlib
 import cv2
 from tkinterdnd2 import *
 import requests
+import mimetypes
 
 THUMBNAIL_WIDTH = 140
 THUMBNAIL_HEIGHT = 140
@@ -24,6 +26,9 @@ home_dir = os.environ['HOME']
 config_file = os.path.join(home_dir,'.config','pikeru.conf')
 cache_dir = os.path.join(home_dir,'.cache','pikeru')
 
+def mime_type(file_path):
+    return mimetypes.guess_type(file_path)[0] or 'application/octet-stream'
+
 class FilePicker(tk.Frame):
     def __init__(self, args: argparse.Namespace, **kwargs):
         self.select_dir = args.mode == 'dir'
@@ -34,6 +39,8 @@ class FilePicker(tk.Frame):
             self.save_filename = os.path.basename(args.path)
         self.load_config()
         self.num_items = 0
+        self.allowed_mimes = set(args.mime_list.split(' ')) if args.mime_list else None
+        self.enable_mime_filtering = self.allowed_mimes != None
 
         self.root = TkinterDnD.Tk()
         self.root.geometry(f'{INIT_WIDTH}x{INIT_HEIGHT}')
@@ -87,8 +94,16 @@ class FilePicker(tk.Frame):
         self.cancel_button.pack(side='right')
         self.up_dir_button = tk.Button(self.button_frame, width=10, text="Up Dir", command=self.on_up_dir)
         self.up_dir_button.pack(side='right')
+
         self.sort_button = tk.Button(self.button_frame, width=10, text="Sort", command=self.show_sort_menu)
         self.sort_button.pack(side='right')
+
+        if self.enable_mime_filtering:
+            self.mime_switch = tk.BooleanVar()
+            self.mime_switch.set(self.enable_mime_filtering)
+            self.mime_switch_btn = ttk.Checkbutton(self.button_frame, variable=self.mime_switch,
+                  text="Filter mime", command=self.toggle_mime_filter)
+            self.mime_switch_btn.pack(side='left')
 
         self.queue = queue.Queue()
         self.lock = threading.Lock()
@@ -115,6 +130,16 @@ class FilePicker(tk.Frame):
 
         self.frame.pack(fill='both', expand=True)
         self.change_dir(args.path)
+
+    def toggle_mime_filter(self):
+        self.enable_mime_filtering = not self.enable_mime_filtering
+        self.load_dir()
+
+    def mime_is_allowed(self, path):
+        if not self.allowed_mimes or not os.path.isfile(path):
+            return True
+        mime = mime_type(path)
+        return mime in self.allowed_mimes
 
     def drop_data(self, event):
         url = event.data
@@ -145,9 +170,6 @@ class FilePicker(tk.Frame):
     def on_frame_configure(self, event=None):
         self.canvas.configure(scrollregion=self.canvas.bbox('all'))
 
-    def enqueue_item(self, item_path):
-        self.queue.put(item_path)
-
     def load_items(self):
         while True:
             item_path = self.queue.get()
@@ -156,6 +178,7 @@ class FilePicker(tk.Frame):
     def prep_file(self, label, item_path):
         label.sel = False
         label.path = item_path
+        label.mime = mime_type(item_path)
         self.bind_listeners(label)
         if not self.select_dir:
             label.bind("<Button-1>", self.on_click_file)
@@ -398,12 +421,13 @@ class FilePicker(tk.Frame):
         self.items_frame.bind('<Configure>', self.on_frame_configure)
         self.bind_listeners(self.canvas)
         self.bind_listeners(self.items_frame)
-        paths = [PathInfo(p) for p in glob.glob(os.path.join(os.getcwd(), '*'))]
+        paths = [PathInfo(p) for p in glob.glob(os.path.join(os.getcwd(), '*'))
+                 if self.mime_is_allowed(p) or not self.enable_mime_filtering]
         self.num_items = len(paths)
         paths.sort(key=lambda p: (not p.isdir, p.lname))
         for i, path in enumerate(paths):
             path.idx = i
-            self.enqueue_item(path)
+            self.queue.put(path)
 
     def show_sort_menu(self):
         self.sort_popup = tk.Menu(self.root, tearoff=False)
@@ -469,7 +493,7 @@ def main():
     parser.add_argument("-t", "--title", default="File Picker", help="title of the filepicker window")
     parser.add_argument("-m", "--mode", choices=['file', 'files', 'dir', 'save'], help="Mode of file selection. One of [file files dir save]")
     parser.add_argument("-p", "--path", default=os.getcwd(), help="path of initial directory")
-    parser.add_argument("-i", "--mime_list", nargs="*", help="list of allowed mime types. Can be empty.")
+    parser.add_argument("-i", "--mime_list", default=None, help="list of allowed mime types. Can be empty.")
     args = parser.parse_args()
     os.makedirs(cache_dir, exist_ok=True)
     
