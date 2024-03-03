@@ -35,7 +35,6 @@ class FilePicker(tk.Frame):
         if self.select_save and not os.path.isdir(args.path):
             self.save_filename = os.path.basename(args.path)
         self.load_config()
-        self.num_items = 0
         self.allowed_mimes = set(args.mime_list.split(' ')) if args.mime_list else None
         self.enable_mime_filtering = self.allowed_mimes != None
 
@@ -146,10 +145,10 @@ class FilePicker(tk.Frame):
             with open(filepath, 'wb') as f:
                 f.write(response.content)
             item = PathInfo(filepath)
-            item.idx = len(self.items_frame.winfo_children())
+            item.idx = len(self.items)
+            self.items.append(None)
             self.load_item(item)
-            self.on_click_file(FakeEvent(self.items_frame.winfo_children()[-1]))
-            self.num_items += 1
+            self.on_click_file(FakeEvent(self.items[-1]))
 
     def run(self):
         self.root.mainloop()
@@ -174,6 +173,7 @@ class FilePicker(tk.Frame):
     def prep_file(self, label, item_path):
         label.sel = False
         label.path = item_path
+        self.items[item_path.idx] = label
         self.bind_listeners(label)
         if not self.select_dir:
             label.bind("<Button-1>", self.on_click_file)
@@ -184,6 +184,7 @@ class FilePicker(tk.Frame):
     def prep_dir(self, label, item_path):
         label.path = item_path
         label.sel = False
+        self.items[item_path.idx] = label
         self.bind_listeners(label)
         label.bind("<Double-Button-1>", self.on_double_click_dir)
         if self.select_dir:
@@ -203,14 +204,14 @@ class FilePicker(tk.Frame):
                         img = self.prepare_cached_thumbnail(item_path, 'pic')
                         label = tk.Label(self.items_frame, image=img, text=name, compound='top')
                         label.__setattr__('img', img)
-                        label.bind("<Button-3>", self.on_view_image)
+                        label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
                         self.prep_file(label, item_path)
                     case '.mp4'|'.avi'|'.mkv'|'.webm':
                         img = self.prepare_cached_thumbnail(item_path, 'vid')
                         label = tk.Label(self.items_frame, image=img, text=name, compound='top')
                         label.__setattr__('img', img)
                         label.__setattr__('vid', True)
-                        label.bind("<Button-3>", self.on_view_image)
+                        label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
                         self.prep_file(label, item_path)
                     case '.txt'|'.pdf'|'.doc'|'.docx':
                         label = tk.Label(self.items_frame, image=self.doc_icon, text=name, compound='top')
@@ -281,14 +282,13 @@ class FilePicker(tk.Frame):
         self.change_dir(event.widget.path)
 
     def reorganize_items(self):
-        num_child_rows = self.num_items // self.max_cols + (1 if self.num_items % self.max_cols != 0 else 0)
-        all_items = self.items_frame.winfo_children()
-        for row in range(num_child_rows):
+        num_rows = len(self.items) // self.max_cols + (1 if len(self.items) % self.max_cols != 0 else 0)
+        for row in range(num_rows):
             start = row * self.max_cols
             for col in range(self.max_cols):
-                index = start + col
-                if index < len(all_items):
-                    all_items[index].grid(row=row, column=col)
+                idx = start + col
+                if idx < len(self.items) and self.items[idx]:
+                    self.items[idx].grid(row=row, column=col)
 
     def recalculate_max_cols(self):
         max_width = self.frame.winfo_width() - self.bookmark_frame.winfo_width()
@@ -312,7 +312,7 @@ class FilePicker(tk.Frame):
             self.path_textfield.delete(0, 'end')
             self.path_textfield.insert(0, label.path)
 
-    def on_view_image(self, event):
+    def on_view_image(self, event, goback):
         label : tk.Label = event.widget
         if not hasattr(label, 'img'):
             return
@@ -332,9 +332,11 @@ class FilePicker(tk.Frame):
         temp_label = tk.Label(self.canvas, image=expanded_img, bd=0)
         temp_label.img = expanded_img
         temp_label.path = label.path
-        self.current_y = self.canvas.yview()[0]
+        if goback:
+            self.current_y = self.canvas.yview()[0]
         self.canvas.yview_moveto(0)
         self.canvas.delete("all")
+        self.canvas.unbind("<Button>")
         x_pos = (self.canvas.winfo_width() - temp_label.winfo_width()) // 2
         y_pos = (self.canvas.winfo_height() - temp_label.winfo_height()) // 2
         self.canvas.create_window(x_pos, y_pos, window=temp_label, anchor='center')
@@ -350,22 +352,19 @@ class FilePicker(tk.Frame):
             self.unselect = None
 
     def on_scroll_image(self, event):
-        direction = -1 if event.num==4 else 1
-        items = self.items_frame.winfo_children()
-        for i,t in enumerate(items):
-            t.path.idx = i
+        step = -1 if event.num==4 else 1
         idx = event.widget.path.idx
-        cond = (lambda i: i > 0) if direction == -1 else (lambda i: i<(len(items)-1))
+        inrange = (lambda i: i > 0) if step == -1 else (lambda i: i<(len(self.items)-1))
         nextimage = None
-        while cond(idx):
-            idx += direction
-            item = items[idx]
+        while inrange(idx):
+            idx += step
+            item = self.items[idx]
             if not hasattr(item.path, 'mime') or not item.path.mime.startswith('image'):
                 continue
             nextimage = item
             break
         if nextimage:
-            self.on_view_image(FakeEvent(nextimage))
+            self.on_view_image(FakeEvent(nextimage), False)
 
     def close_expanded_image(self, event):
         event.widget.destroy()
@@ -373,6 +372,7 @@ class FilePicker(tk.Frame):
         self.items_frame.grid()
         self.canvas.delete("all")
         self.canvas.create_window(0, 0, window=self.items_frame, anchor='nw')
+        self.canvas.bind("<Button>", self.mouse_nav)
         if self.unselect:
             self.on_click_file(self.unselect)
             self.unselect = None
@@ -415,7 +415,7 @@ class FilePicker(tk.Frame):
             self.root.destroy()
 
     def on_select_button(self):
-        selected_files = [label.path for label in self.items_frame.winfo_children() if label.sel]
+        selected_files = [label.path for label in self.items if label.sel]
         if self.select_save and len(selected_files) == 0:
             self.final_selection(self.path_textfield.get())
         elif self.select_save:
@@ -440,8 +440,8 @@ class FilePicker(tk.Frame):
         self.bind_listeners(self.items_frame)
         paths = [pi for pi in (PathInfo(p) for p in glob.glob(os.path.join(os.getcwd(), '*')))
                  if self.mime_is_allowed(pi) or not self.enable_mime_filtering]
-        self.num_items = len(paths)
         paths.sort(key=lambda p: (not p.isdir, p.lname))
+        self.items = [None] * len(paths)
         for i, path in enumerate(paths):
             path.idx = i
             self.queue.put(path)
@@ -461,15 +461,15 @@ class FilePicker(tk.Frame):
             case ('time', True): sort = lambda w: (not w.path.isdir, w.path.time)
             case ('time', False): sort = lambda w: (w.path.isdir, w.path.time)
             case _: quit(1)
-        all_items = self.items_frame.winfo_children()
-        all_items.sort(key=sort, reverse=not asc)
-        num_rows = self.num_items // self.max_cols + (1 if self.num_items % self.max_cols != 0 else 0)
+        self.items.sort(key=sort, reverse=not asc)
+        num_rows = len(self.items) // self.max_cols + (1 if len(self.items) % self.max_cols != 0 else 0)
         for row in range(num_rows):
             start = row * self.max_cols
             for col in range(self.max_cols):
-                index = start + col
-                if index < len(all_items):
-                    all_items[index].grid(row=row, column=col)
+                idx = start + col
+                if idx < len(self.items) and self.items[idx]:
+                    self.items[idx].grid(row=row, column=col)
+                    self.items[idx].path.idx = idx
 
     def on_resize(self, event=None):
         old = self.max_cols
