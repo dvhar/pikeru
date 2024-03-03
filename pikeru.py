@@ -11,7 +11,7 @@ from multiprocessing import cpu_count
 import queue
 import hashlib
 import cv2
-from tkinterdnd2 import *
+from tkinterdnd2 import TkinterDnD, DND_FILES, DND_TEXT
 import requests
 import mimetypes
 
@@ -25,9 +25,6 @@ asset_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
 home_dir = os.environ['HOME']
 config_file = os.path.join(home_dir,'.config','pikeru.conf')
 cache_dir = os.path.join(home_dir,'.cache','pikeru')
-
-def mime_type(file_path):
-    return mimetypes.guess_type(file_path)[0] or 'application/octet-stream'
 
 class FilePicker(tk.Frame):
     def __init__(self, args: argparse.Namespace, **kwargs):
@@ -136,10 +133,9 @@ class FilePicker(tk.Frame):
         self.load_dir()
 
     def mime_is_allowed(self, path):
-        if not self.allowed_mimes or not os.path.isfile(path):
+        if not self.allowed_mimes or not hasattr(path, 'mime'):
             return True
-        mime = mime_type(path)
-        return mime in self.allowed_mimes
+        return path.mime in self.allowed_mimes
 
     def drop_data(self, event):
         url = event.data
@@ -178,7 +174,6 @@ class FilePicker(tk.Frame):
     def prep_file(self, label, item_path):
         label.sel = False
         label.path = item_path
-        label.mime = mime_type(item_path)
         self.bind_listeners(label)
         if not self.select_dir:
             label.bind("<Button-1>", self.on_click_file)
@@ -234,6 +229,7 @@ class FilePicker(tk.Frame):
             label = tk.Label(self.items_frame, image=self.error_icon, text=name, compound='top')
             label.__setattr__('img', self.unknown_icon)
             self.prep_file(label, item_path)
+            label.path.mime = 'application/octet-stream'
             sys.stderr.write(f'Error loading item: {e}\t{item_path}\n')
 
     def prepare_cached_thumbnail(self, item_path, imtype):
@@ -335,6 +331,7 @@ class FilePicker(tk.Frame):
         expanded_img = ImageTk.PhotoImage(img)
         temp_label = tk.Label(self.canvas, image=expanded_img, bd=0)
         temp_label.img = expanded_img
+        temp_label.path = label.path
         self.current_y = self.canvas.yview()[0]
         self.canvas.yview_moveto(0)
         self.canvas.delete("all")
@@ -343,12 +340,32 @@ class FilePicker(tk.Frame):
         self.canvas.create_window(x_pos, y_pos, window=temp_label, anchor='center')
         temp_label.bind("<Button-2>", self.close_expanded_image)
         temp_label.bind("<Button-3>", self.close_expanded_image)
+        temp_label.bind("<Button-4>", self.on_scroll_image)
+        temp_label.bind("<Button-5>", self.on_scroll_image)
         temp_label.bind("<Double-Button-1>",lambda _: self.on_double_click_file(event))
         if not event.widget.sel:
             self.on_click_file(event)
             self.unselect = event
         else:
             self.unselect = None
+
+    def on_scroll_image(self, event):
+        direction = -1 if event.num==4 else 1
+        items = self.items_frame.winfo_children()
+        for i,t in enumerate(items):
+            t.path.idx = i
+        idx = event.widget.path.idx
+        cond = (lambda i: i > 0) if direction == -1 else (lambda i: i<(len(items)-1))
+        nextimage = None
+        while cond(idx):
+            idx += direction
+            item = items[idx]
+            if not hasattr(item.path, 'mime') or not item.path.mime.startswith('image'):
+                continue
+            nextimage = item
+            break
+        if nextimage:
+            self.on_view_image(FakeEvent(nextimage))
 
     def close_expanded_image(self, event):
         event.widget.destroy()
@@ -421,8 +438,8 @@ class FilePicker(tk.Frame):
         self.items_frame.bind('<Configure>', self.on_frame_configure)
         self.bind_listeners(self.canvas)
         self.bind_listeners(self.items_frame)
-        paths = [PathInfo(p) for p in glob.glob(os.path.join(os.getcwd(), '*'))
-                 if self.mime_is_allowed(p) or not self.enable_mime_filtering]
+        paths = [pi for pi in (PathInfo(p) for p in glob.glob(os.path.join(os.getcwd(), '*')))
+                 if self.mime_is_allowed(pi) or not self.enable_mime_filtering]
         self.num_items = len(paths)
         paths.sort(key=lambda p: (not p.isdir, p.lname))
         for i, path in enumerate(paths):
@@ -478,7 +495,11 @@ class PathInfo(str):
         obj = str.__new__(cls, path)
         obj.time = os.path.getmtime(path)
         obj.lname = os.path.basename(path).lower()
-        obj.isdir = os.path.isdir(path)
+        obj.isdir = False
+        if os.path.isfile(path):
+            obj.mime = mimetypes.guess_type(path)[0] or 'application/octet-stream'
+        else:
+            obj.isdir = os.path.isdir(path)
         return obj
 
 class CaseConfigParser(configparser.RawConfigParser):
