@@ -13,6 +13,7 @@ import hashlib
 import cv2
 from tkinterdnd2 import TkinterDnD, DND_FILES, DND_TEXT
 import requests
+import subprocess
 import mimetypes
 
 THUMBNAIL_WIDTH = 140
@@ -34,7 +35,6 @@ class FilePicker(tk.Frame):
         self.save_filename = None
         if self.select_save and not os.path.isdir(args.path):
             self.save_filename = os.path.basename(args.path)
-        self.load_config()
         self.allowed_mimes = set(args.mime_list.split(' ')) if args.mime_list else None
         self.enable_mime_filtering = self.allowed_mimes != None
 
@@ -117,6 +117,7 @@ class FilePicker(tk.Frame):
         self.unknown_icon = tk.PhotoImage(file=asset_dir+'/unknown.png')
         self.error_icon = tk.PhotoImage(file=asset_dir+'/error.png')
         self.prev_sel = None
+        self.load_config()
 
         for i, (name, path) in enumerate(self.bookmarks.items()):
             btn = tk.Button(self.bookmark_frame, text=name)
@@ -477,6 +478,12 @@ class FilePicker(tk.Frame):
         if old != self.max_cols:
             self.reorganize_items()
 
+    def show_cmd_menu(self):
+        self.commands_popup = tk.Menu(self.root, tearoff=False)
+        for cmd_name, cmd_val in self.commands.items():
+            self.commands_popup.add_command(label=cmd_name, command=lambda: subprocess.run(cmd_val, shell=True))
+        self.commands_popup.post(self.cmd_button.winfo_rootx(), self.cmd_button.winfo_rooty())
+
     def load_config(self):
         if not os.path.isfile(config_file):
             with open(config_file, 'w') as f:
@@ -485,6 +492,10 @@ class FilePicker(tk.Frame):
         config = CaseConfigParser()
         config.read(os.path.expanduser(config_file))
         self.bookmarks = config['Bookmarks']
+        if config.has_section('Commands'):
+            self.commands = config['Commands']
+            self.cmd_button = tk.Button(self.button_frame, width=10, text="Cmd", command=self.show_cmd_menu)
+            self.cmd_button.pack(side='right')
 
 class FakeEvent:
     def __init__(self, widget):
