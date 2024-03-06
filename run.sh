@@ -44,6 +44,7 @@ fi
 cmd="python ./pikeru.py \
 	--mode '${MODE}' \
 	--path '${DIR}' \
+	--title '${TITLE}' \
 	--mime_list '${MIME_LIST[@]:-}' \
 	--parent '${PARENT:-}'" 
 [ -z $debug ] || echo "cmd: $cmd" >> /tmp/pkerr
