@@ -1,6 +1,6 @@
  # Pikeru: The File Picker with Good Thumbnails
 
-Pikeru is the only filepicker for linux that has working thumbnails and works on any desktop environment or window manager. The Gtk patch for getting thumbnails in the filepicker proves that implementing thumbnails correctly at the toolkit level is never going to happen and a standalone program is needed.
+Pikeru is the only filepicker for linux that has working thumbnails and works on any desktop environment or window manager. Gtk will probably never implement thumbnails correctly at the toolkit level so a standalone program is needed.
 
 ![screenshot](screenshot.jpg)
 
@@ -14,10 +14,10 @@ Pikeru takes several command line args and returns the selected file(s) to stdou
   - `dir`: Select a single directory.
   - `save`: Save a file with the specified filename. Prompt user if file already exists.
 - `-p path`: Specifies the initial directory to display when Pikeru launches.
+- `-i mime_list`: Defines a list of MIME types accepted during file selection.
 
 Planned but not yet implemented:
 - `-e windowId`: Specifies the X11 window ID of the parent window if Pikeru should be transient to an existing window.
-- `-i mime_list`: Defines a list of MIME types accepted during file selection.
 
 ## Usage
 

@@ -478,16 +478,35 @@ class FilePicker(tk.Frame):
         if old != self.max_cols:
             self.reorganize_items()
 
+    def run_cmd(self, cmd: str):
+        selected_items = [label.path for label in self.items if label.sel]
+        for item_path in selected_items:
+            base_name = os.path.basename(item_path)
+            directory = os.path.dirname(item_path)
+            part, ext = os.path.splitext(base_name) if os.path.isfile(item_path) else ''
+            cmd = cmd.replace('[path]', item_path)
+            cmd = cmd.replace('[name]', base_name)
+            cmd = cmd.replace('[ext]', ext)
+            cmd = cmd.replace('[dir]', directory)
+            cmd = cmd.replace('[part]', os.path.basename(part))
+            proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdout, stderr = proc.communicate()
+            print(cmd, file=sys.stderr)
+            if stderr:
+                print(stderr, file=sys.stderr)
+            if stdout:
+                print(stdout, file=sys.stderr)
+
     def show_cmd_menu(self):
         self.commands_popup = tk.Menu(self.root, tearoff=False)
         for cmd_name, cmd_val in self.commands.items():
-            self.commands_popup.add_command(label=cmd_name, command=lambda: subprocess.run(cmd_val, shell=True))
+            self.commands_popup.add_command(label=cmd_name, command=lambda: self.run_cmd(cmd_val))
         self.commands_popup.post(self.cmd_button.winfo_rootx(), self.cmd_button.winfo_rooty())
 
     def load_config(self):
         if not os.path.isfile(config_file):
             with open(config_file, 'w') as f:
-                f.write(f'[Bookmarks]\nHome={home_dir}\n')
+                f.write(conftxt.format(home_dir=home_dir))
                 f.writelines([f'{bm}={os.path.join(home_dir, bm)}\n' for bm in ["Documents", "Pictures", "Downloads"]])
         config = CaseConfigParser()
         config.read(os.path.expanduser(config_file))
@@ -518,6 +537,15 @@ class CaseConfigParser(configparser.RawConfigParser):
         super().__init__(defaults)
     def optionxform(self, optionstr):
         return optionstr
+
+conftxt = '''# Commands will substitute these values from the selected files, as seen in the resize example:
+# [path] is full file path
+# [dir] is directory
+# [name] is the filename without full path
+# [part] is the filename without path or extension
+# [ext] is the file extension, including the period
+[Commands]\nresize=convert -resize 1200 [path] [dir]/[part]_resized[ext]\n
+[Bookmarks]\nHome={home_dir}\n'''
 
 def main():
     parser = argparse.ArgumentParser(description="A filepicker with proper thumbnail support")
