@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import argparse, configparser
 import glob
-import os, sys
+import os, sys, time
 import tkinter as tk
 from PIL import Image, ImageTk
 from tkinter.messagebox import askyesno
@@ -15,6 +15,8 @@ from tkinterdnd2 import TkinterDnD, DND_FILES, DND_TEXT
 import requests
 import subprocess
 import mimetypes
+import inotify.adapters
+import inotify.constants
 
 THUMBNAIL_WIDTH = 140
 THUMBNAIL_HEIGHT = 140
@@ -37,6 +39,10 @@ class FilePicker(tk.Frame):
             self.save_filename = os.path.basename(args.path)
         self.allowed_mimes = set(args.mime_list.split(' ')) if args.mime_list else None
         self.enable_mime_filtering = self.allowed_mimes != None
+        self.ino = inotify.adapters.Inotify()
+        self.watch_thread = threading.Thread(target=self.watch_loop, daemon=True)
+        self.watch_thread.start()
+        self.dropped_files = set()
 
         self.root = TkinterDnD.Tk()
         self.root.geometry(f'{INIT_WIDTH}x{INIT_HEIGHT}')
@@ -143,6 +149,7 @@ class FilePicker(tk.Frame):
             response = requests.get(url)
             filename = os.path.basename(url)
             filepath = os.path.join(os.getcwd(), filename)
+            self.dropped_files.add(filepath)
             with open(filepath, 'wb') as f:
                 f.write(response.content)
             item = PathInfo(filepath)
@@ -378,8 +385,24 @@ class FilePicker(tk.Frame):
             self.on_click_file(self.unselect)
             self.unselect = None
 
+    def watch_loop(self):
+        for e in self.ino.event_gen():
+            if e:
+                path, file = e[2], e[3]
+                filepath = os.path.join(path, file)
+                if not self.mime_is_allowed(filepath) or filepath in self.dropped_files:
+                    return
+                print('new', filepath)
+                time.sleep(0.1)
+                item = PathInfo(filepath)
+                item.idx = len(self.items)
+                self.items.append(None)
+                self.load_item(item)
+
     def change_dir(self, new_dir):
         if os.path.isdir(new_dir):
+            self.ino.remove_watch(os.getcwd())
+            self.ino.add_watch(new_dir, mask=inotify.constants.IN_CREATE)
             self.prev_sel = None
             os.chdir(new_dir)
             self.path_textfield.delete(0, 'end')
@@ -388,6 +411,7 @@ class FilePicker(tk.Frame):
             self.path_textfield.insert(0, new_dir)
             while self.queue.qsize() > 0:
                 self.queue.get()
+            self.dropped_files.clear()
             self.load_dir()
             self.canvas.yview_moveto(0)
 
@@ -488,7 +512,7 @@ class FilePicker(tk.Frame):
             cmd = cmd.replace('[name]', base_name)
             cmd = cmd.replace('[ext]', ext)
             cmd = cmd.replace('[dir]', directory)
-            cmd = cmd.replace('[part]', os.path.basename(part))
+            cmd = cmd.replace('[part]', part)
             proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             stdout, stderr = proc.communicate()
             print(cmd, file=sys.stderr)
@@ -538,7 +562,7 @@ class CaseConfigParser(configparser.RawConfigParser):
     def optionxform(self, optionstr):
         return optionstr
 
-conftxt = '''# Commands will substitute these values from the selected files, as seen in the resize example:
+conftxt = '''# Commands from the cmd menu will substitute these values from the selected files before running, as seen in the resize example:
 # [path] is full file path
 # [dir] is directory
 # [name] is the filename without full path
