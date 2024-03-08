@@ -5,6 +5,7 @@ import os, sys, time
 import tkinter as tk
 from PIL import Image, ImageTk
 from tkinter.messagebox import askyesno
+from tkinter import simpledialog, messagebox
 from tkinter import ttk
 import threading
 from multiprocessing import cpu_count
@@ -42,7 +43,7 @@ class FilePicker(tk.Frame):
         self.ino = inotify.adapters.Inotify()
         self.watch_thread = threading.Thread(target=self.watch_loop, daemon=True)
         self.watch_thread.start()
-        self.dropped_files = set()
+        self.already_added = set()
 
         self.root = TkinterDnD.Tk()
         self.root.geometry(f'{INIT_WIDTH}x{INIT_HEIGHT}')
@@ -96,9 +97,13 @@ class FilePicker(tk.Frame):
         self.cancel_button.pack(side='right')
         self.up_dir_button = tk.Button(self.button_frame, width=10, text="Up Dir", command=self.on_up_dir)
         self.up_dir_button.pack(side='right')
-
+        self.new_dir_button = tk.Button(self.button_frame, width=10, text="New Dir", command=self.create_directory)
+        self.new_dir_button.pack(side='right')
         self.sort_button = tk.Button(self.button_frame, width=10, text="Sort", command=self.show_sort_menu)
         self.sort_button.pack(side='right')
+
+        self.size_label = tk.Label(self.button_frame, text='')
+        self.size_label.pack(side='left')
 
         if self.enable_mime_filtering:
             self.mime_switch = tk.BooleanVar()
@@ -149,7 +154,7 @@ class FilePicker(tk.Frame):
             response = requests.get(url)
             filename = os.path.basename(url)
             filepath = os.path.join(os.getcwd(), filename)
-            self.dropped_files.add(filepath)
+            self.already_added.add(filepath)
             with open(filepath, 'wb') as f:
                 f.write(response.content)
             item = PathInfo(filepath)
@@ -157,6 +162,20 @@ class FilePicker(tk.Frame):
             self.items.append(None)
             self.load_item(item)
             self.on_click_file(FakeEvent(self.items[-1]))
+
+    def create_directory(self):
+        new_dir_name = simpledialog.askstring("New Directory", "Enter the name of the new directory:")
+        if new_dir_name:
+            new_dir_path = os.path.join(os.getcwd(), new_dir_name)
+            self.already_added.add(new_dir_path)
+            try:
+                os.mkdir(new_dir_path)
+                print(f'Created new directory: {new_dir_path}')
+                self.load_dir()
+            except FileExistsError:
+                messagebox.showerror("Error", f"Directory '{new_dir_name}' already exists.")
+            except OSError as e:
+                messagebox.showerror("Error", f"Failed to create directory due to error: {e}")
 
     def run(self):
         self.root.mainloop()
@@ -319,6 +338,10 @@ class FilePicker(tk.Frame):
             self.prev_sel = label
             self.path_textfield.delete(0, 'end')
             self.path_textfield.insert(0, label.path)
+            if os.path.isfile(label.path):
+                self.size_label.configure(text=get_size(label.path))
+        else:
+            self.size_label.configure(text='')
 
     def on_view_image(self, event, goback):
         label : tk.Label = event.widget
@@ -390,7 +413,7 @@ class FilePicker(tk.Frame):
             if e:
                 path, file = e[2], e[3]
                 filepath = os.path.join(path, file)
-                if not self.mime_is_allowed(filepath) or filepath in self.dropped_files:
+                if not self.mime_is_allowed(filepath) or filepath in self.already_added:
                     return
                 print('new', filepath)
                 time.sleep(0.1)
@@ -411,7 +434,7 @@ class FilePicker(tk.Frame):
             self.path_textfield.insert(0, new_dir)
             while self.queue.qsize() > 0:
                 self.queue.get()
-            self.dropped_files.clear()
+            self.already_added.clear()
             self.load_dir()
             self.canvas.yview_moveto(0)
 
@@ -539,6 +562,16 @@ class FilePicker(tk.Frame):
             self.commands = config['Commands']
             self.cmd_button = tk.Button(self.button_frame, width=10, text="Cmd", command=self.show_cmd_menu)
             self.cmd_button.pack(side='right')
+
+def get_size(path):
+    size = os.path.getsize(path)
+    if size > 1073741824:
+        return f'{size//1073741824}GB'
+    if size > 1048576:
+        return f'{size//1048576}MB'
+    if size > 1024:
+        return f'{size//1024}KB'
+    return f'{size}B'
 
 class FakeEvent:
     def __init__(self, widget):
