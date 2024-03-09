@@ -143,8 +143,8 @@ class FilePicker(tk.Frame):
     def withdraw_menus(self, event):
         if hasattr(self, 'sort_popup') and self.sort_popup.winfo_exists():
             self.sort_popup.unpost()
-        if hasattr(self, 'commands_popup') and self.commands_popup.winfo_exists():
-            self.commands_popup.unpost()
+        if hasattr(self, 'cmd_menu') and self.cmd_menu.winfo_exists():
+            self.cmd_menu.unpost()
 
     def toggle_mime_filter(self):
         self.enable_mime_filtering = not self.enable_mime_filtering
@@ -176,7 +176,6 @@ class FilePicker(tk.Frame):
             new_dir_path = os.path.join(os.getcwd(), new_dir_name)
             try:
                 os.mkdir(new_dir_path)
-                print(f'Created new directory: {new_dir_path}')
             except FileExistsError:
                 messagebox.showerror("Error", f"Directory '{new_dir_name}' already exists.")
             except OSError as e:
@@ -395,7 +394,7 @@ class FilePicker(tk.Frame):
         while inrange(idx):
             idx += step
             item = self.items[idx]
-            if not hasattr(item.path, 'mime') or not item.path.mime.startswith('image'):
+            if not hasattr(item.path, 'mime') or not (item.path.mime.startswith('image') or item.path.mime.startswith('video')):
                 continue
             nextimage = item
             break
@@ -420,7 +419,6 @@ class FilePicker(tk.Frame):
                 filepath = os.path.join(path, file)
                 if not self.mime_is_allowed(filepath) or filepath in self.already_added:
                     return
-                print('new', filepath)
                 time.sleep(0.1)
                 item = PathInfo(filepath)
                 item.idx = len(self.items)
@@ -535,7 +533,7 @@ class FilePicker(tk.Frame):
         for item_path in selected_items:
             base_name = os.path.basename(item_path)
             directory = os.path.dirname(item_path)
-            part, ext = os.path.splitext(base_name) if os.path.isfile(item_path) else ''
+            part, ext = os.path.splitext(base_name) if os.path.isfile(item_path) else (base_name,'')
             cmd = cmd.replace('[path]', item_path)
             cmd = cmd.replace('[name]', base_name)
             cmd = cmd.replace('[ext]', ext)
@@ -550,10 +548,7 @@ class FilePicker(tk.Frame):
                 print(stdout, file=sys.stderr)
 
     def show_cmd_menu(self):
-        self.commands_popup = tk.Menu(self.root, tearoff=False)
-        for cmd_name, cmd_val in self.commands.items():
-            self.commands_popup.add_command(label=cmd_name, command=lambda cmd=cmd_val: self.run_cmd(cmd))
-        self.commands_popup.post(self.cmd_button.winfo_rootx(), self.cmd_button.winfo_rooty())
+        self.cmd_menu.post(self.cmd_button.winfo_rootx(), self.cmd_button.winfo_rooty())
 
     def load_config(self):
         if not os.path.isfile(config_file):
@@ -564,9 +559,12 @@ class FilePicker(tk.Frame):
         config.read(os.path.expanduser(config_file))
         self.bookmarks = config['Bookmarks']
         if config.has_section('Commands'):
-            self.commands = config['Commands']
+            commands = config['Commands']
             self.cmd_button = tk.Button(self.button_frame, width=10, text="Cmd", command=self.show_cmd_menu)
             self.cmd_button.pack(side='right')
+            self.cmd_menu = tk.Menu(self.root, tearoff=False)
+            for cmd_name, cmd_val in commands.items():
+                self.cmd_menu.add_command(label=cmd_name, command=lambda cmd=cmd_val: self.run_cmd(cmd))
 
 def get_size(path):
     size = os.path.getsize(path)
