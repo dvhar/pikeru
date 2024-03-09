@@ -101,6 +101,7 @@ class FilePicker(tk.Frame):
         self.new_dir_button.pack(side='right')
         self.sort_button = tk.Button(self.button_frame, width=10, text="Sort", command=self.show_sort_menu)
         self.sort_button.pack(side='right')
+        self.root.bind("<Button-1>", self.withdraw_menus)
 
         self.size_label = tk.Label(self.button_frame, text='')
         self.size_label.pack(side='left')
@@ -138,6 +139,12 @@ class FilePicker(tk.Frame):
 
         self.frame.pack(fill='both', expand=True)
         self.change_dir(args.path)
+
+    def withdraw_menus(self, event):
+        if hasattr(self, 'sort_popup') and self.sort_popup.winfo_exists():
+            self.sort_popup.unpost()
+        if hasattr(self, 'commands_popup') and self.commands_popup.winfo_exists():
+            self.commands_popup.unpost()
 
     def toggle_mime_filter(self):
         self.enable_mime_filtering = not self.enable_mime_filtering
