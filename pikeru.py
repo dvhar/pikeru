@@ -174,11 +174,9 @@ class FilePicker(tk.Frame):
         new_dir_name = simpledialog.askstring("New Directory", "Enter the name of the new directory:")
         if new_dir_name:
             new_dir_path = os.path.join(os.getcwd(), new_dir_name)
-            self.already_added.add(new_dir_path)
             try:
                 os.mkdir(new_dir_path)
                 print(f'Created new directory: {new_dir_path}')
-                self.load_dir()
             except FileExistsError:
                 messagebox.showerror("Error", f"Directory '{new_dir_name}' already exists.")
             except OSError as e:
@@ -554,7 +552,7 @@ class FilePicker(tk.Frame):
     def show_cmd_menu(self):
         self.commands_popup = tk.Menu(self.root, tearoff=False)
         for cmd_name, cmd_val in self.commands.items():
-            self.commands_popup.add_command(label=cmd_name, command=lambda: self.run_cmd(cmd_val))
+            self.commands_popup.add_command(label=cmd_name, command=lambda cmd=cmd_val: self.run_cmd(cmd))
         self.commands_popup.post(self.cmd_button.winfo_rootx(), self.cmd_button.winfo_rooty())
 
     def load_config(self):
