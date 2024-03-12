@@ -226,7 +226,7 @@ class FilePicker(tk.Frame):
 
     def load_item(self, item_path):
         base_path = os.path.basename(item_path)
-        name = base_path if len(base_path) < 20 else base_path[len(base_path)-19:]
+        name = base_path if len(base_path) < 20 else '...'+base_path[len(base_path)-17:]
         try:
             if os.path.isfile(item_path):
                 ext = os.path.splitext(base_path)[-1].lower()

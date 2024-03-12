@@ -1,8 +1,8 @@
  # Pikeru: The File Picker with Good Thumbnails
 
-Pikeru is the only filepicker for linux that has working thumbnails and works on any desktop environment or window manager. Gtk will probably never implement thumbnails correctly at the toolkit level so a standalone program is needed.
+Pikeru is a filepicker for linux that has working thumbnails and works on any desktop environment or window manager. Kind of like kdialog but with some added features.
 
-![screenshot](screenshot.jpg)
+![screenshot](https://github.com/dvhar/pikeru/assets/33729230/652d10d7-d4da-4c21-bd3c-b64b87481cf0)
 
 ## Command Line Arguments
 Pikeru takes several command line args and returns the selected file(s) to stdout separated by newlines.
@@ -21,8 +21,8 @@ Planned but not yet implemented:
 
 ## Installation and Usage
 
-* Create a venv in this directory or set env `PK_VENV` to point to one. Env must be set for your browser, not just shell.
-* `pip install -r requirements.txt`. You may also need to install `tk` with your system package manager.
+* Create a venv in this directory with `python -m venv venv` or set env `PK_VENV` to point to one. If using PK_VENV, make sure it's set for the browser and not just shell, or set it in run.sh.
+* `. venv/bin/activate` and `pip install -r requirements.txt`. You may also need to install `tk` with your system package manager.
 * To use with chromium-based browsers, set environment variable `XDG_CURRENT_DESKTOP=KDE` and symlink the `kdialog` script in your path. That will trick the browser into thinking it's using the KDE dialog.
 * To use with Firefox and other programs that use xdg portal, install some xdg portal that uses kdialog or maybe try this: https://github.com/GermainZ/xdg-desktop-portal-termfilechooser . I haven't gotten it to work but maybe you can.
 
