@@ -96,11 +96,11 @@ class FilePicker(tk.Frame):
         self.open_button.pack(side='right')
         self.cancel_button = tk.Button(self.button_frame, width=10, text="Cancel", command=self.root.destroy)
         self.cancel_button.pack(side='right')
-        self.up_dir_button = tk.Button(self.button_frame, width=10, text="Up Dir", command=self.on_up_dir)
+        self.up_dir_button = tk.Button(self.button_frame, width=7, text="Up Dir", command=self.on_up_dir)
         self.up_dir_button.pack(side='right')
-        self.new_dir_button = tk.Button(self.button_frame, width=10, text="New Dir", command=self.create_directory)
+        self.new_dir_button = tk.Button(self.button_frame, width=7, text="New Dir", command=self.create_directory)
         self.new_dir_button.pack(side='right')
-        self.sort_button = tk.Button(self.button_frame, width=10, text="Sort", command=self.show_sort_menu)
+        self.sort_button = tk.Button(self.button_frame, width=7, text="Sort", command=self.show_sort_menu)
         self.sort_button.pack(side='right')
         self.root.bind("<Button-1>", self.withdraw_menus)
 
@@ -129,7 +129,7 @@ class FilePicker(tk.Frame):
         self.doc_icon = tk.PhotoImage(file=asset_dir+'/document.png')
         self.unknown_icon = tk.PhotoImage(file=asset_dir+'/unknown.png')
         self.error_icon = tk.PhotoImage(file=asset_dir+'/error.png')
-        self.prev_sel = None
+        self.prev_sel = []
         self.load_config()
 
         for i, (name, path) in enumerate(self.bookmarks.items()):
@@ -320,19 +320,41 @@ class FilePicker(tk.Frame):
 
     def on_click_file(self, event):
         label = event.widget
+        shift = event.state & 0x1
+        ctrl = event.state & 0x4
+        # select a whole range
+        if self.select_multi and shift and len(self.prev_sel) > 0:
+            lo = hi = label.path.idx
+            for item in self.prev_sel:
+                lo = min(item.path.idx, lo)
+                hi = max(item.path.idx, hi)
+            for i in range(lo, hi+1):
+                if not self.items[i].sel:
+                    self.items[i].sel = True
+                    self.items[i].config(relief="solid", bg='red')
+                    self.prev_sel.append(self.items[i])
+            return
+        # toggle clicked item on or off
         if label.sel == False:
             label.config(relief="solid", bg='red')
             label.sel = True
-        else:
+        elif len(self.prev_sel) == 1 or ctrl:
             label.config(relief="flat", bg='black')
             label.sel = False
             self.path_textfield.delete(0, 'end')
             self.path_textfield.insert(0, os.getcwd())
+            if ctrl:
+                self.prev_sel = [ps for ps in self.prev_sel if ps.path != label.path]
+        # clear previous selections if normal click
+        if not (self.select_multi and ctrl):
+            for ps in self.prev_sel:
+                if ps.path != label.path:
+                    ps.sel = False
+                    ps.config(relief="flat", bg='black')
+            self.prev_sel = []
+        # handle newly selected file or clear textbox
         if label.sel:
-            if not self.select_multi and self.prev_sel and self.prev_sel is not label:
-                self.prev_sel.sel = False
-                self.prev_sel.config(relief="flat", bg='black')
-            self.prev_sel = label
+            self.prev_sel.append(label)
             self.path_textfield.delete(0, 'end')
             self.path_textfield.insert(0, label.path)
             if os.path.isfile(label.path):
@@ -424,7 +446,7 @@ class FilePicker(tk.Frame):
         if os.path.isdir(new_dir):
             self.ino.remove_watch(os.getcwd())
             self.ino.add_watch(new_dir, mask=inotify.constants.IN_CREATE)
-            self.prev_sel = None
+            self.prev_sel = []
             os.chdir(new_dir)
             self.path_textfield.delete(0, 'end')
             if self.save_filename:
@@ -555,7 +577,7 @@ class FilePicker(tk.Frame):
         self.bookmarks = config['Bookmarks']
         if config.has_section('Commands'):
             commands = config['Commands']
-            self.cmd_button = tk.Button(self.button_frame, width=10, text="Cmd", command=self.show_cmd_menu)
+            self.cmd_button = tk.Button(self.button_frame, width=7, text="Cmd", command=self.show_cmd_menu)
             self.cmd_button.pack(side='right')
             self.cmd_menu = tk.Menu(self.root, tearoff=False)
             for cmd_name, cmd_val in commands.items():
