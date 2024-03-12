@@ -38,12 +38,13 @@ class FilePicker(tk.Frame):
         self.save_filename = None
         if self.select_save and not os.path.isdir(args.path):
             self.save_filename = os.path.basename(args.path)
-        self.allowed_mimes = set(args.mime_list.split(' ')) if args.mime_list else None
+        self.allowed_mimes = set(args.mime_list.strip().split(' ')) if args.mime_list else None
         self.enable_mime_filtering = self.allowed_mimes != None
         self.ino = inotify.adapters.Inotify()
         self.watch_thread = threading.Thread(target=self.watch_loop, daemon=True)
         self.watch_thread.start()
         self.already_added = set()
+        self.items = []
 
         self.root = TkinterDnD.Tk()
         self.root.geometry(f'{INIT_WIDTH}x{INIT_HEIGHT}')
@@ -135,7 +136,7 @@ class FilePicker(tk.Frame):
             btn = tk.Button(self.bookmark_frame, text=name)
             btn.path = path
             btn.grid(row=i, column=0, sticky='news')
-            btn.bind("<Button-1>", self.on_bookmark_click)
+            btn.bind("<Button-1>", lambda e: self.change_dir(e.widget.path))
 
         self.frame.pack(fill='both', expand=True)
         self.change_dir(args.path)
@@ -198,8 +199,7 @@ class FilePicker(tk.Frame):
 
     def load_items(self):
         while True:
-            item_path = self.queue.get()
-            self.load_item(item_path)
+            self.load_item(self.queue.get())
 
     def prep_file(self, label, item_path):
         label.sel = False
@@ -309,9 +309,6 @@ class FilePicker(tk.Frame):
         with open(config_file, 'a') as f:
             f.write(f'{basename}={path}\n')
 
-    def on_bookmark_click(self, event):
-        self.change_dir(event.widget.path)
-
     def reorganize_items(self):
         num_rows = len(self.items) // self.max_cols + (1 if len(self.items) % self.max_cols != 0 else 0)
         for row in range(num_rows):
@@ -320,10 +317,6 @@ class FilePicker(tk.Frame):
                 idx = start + col
                 if idx < len(self.items) and self.items[idx]:
                     self.items[idx].grid(row=row, column=col)
-
-    def recalculate_max_cols(self):
-        max_width = self.frame.winfo_width() - self.bookmark_frame.winfo_width()
-        self.max_cols = max(1, int(max_width / (THUMBNAIL_WIDTH+6))) # figure out proper width calculation
 
     def on_click_file(self, event):
         label = event.widget
@@ -426,6 +419,8 @@ class FilePicker(tk.Frame):
                 self.load_item(item)
 
     def change_dir(self, new_dir):
+        if self.select_save and not os.path.isdir(new_dir):
+            new_dir = os.path.dirname(new_dir)
         if os.path.isdir(new_dir):
             self.ino.remove_watch(os.getcwd())
             self.ino.add_watch(new_dir, mask=inotify.constants.IN_CREATE)
@@ -442,8 +437,7 @@ class FilePicker(tk.Frame):
             self.canvas.yview_moveto(0)
 
     def on_up_dir(self):
-        new_dir = os.path.dirname(os.getcwd())
-        self.change_dir(new_dir)
+        self.change_dir(os.path.dirname(os.getcwd()))
 
     def on_double_click_dir(self, event):
         new_dir = event.widget.path
@@ -524,7 +518,8 @@ class FilePicker(tk.Frame):
 
     def on_resize(self, event=None):
         old = self.max_cols
-        self.recalculate_max_cols()
+        max_width = self.frame.winfo_width() - self.bookmark_frame.winfo_width()
+        self.max_cols = max(1, int(max_width / (THUMBNAIL_WIDTH+6))) # figure out proper width calculation
         if old != self.max_cols:
             self.reorganize_items()
 

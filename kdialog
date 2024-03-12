@@ -1,0 +1,67 @@
+#!/bin/bash
+# This script makes pikeru mimic kdialog to trick chromium-based browsers into using it.
+# To use it, set evironment variable XDG_CURRENT_DESKTOP=KDE and put this script in your path.
+# Set pikerudir below to the directory of this git repo.
+
+pikerudir="$HOME/gits/pikeru"
+
+debug=0
+logfile=/tmp/kd.log
+[ $debug = 1 ] && echo "args: $*" > $logfile
+
+mimes=''
+while [[ $# -gt 0 ]]; do
+	arg="$1"
+	case $arg in
+		--version)
+			exit 0
+			;;
+		--multiple)
+			multi=1
+			mode=files
+			shift
+			;;
+		--attach*)
+			attach="${arg#*=}"
+			shift
+			;;
+		--title*)
+			title="${arg#*=}"
+			shift
+			;;
+		--getopenfilename*)
+			[ -z "$multi" ] && mode=file
+			path="$2"
+			shift
+			shift
+			;;
+		--getexistingdirectory*)
+			mode=dir
+			path="$2"
+			shift
+			shift
+			;;
+		--getsavefilename*)
+			mode=save
+			path="$2"
+			shift
+			shift
+			;;
+		/*) 
+			shift
+			;;
+		*/*) 
+			mimes="$mimes $arg"
+			shift
+			;;
+		*) 
+			shift
+			;;
+	esac
+done
+
+[ $debug = 1 ] && echo "mimes: '$mimes'" >> $logfile
+[ -z "$mimes" ] || mimes="-i '$mimes'"
+cmd="$pikerudir/run.sh -p '$attach' -t '$title' -m '$mode' -p '$path' $mimes"
+[ $debug = 1 ] && echo "cmd: $cmd" >> $logfile
+eval $cmd
