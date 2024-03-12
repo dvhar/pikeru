@@ -19,11 +19,12 @@ Pikeru takes several command line args and returns the selected file(s) to stdou
 Planned but not yet implemented:
 - `-e windowId`: Specifies the X11 window ID of the parent window if Pikeru should be transient to an existing window.
 
-## Usage
+## Installation and Usage
 
-* Edit `run.sh` to point to your venv if using one, and edit the `kdialog` script to point to run.sh
-* To use with chromium-based browsers, set environment variable XDG_CURRENT_DESKTOP=KDE and put the kdialog script in your path. That will trick the browser into thinking it's using the KDE dialog.
-* To use with Firefox and other programs that use the xdg portal, maybe try this: https://github.com/GermainZ/xdg-desktop-portal-termfilechooser . I haven't gotten it to work but maybe you can.
+* Create a venv in this directory or set env `PK_VENV` to point to one. Env must be set for your browser, not just shell.
+* `pip install -r requirements.txt`. You may also need to install `tk` with your system package manager.
+* To use with chromium-based browsers, set environment variable `XDG_CURRENT_DESKTOP=KDE` and symlink the `kdialog` script in your path. That will trick the browser into thinking it's using the KDE dialog.
+* To use with Firefox and other programs that use xdg portal, install some xdg portal that uses kdialog or maybe try this: https://github.com/GermainZ/xdg-desktop-portal-termfilechooser . I haven't gotten it to work but maybe you can.
 
 ## License
 Pikeru is Public Domain.

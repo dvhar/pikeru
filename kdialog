@@ -1,11 +1,16 @@
 #!/bin/bash
 # This script makes pikeru mimic kdialog to trick chromium-based browsers into using it.
-# To use it, set evironment variable XDG_CURRENT_DESKTOP=KDE and put this script in your path.
-# Set pikerudir below to the directory of this git repo.
-
-pikerudir="$HOME/gits/pikeru"
+# To use it, set evironment variable XDG_CURRENT_DESKTOP=KDE and put a symlink to this script in your path.
+# set debug=1 if you're having trouble getting it working. It logs to /tmp/kd.log
 
 debug=0
+
+if [[ "$(readlink -f "$0")" != "$0" ]]; then
+    pikerudir="$(dirname "$(readlink -f "$0")")"
+else
+    pikerudir="$(dirname "$0")"
+fi
+
 logfile=/tmp/kd.log
 [ $debug = 1 ] && echo "args: $*" > $logfile
 
