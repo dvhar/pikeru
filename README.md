@@ -21,21 +21,9 @@ Planned but not yet implemented:
 
 ## Usage
 
-Most current software is not designed to use a standalone filepicker, but it is possible in chromium-based browsers using the included patch:
-```
-# follow the instructions on chromium's dev website to download the repo
-git apply < /path/to/chromium.patch
-# then build as usual
-```
-Then to use it set the environment variable `CUSTOM_FILEPICKER=/path/to/this/program/run.sh`.
-
-If using a venv, set the venv variable in `run.sh`.
-
-## Roadmap to get a proper filepicker on linux
-1. Write a basic but useable and good filepicker (this one).
-2. Badger the develpers of Gtk or web browsers or anything else to add support for standalone filepickers now that we have a good one.
-3. Write a professional grade one since it will then be worth the time investment.
+* Edit `run.sh` to point to your venv if using one, and edit the `kdialog` script to point to run.sh
+* To use with chromium-based browsers, set environment variable XDG_CURRENT_DESKTOP=KDE and put the kdialog script in your path. That will trick the browser into thinking it's using the KDE dialog.
+* To use with Firefox and other programs that use the xdg portal, maybe try this: https://github.com/GermainZ/xdg-desktop-portal-termfilechooser . I haven't gotten it to work but maybe you can.
 
 ## License
 Pikeru is Public Domain.
-The Chromium patch is licensed under the same BSD-style licence as chromium because it is derived from chromium source code.
