@@ -596,6 +596,7 @@ def get_size(path):
 class FakeEvent:
     def __init__(self, widget):
         self.widget = widget
+        self.state = 0
 
 class PathInfo(str):
     def __new__(cls, path):

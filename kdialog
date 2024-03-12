@@ -5,11 +5,7 @@
 
 debug=0
 
-if [[ "$(readlink -f "$0")" != "$0" ]]; then
-    pikerudir="$(dirname "$(readlink -f "$0")")"
-else
-    pikerudir="$(dirname "$0")"
-fi
+pikerudir="$(dirname "$(readlink -f "$0")")"
 
 logfile=/tmp/kd.log
 [ $debug = 1 ] && echo "args: $*" > $logfile

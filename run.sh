@@ -8,11 +8,7 @@ venv=$PK_VENV
 [ -z "$venv" ] && venv=venv
 
 DIR="$(pwd)"
-if [[ "$(readlink -f "$0")" != "$0" ]]; then
-    cd "$(dirname "$(readlink -f "$0")")"
-else
-    cd "$(dirname "$0")"
-fi
+cd "$(dirname "$(readlink -f "$0")")"
 
 TITLE="File Picker"
 MODE="file"
@@ -53,6 +49,7 @@ cat << EOF > /dev/stderr
 You may need to set up a venv. Put a venv in this directory or set environment variable PK_VENV to /path/to/venv.
 Try this:
 python -m venv $venv
+. $venv/bin/activate
 pip3 install -r requirements.txt
 EOF
 else
