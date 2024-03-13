@@ -11,7 +11,7 @@ DIR="$(pwd)"
 cd "$(dirname "$(readlink -f "$0")")"
 
 TITLE="File Picker"
-MODE="file"
+MODE="files"
 MIME_LIST=""
 
 [ $debug = 1 ] && echo "launcher args: $*" > /tmp/pk.log
