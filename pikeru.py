@@ -380,10 +380,11 @@ class FilePicker(tk.Frame):
         else:
             img = Image.open(label.path)
         m = min(self.canvas.winfo_height() / img.height, self.canvas.winfo_width() / img.width)
-        img.thumbnail((img.width * m, img.height * m))
-        expanded_img = ImageTk.PhotoImage(img)
-        big_image = tk.Label(self.canvas, image=expanded_img, bd=0)
-        big_image.img = expanded_img
+        resized = img.resize((int(img.width * m), int(img.height * m)))
+        resized_photo = ImageTk.PhotoImage(resized)
+        big_image = tk.Label(self.canvas, image=resized_photo, bd=0)
+        big_image.img = resized_photo
+        big_image.orig = img
         big_image.path = label.path
         if goback:
             self.current_y = self.canvas.yview()[0]
@@ -400,7 +401,7 @@ class FilePicker(tk.Frame):
         big_image.bind("<Button-4>", self.on_scroll_image)
         big_image.bind("<Button-5>", self.on_scroll_image)
         big_image.bind("<Double-Button-1>",lambda _: self.on_double_click_file(event))
-        self.__setattr__('bigimage', big_image)
+        self.__setattr__('bigimg', big_image)
         if not event.widget.sel:
             self.on_click_file(event)
             self.unselect = event
@@ -409,6 +410,11 @@ class FilePicker(tk.Frame):
 
     def on_scroll_image(self, event):
         step = -1 if event.num==4 else 1
+        ctrl_pressed = event.state & 0x4
+        if ctrl_pressed:
+            zoom_factor = 1.1 if step < 0 else 1/1.1
+            self.resize_image(zoom_factor)
+            return
         idx = event.widget.path.idx
         inrange = (lambda i: i > 0) if step == -1 else (lambda i: i<(len(self.items)-1))
         nextimage = None
@@ -422,9 +428,18 @@ class FilePicker(tk.Frame):
         if nextimage:
             self.on_view_image(FakeEvent(nextimage), False)
 
+    def resize_image(self, factor):
+        prev: ImageTk.PhotoImage = self.bigimg.img
+        new_width = int(prev.width() * factor)
+        new_height = int(prev.height() * factor)
+        resized_pil_img = self.bigimg.orig.resize((new_width, new_height))
+        resized_img = ImageTk.PhotoImage(resized_pil_img)
+        self.bigimg.config(image=resized_img)
+        self.bigimg.img = resized_img
+
     def close_expanded_image(self, event):
-        self.bigimage.destroy()
-        del self.bigimage
+        self.bigimg.destroy()
+        del self.bigimg
         self.canvas.yview_moveto(self.current_y)
         self.items_frame.grid()
         self.canvas.delete("all")
@@ -508,7 +523,7 @@ class FilePicker(tk.Frame):
             self.final_selection(txt)
 
     def load_dir(self):
-        if hasattr(self, 'bigimage'):
+        if hasattr(self, 'bigimg'):
             self.close_expanded_image(None)
         self.items_frame.destroy()
         self.items_frame = tk.Frame(self.canvas)
