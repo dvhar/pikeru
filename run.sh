@@ -3,6 +3,10 @@
 # set debug=1 if you're having trouble getting it working. It logs to /tmp/pk.log
 
 debug=0
+logfile=/tmp/pk.log
+
+# LD_PRELOAD is set by the browser and can interfere with an opencv lib used to capture video frames
+unset LD_PRELOAD
 
 venv=$PK_VENV
 [ -z "$venv" ] && venv=venv
@@ -14,7 +18,7 @@ TITLE="File Picker"
 MODE="files"
 MIME_LIST=""
 
-[ $debug = 1 ] && echo "launcher args: $*" > /tmp/pk.log
+[ $debug = 1 ] && echo "launcher args: $*" >> $logfile
 while getopts "e:t:m:p:i:" opt; do
   case $opt in
     e)
@@ -33,14 +37,14 @@ while getopts "e:t:m:p:i:" opt; do
       MIME_LIST="$OPTARG"
       ;;
     \?)
-      echo "Invalid option: -$opt -$OPTARG" >> /tmp/pk.log
+      echo "Invalid option: -$opt $OPTARG" >> $logfile
       exit 1
       ;;
   esac
 done
 
 if [[ ! "$MODE" =~ ^(file|files|dir|save)$ ]]; then
-  echo "Error: Invalid mode flag value (-m). It should be one of [file files dir save]." >> /tmp/pk.log
+  echo "Error: Invalid mode flag value (-m). It should be one of [file files dir save]." >> $logfile
   exit 1
 fi
 
@@ -53,6 +57,7 @@ python -m venv $venv
 pip3 install -r requirements.txt
 EOF
 else
+	[ $debug = 1 ] && echo ". $venv/bin/activate" >> $logfile
 	. $venv/bin/activate
 fi
 
@@ -63,5 +68,6 @@ cmd="python ./pikeru.py \
 	--title '${TITLE}' \
 	--mime_list '${MIME_LIST[@]:-}' \
 	--parent '${PARENT:-}'" 
-[ $debug = 1 ] || echo "cmd: $cmd" >> /tmp/pk.log
-eval $cmd
+[ $debug = 1 ] && echo "cmd: $cmd" >> $logfile
+[ $debug = 1 ] || logfile=/dev/stderr
+eval $cmd 2>> $logfile

@@ -54,27 +54,27 @@ class FilePicker(tk.Frame):
         self.root.geometry(f'+{int(x)}+{int(y)}')
         self.frame = tk.Frame(self.root, **kwargs)
         self.frame.grid_columnconfigure(0, weight=1)
-        self.frame.grid_rowconfigure(0, weight=1)
-        self.frame.grid_rowconfigure(1, weight=0)
+        self.frame.grid_rowconfigure(0, weight=0)
+        self.frame.grid_rowconfigure(1, weight=1)
 
         self.root.drop_target_register(DND_FILES, DND_TEXT)
         self.root.dnd_bind('<<Drop>>', self.drop_data)
 
-        upper_frame = tk.Frame(self.frame)
-        upper_frame.grid(row=0, column=0, sticky='news')
-        upper_frame.grid_columnconfigure(0, weight=0)
-        upper_frame.grid_columnconfigure(1, weight=1)
-        upper_frame.grid_rowconfigure(0, weight=1)
-
         lower_frame = tk.Frame(self.frame)
         lower_frame.grid(row=1, column=0, sticky='news')
-        lower_frame.grid_columnconfigure(0, weight=1)
+        lower_frame.grid_columnconfigure(0, weight=0)
+        lower_frame.grid_columnconfigure(1, weight=1)
+        lower_frame.grid_rowconfigure(0, weight=1)
 
-        self.bookmark_frame = tk.Frame(upper_frame)
+        upper_frame = tk.Frame(self.frame)
+        upper_frame.grid(row=0, column=0, sticky='news')
+        upper_frame.grid_columnconfigure(0, weight=1)
+
+        self.bookmark_frame = tk.Frame(lower_frame)
         self.bookmark_frame.grid(row=0, column=0, sticky='news')
-        self.canvas = tk.Canvas(upper_frame)
+        self.canvas = tk.Canvas(lower_frame)
         self.canvas.grid(row=0, column=1, sticky='news')
-        self.scrollbar = tk.Scrollbar(upper_frame, orient='vertical', command=self.canvas.yview)
+        self.scrollbar = tk.Scrollbar(lower_frame, orient='vertical', command=self.canvas.yview)
         self.scrollbar.grid(row=0, column=2, sticky='ns')
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
@@ -84,13 +84,13 @@ class FilePicker(tk.Frame):
         self.bind_listeners(self.canvas)
         self.bind_listeners(self.items_frame)
 
-        self.path_textfield = tk.Entry(lower_frame, insertbackground='red')
-        self.path_textfield.grid(row=0, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
+        self.path_textfield = tk.Entry(upper_frame, insertbackground='red')
+        self.path_textfield.grid(row=1, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
         self.path_textfield.insert(0, args.path)
         self.path_textfield.bind("<Return>", self.on_type_enter)
 
-        self.button_frame = tk.Frame(lower_frame)
-        self.button_frame.grid(row=1, column=0, sticky='we')
+        self.button_frame = tk.Frame(upper_frame)
+        self.button_frame.grid(row=0, column=0, sticky='we')
         button_text = "Save" if self.select_save else "Open"
         self.open_button = tk.Button(self.button_frame, width=10, text=button_text, command=self.on_select_button)
         self.open_button.pack(side='right')
