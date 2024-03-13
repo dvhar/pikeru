@@ -8,7 +8,7 @@ debug=0
 pikerudir="$(dirname "$(readlink -f "$0")")"
 
 logfile=/tmp/kd.log
-[ $debug = 1 ] && echo "args: $*" > $logfile
+[ $debug = 1 ] && echo "args: $0 $*" >> $logfile
 
 mimes=''
 while [[ $# -gt 0 ]]; do
