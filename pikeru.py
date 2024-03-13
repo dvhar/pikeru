@@ -350,7 +350,10 @@ class FilePicker(tk.Frame):
             for ps in self.prev_sel:
                 if ps.path != label.path:
                     ps.sel = False
-                    ps.config(relief="flat", bg='black')
+                    try:
+                        ps.config(relief="flat", bg='black')
+                    except:
+                        pass
             self.prev_sel = []
         # handle newly selected file or clear textbox
         if label.sel:
@@ -379,22 +382,25 @@ class FilePicker(tk.Frame):
         m = min(self.canvas.winfo_height() / img.height, self.canvas.winfo_width() / img.width)
         img.thumbnail((img.width * m, img.height * m))
         expanded_img = ImageTk.PhotoImage(img)
-        temp_label = tk.Label(self.canvas, image=expanded_img, bd=0)
-        temp_label.img = expanded_img
-        temp_label.path = label.path
+        big_image = tk.Label(self.canvas, image=expanded_img, bd=0)
+        big_image.img = expanded_img
+        big_image.path = label.path
         if goback:
             self.current_y = self.canvas.yview()[0]
         self.canvas.yview_moveto(0)
         self.canvas.delete("all")
         self.canvas.unbind("<Button>")
-        x_pos = (self.canvas.winfo_width() - temp_label.winfo_width()) // 2
-        y_pos = (self.canvas.winfo_height() - temp_label.winfo_height()) // 2
-        self.canvas.create_window(x_pos, y_pos, window=temp_label, anchor='center')
-        temp_label.bind("<Button-2>", self.close_expanded_image)
-        temp_label.bind("<Button-3>", self.close_expanded_image)
-        temp_label.bind("<Button-4>", self.on_scroll_image)
-        temp_label.bind("<Button-5>", self.on_scroll_image)
-        temp_label.bind("<Double-Button-1>",lambda _: self.on_double_click_file(event))
+        self.canvas.bind("<Button-4>", lambda _:self.on_scroll_image(FakeEvent(big_image,4)))
+        self.canvas.bind("<Button-5>", lambda _:self.on_scroll_image(FakeEvent(big_image,5)))
+        x_pos = (self.canvas.winfo_width() - big_image.winfo_width()) // 2
+        y_pos = (self.canvas.winfo_height() - big_image.winfo_height()) // 2
+        self.canvas.create_window(x_pos, y_pos, window=big_image, anchor='center')
+        big_image.bind("<Button-2>", self.close_expanded_image)
+        big_image.bind("<Button-3>", self.close_expanded_image)
+        big_image.bind("<Button-4>", self.on_scroll_image)
+        big_image.bind("<Button-5>", self.on_scroll_image)
+        big_image.bind("<Double-Button-1>",lambda _: self.on_double_click_file(event))
+        self.__setattr__('bigimage', big_image)
         if not event.widget.sel:
             self.on_click_file(event)
             self.unselect = event
@@ -417,12 +423,15 @@ class FilePicker(tk.Frame):
             self.on_view_image(FakeEvent(nextimage), False)
 
     def close_expanded_image(self, event):
-        event.widget.destroy()
+        self.bigimage.destroy()
+        del self.bigimage
         self.canvas.yview_moveto(self.current_y)
         self.items_frame.grid()
         self.canvas.delete("all")
         self.canvas.create_window(0, 0, window=self.items_frame, anchor='nw')
         self.canvas.bind("<Button>", self.mouse_nav)
+        self.canvas.unbind("<Button-4>")
+        self.canvas.unbind("<Button-5>")
         if self.unselect:
             self.on_click_file(self.unselect)
             self.unselect = None
@@ -499,6 +508,8 @@ class FilePicker(tk.Frame):
             self.final_selection(txt)
 
     def load_dir(self):
+        if hasattr(self, 'bigimage'):
+            self.close_expanded_image(None)
         self.items_frame.destroy()
         self.items_frame = tk.Frame(self.canvas)
         self.canvas.create_window((0,0), window=self.items_frame, anchor='nw')
@@ -594,8 +605,9 @@ def get_size(path):
     return f'{size}B'
 
 class FakeEvent:
-    def __init__(self, widget):
+    def __init__(self, widget, num=0):
         self.widget = widget
+        self.num = num
         self.state = 0
 
 class PathInfo(str):
