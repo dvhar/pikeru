@@ -605,11 +605,16 @@ class FilePicker(tk.Frame):
     def config(self):
         config = CaseConfigParser()
         config.read(os.path.expanduser(config_file))
-        self.bookmarks = config['Bookmarks']
-        self.commands = config['Commands']
-        settings = config['Settings']
-        global SCALE
-        SCALE = float(settings['dpi_scale'])
+        try:
+            self.bookmarks = config['Bookmarks']
+            self.commands = config['Commands']
+            settings = config['Settings']
+            global SCALE
+            SCALE = float(settings['dpi_scale'])
+        except Exception as e:
+            print(f'updated config file - backing up to {config_file}.old', file=sys.stderr)
+            os.rename(config_file, config_file+'.old')
+            writeconfig(config)
         self.INIT_WIDTH = int(1024*SCALE)
         self.INIT_HEIGHT = int(720*SCALE)
         self.THUMBNAIL_WIDTH = int(140*SCALE)
@@ -655,15 +660,32 @@ class CaseConfigParser(configparser.RawConfigParser):
     def optionxform(self, optionstr):
         return optionstr
 
-conftxt = '''# Commands from the cmd menu will substitute these values from the selected files before running, as seen in the resize example:
+
+def writeconfig(oldvals: CaseConfigParser|None = None):
+    if os.path.isfile(config_file):
+        return
+    with open(config_file, 'w') as f:
+        print(f'writing config to {config_file}')
+        confcomment = '''# Commands from the cmd menu will substitute these values from the selected files before running, as seen in the resize example:
 # [path] is full file path
 # [dir] is directory
 # [name] is the filename without full path
 # [part] is the filename without path or extension
 # [ext] is the file extension, including the period
-[Commands]\nresize=convert -resize 1200 [path] [dir]/[part]_resized[ext]\n
-[Settings]\ndpi_scale=1\n
-[Bookmarks]\nHome={home_dir}\n'''
+'''
+        def getsection(name, default):
+            it = oldvals[name] if oldvals and oldvals.has_section(name) else default
+            f.write(f'[{name}]\n')
+            f.writelines(f'{v[0]} = {v[1]}\n' for v in it.items())
+            f.write('\n')
+        cmds = {'resize':'convert -resize 1200 [path] [dir]/[part]_resized[ext]'}
+        sets = {'dpi_scale':'1'}
+        bkmk = {'Home':home_dir}
+        bkmk.update({k:os.path.join(home_dir,k) for k in ["Documents", "Pictures", "Downloads"]})
+        f.write(confcomment)
+        getsection('Commands', cmds)
+        getsection('Settings', sets)
+        getsection('Bookmarks', bkmk)
 
 def main():
     parser = argparse.ArgumentParser(description="A filepicker with proper thumbnail support")
@@ -674,10 +696,7 @@ def main():
     parser.add_argument("-i", "--mime_list", default=None, help="list of allowed mime types. Can be empty.")
     args = parser.parse_args()
     os.makedirs(cache_dir, exist_ok=True)
-    if not os.path.isfile(config_file):
-        with open(config_file, 'w') as f:
-            f.write(conftxt.format(home_dir=home_dir))
-            f.writelines([f'{bm}={os.path.join(home_dir, bm)}\n' for bm in ["Documents", "Pictures", "Downloads"]])
+    writeconfig()
     
     picker = FilePicker(args)
     picker.run()

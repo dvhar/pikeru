@@ -61,7 +61,6 @@ else
 	. $venv/bin/activate
 fi
 
-#not using title flag but you can if you want
 cmd="python ./pikeru.py \
 	--mode '${MODE}' \
 	--path '${DIR}' \
