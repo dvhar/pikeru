@@ -46,7 +46,8 @@ class FilePicker(tk.Frame):
         self.config()
 
         self.root = TkinterDnD.Tk()
-        self.font = tkinter.font.Font(family="Helvetica", size=10) # font doesn't need scaling?
+        self.widgetfont = tkinter.font.Font(family="Helvetica", size=12)
+        self.itemfont = tkinter.font.Font(family="Helvetica", size=10)
         self.root.geometry(f'{self.INIT_WIDTH}x{self.INIT_HEIGHT}')
         self.root.tk.call('tk','scaling',SCALE)
         self.root.wm_title(args.title or 'File Picker')
@@ -85,7 +86,7 @@ class FilePicker(tk.Frame):
         self.bind_listeners(self.canvas)
         self.bind_listeners(self.items_frame)
 
-        self.path_textfield = tk.Entry(upper_frame, insertbackground='red', font=self.font)
+        self.path_textfield = tk.Entry(upper_frame, insertbackground='red', font=self.widgetfont)
         self.path_textfield.grid(row=1, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
         self.path_textfield.insert(0, args.path)
         self.path_textfield.bind("<Return>", self.on_type_enter)
@@ -93,24 +94,24 @@ class FilePicker(tk.Frame):
         self.button_frame = tk.Frame(upper_frame)
         self.button_frame.grid(row=0, column=0, sticky='we')
         button_text = "Save" if self.select_save else "Open"
-        self.open_button = tk.Button(self.button_frame, width=10, text=button_text, command=self.on_select_button, font=self.font)
+        self.open_button = tk.Button(self.button_frame, width=10, text=button_text, command=self.on_select_button, font=self.widgetfont)
         self.open_button.pack(side='right')
-        self.cancel_button = tk.Button(self.button_frame, width=10, text="Cancel", command=self.root.destroy, font=self.font)
+        self.cancel_button = tk.Button(self.button_frame, width=10, text="Cancel", command=self.root.destroy, font=self.widgetfont)
         self.cancel_button.pack(side='right')
-        self.up_dir_button = tk.Button(self.button_frame, width=7, text="Up Dir", command=self.on_up_dir, font=self.font)
+        self.up_dir_button = tk.Button(self.button_frame, width=7, text="Up Dir", command=self.on_up_dir, font=self.widgetfont)
         self.up_dir_button.pack(side='right')
-        self.new_dir_button = tk.Button(self.button_frame, width=7, text="New Dir", command=self.create_directory, font=self.font)
+        self.new_dir_button = tk.Button(self.button_frame, width=7, text="New Dir", command=self.create_directory, font=self.widgetfont)
         self.new_dir_button.pack(side='right')
-        self.sort_button = tk.Button(self.button_frame, width=7, text="Sort", command=self.show_sort_menu, font=self.font)
+        self.sort_button = tk.Button(self.button_frame, width=7, text="Sort", command=self.show_sort_menu, font=self.widgetfont)
         self.sort_button.pack(side='right')
         self.root.bind("<Button-1>", self.withdraw_menus)
-        self.cmd_button = tk.Button(self.button_frame, width=7, text="Cmd", command=self.show_cmd_menu, font=self.font)
+        self.cmd_button = tk.Button(self.button_frame, width=7, text="Cmd", command=self.show_cmd_menu, font=self.widgetfont)
         self.cmd_button.pack(side='right')
-        self.cmd_menu = tk.Menu(self.root, tearoff=False, font=self.font)
+        self.cmd_menu = tk.Menu(self.root, tearoff=False, font=self.widgetfont)
         for cmd_name, cmd_val in self.commands.items():
             self.cmd_menu.add_command(label=cmd_name, command=lambda cmd=cmd_val: self.run_cmd(cmd))
 
-        self.size_label = tk.Label(self.button_frame, text='', font=self.font)
+        self.size_label = tk.Label(self.button_frame, text='', font=self.widgetfont)
         self.size_label.pack(side='left')
 
         if self.enable_mime_filtering:
@@ -138,7 +139,7 @@ class FilePicker(tk.Frame):
         self.prev_sel = []
 
         for i, (name, path) in enumerate(self.bookmarks.items()):
-            btn = tk.Button(self.bookmark_frame, text=name, font=self.font)
+            btn = tk.Button(self.bookmark_frame, text=name, font=self.widgetfont)
             btn.path = path
             btn.grid(row=i, column=0, sticky='news')
             btn.bind("<Button-1>", lambda e: self.change_dir(e.widget.path))
@@ -242,32 +243,32 @@ class FilePicker(tk.Frame):
                 match ext:
                     case '.png'|'.jpg'|'.jpeg'|'.gif':
                         img = self.prepare_cached_thumbnail(item_path, 'pic')
-                        label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.font)
+                        label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont)
                         label.__setattr__('img', img)
                         label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
                         self.prep_file(label, item_path)
                     case '.mp4'|'.avi'|'.mkv'|'.webm':
                         img = self.prepare_cached_thumbnail(item_path, 'vid')
-                        label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.font)
+                        label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont)
                         label.__setattr__('img', img)
                         label.__setattr__('vid', True)
                         label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
                         self.prep_file(label, item_path)
                     case '.txt'|'.pdf'|'.doc'|'.docx':
-                        label = tk.Label(self.items_frame, image=self.doc_icon, text=name, compound='top', font=self.font)
+                        label = tk.Label(self.items_frame, image=self.doc_icon, text=name, compound='top', font=self.itemfont)
                         label.__setattr__('img', self.doc_icon)
                         self.prep_file(label, item_path)
                     case _:
-                        label = tk.Label(self.items_frame, image=self.unknown_icon, text=name, compound='top', font=self.font)
+                        label = tk.Label(self.items_frame, image=self.unknown_icon, text=name, compound='top', font=self.itemfont)
                         label.__setattr__('img', self.unknown_icon)
                         self.prep_file(label, item_path)
             elif os.path.isdir(item_path):
-                label = tk.Label(self.items_frame, image=self.folder_icon, text=name, compound='top', font=self.font)
+                label = tk.Label(self.items_frame, image=self.folder_icon, text=name, compound='top', font=self.itemfont)
                 self.prep_dir(label, item_path)
             else:
                 return
         except Exception as e:
-            label = tk.Label(self.items_frame, image=self.error_icon, text=name, compound='top', font=self.font)
+            label = tk.Label(self.items_frame, image=self.error_icon, text=name, compound='top', font=self.itemfont)
             label.__setattr__('img', self.unknown_icon)
             self.prep_file(label, item_path)
             label.path.mime = 'application/octet-stream'
@@ -311,7 +312,7 @@ class FilePicker(tk.Frame):
                 return
         path = source.path
         basename = os.path.basename(path)
-        new_bookmark = tk.Button(self.bookmark_frame, text=basename, command=lambda: self.change_dir(path), font=self.font)
+        new_bookmark = tk.Button(self.bookmark_frame, text=basename, command=lambda: self.change_dir(path), font=self.widgetfont)
         new_bookmark.path = path
         new_bookmark.grid(row=len(bookmarks), column=0, sticky='news')
         self.bookmark_frame.update_idletasks()
@@ -549,7 +550,7 @@ class FilePicker(tk.Frame):
             self.queue.put(path)
 
     def show_sort_menu(self):
-        self.sort_popup = tk.Menu(self.root, tearoff=False, font=self.font)
+        self.sort_popup = tk.Menu(self.root, tearoff=False, font=self.widgetfont)
         self.sort_popup.add_command(label="Name asc", command=lambda :self.on_sort('name', True))
         self.sort_popup.add_command(label="Name desc", command=lambda :self.on_sort('name', False))
         self.sort_popup.add_command(label="Date oldest first", command=lambda :self.on_sort('time', True))
@@ -609,20 +610,7 @@ class FilePicker(tk.Frame):
             self.bookmarks = config['Bookmarks']
             self.commands = config['Commands']
             global SCALE
-            manual_scale = True
-            try:
-                cmd = 'gsettings get org.gnome.desktop.interface scaling-factor'
-                proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
-                stdout, _ = proc.communicate()
-                if proc.returncode == 0:
-                    a = float(stdout.decode().strip().split(' ')[1])
-                    if a > 0:
-                        SCALE = a
-                        manual_scale = False
-            except Exception as e:
-                print(e, file=sys.stderr)
-            if manual_scale:
-                SCALE = float(config.get('Settings','dpi_scale'))
+            SCALE = float(config.get('Settings','dpi_scale'))
         except Exception as e:
             print(e, file=sys.stderr)
             print(f'updated config file - backing up to {config_file}.old', file=sys.stderr)
