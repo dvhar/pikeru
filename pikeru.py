@@ -46,7 +46,7 @@ class FilePicker(tk.Frame):
         self.config()
 
         self.root = TkinterDnD.Tk()
-        self.font = tkinter.font.Font(family="Helvetica", size=int(5*SCALE))
+        self.font = tkinter.font.Font(family="Helvetica", size=10) # font doesn't need scaling?
         self.root.geometry(f'{self.INIT_WIDTH}x{self.INIT_HEIGHT}')
         self.root.tk.call('tk','scaling',SCALE)
         self.root.wm_title(args.title or 'File Picker')
@@ -608,10 +608,23 @@ class FilePicker(tk.Frame):
         try:
             self.bookmarks = config['Bookmarks']
             self.commands = config['Commands']
-            settings = config['Settings']
             global SCALE
-            SCALE = float(settings['dpi_scale'])
+            manual_scale = True
+            try:
+                cmd = 'gsettings get org.gnome.desktop.interface scaling-factor'
+                proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+                stdout, _ = proc.communicate()
+                if proc.returncode == 0:
+                    a = float(stdout.decode().strip().split(' ')[1])
+                    if a > 0:
+                        SCALE = a
+                        manual_scale = False
+            except Exception as e:
+                print(e, file=sys.stderr)
+            if manual_scale:
+                SCALE = float(config.get('Settings','dpi_scale'))
         except Exception as e:
+            print(e, file=sys.stderr)
             print(f'updated config file - backing up to {config_file}.old', file=sys.stderr)
             os.rename(config_file, config_file+'.old')
             writeconfig(config)
@@ -622,7 +635,8 @@ class FilePicker(tk.Frame):
 
 def get_asset(file):
     img = Image.open(os.path.join(asset_dir, file))
-    img = img.resize((int(img.width * SCALE), int(img.height * SCALE)))
+    if SCALE != 1:
+        img = img.resize((int(img.width * SCALE), int(img.height * SCALE)))
     img = ImageTk.PhotoImage(img)
     return img
 
