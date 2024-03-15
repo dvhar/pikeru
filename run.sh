@@ -47,7 +47,6 @@ if [[ ! "$MODE" =~ ^(file|files|dir|save)$ ]]; then
   echo "Error: Invalid mode flag value (-m). It should be one of [file files dir save]." >> $logfile
   exit 1
 fi
-
 if [ ! -f "$venv/bin/activate" ]; then
 cat << EOF > /dev/stderr
 You may need to set up a venv. Put a venv in this directory or set environment variable PK_VENV to /path/to/venv.
@@ -68,5 +67,4 @@ cmd="python ./pikeru.py \
 	--mime_list '${MIME_LIST[@]:-}' \
 	--parent '${PARENT:-}'" 
 [ $debug = 1 ] && echo "cmd: $cmd" >> $logfile
-[ $debug = 1 ] || logfile=/dev/stderr
-eval $cmd 2>> $logfile
+eval "$cmd"

@@ -208,10 +208,10 @@ class FilePicker(tk.Frame):
             self.load_item(self.queue.get())
 
     def prep_file(self, label, item_path):
-        if item_path.idx >= len(self.items):
-            return
         label.sel = False
         label.path = item_path
+        if item_path.idx >= len(self.items):
+            return
         self.items[item_path.idx] = label
         self.bind_listeners(label)
         if not self.select_dir:
@@ -271,6 +271,7 @@ class FilePicker(tk.Frame):
             label = tk.Label(self.items_frame, image=self.error_icon, text=name, compound='top', font=self.itemfont)
             label.__setattr__('img', self.unknown_icon)
             self.prep_file(label, item_path)
+            label.__setattr__('path', item_path)
             label.path.mime = 'application/octet-stream'
             sys.stderr.write(f'Error loading item: {e}\t{item_path}\n')
 
