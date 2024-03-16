@@ -1,46 +1,26 @@
 # xdg-desktop-portal-pikeru
 
-[xdg-desktop-portal] backend for choosing files with pikeru.
-Based on xdg-desktop-portal-termfilechooser.
+xdg-desktop-portal backend for choosing files with pikeru.
 
-## Building
+## Building and Installing
 
-```sh
-meson build
-or
-arch-meson -Dsd-bus-provider=libsystemd build
-
-ninja -C build
-```
-
-## Installing
-
-### From Source
-
-```sh
-ninja -C build install
-```
-
+* `./install.sh`
+* This works on arch, other distros may need some work
+* This creates a symlink to this repo so if you want it to work for other users, put this repo in `/opt` first.
+* If installing for multiple users, you can uncomment the block in `meson.build` that installs `portals.conf`
 
 ## Running
 
-Make sure `XDG_CURRENT_DESKTOP` is set and imported into D-Bus.
+The install script will get the portal up and running but firefox needs to be configured to use it.
+* set environment variable `GTK_USE_PORTAL=1`.
+* in `about:config`, set `widget.use-xdg-desktop-portal.file-picker` to `1`
 
-When correctly installed, xdg-desktop-portal should automatically invoke
-xdg-desktop-portal-pikeru when needed.
-
-For example, to use this portal with Firefox, launch Firefox as such:
-`GTK_USE_PORTAL=1 firefox`.
-
-### Configuration
-
-See `man 5 xdg-desktop-portal-pikeru`.
 
 ### Manual startup
 
 At the moment, some command line flags are available for development and
 testing. If you need to use one of these flags, you can start an instance of
-xdpw using the following command:
+xdpp using the following command:
 
 ```sh
 xdg-desktop-portal-pikeru -r [OPTION...]
@@ -53,5 +33,6 @@ To list the available options, you can run `xdg-desktop-portal-pikeru
 
 MIT
 
+[xdg-desktop-portal-termfilechooser]: https://github.com/GermainZ/xdg-desktop-portal-termfilechooser
 [xdg-desktop-portal]: https://github.com/flatpak/xdg-desktop-portal
 [xdg-desktop-portal-wlr]: https://github.com/emersion/xdg-desktop-portal-wlr
