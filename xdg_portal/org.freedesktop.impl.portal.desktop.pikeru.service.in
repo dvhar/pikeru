@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.freedesktop.impl.portal.desktop.pikeru
+Exec=@libexecdir@/xdg-desktop-portal-pikeru
+@systemd_service@
