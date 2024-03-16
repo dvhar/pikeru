@@ -24,7 +24,8 @@ Planned but not yet implemented:
 * Create a venv in this directory with `python -m venv venv` or set env `PK_VENV` to point to one. If using PK_VENV, make sure it's set for the browser and not just shell, or set it in run.sh.
 * `. venv/bin/activate` and `pip install -r requirements.txt`. You may also need to install `tk` with your system package manager.
 * To use with chromium-based browsers, set environment variable `XDG_CURRENT_DESKTOP=KDE` and symlink the `kdialog` script in your path. That will trick the browser into thinking it's using the KDE dialog.
-* To use with Firefox and other programs that use xdg portal, install some xdg portal that uses kdialog or maybe try this: https://github.com/GermainZ/xdg-desktop-portal-termfilechooser . I haven't gotten it to work but maybe you can.
+* To use with Firefox, there's some work being done based on https://github.com/GermainZ/xdg-desktop-portal-termfilechooser to use pikeru via a portal. Will be merged shortly.
+* If using a high-dpi display, edit `dpi_scale` in ~/.config/pikeru.conf. Run `run.sh` first to create the file.
 
 ## License
 Pikeru is Public Domain.
