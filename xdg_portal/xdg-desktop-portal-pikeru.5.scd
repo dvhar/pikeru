@@ -27,6 +27,12 @@ The configuration files use the INI file format. Example:
 cmd=/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
 ```
 
+If no config is found, it will default to checking these locations for the
+pikeru wrapper:
+
+- /usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
+- /usr/local/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
+
 # FILECHOOSER OPTIONS
 
 These options need to be placed under the **[filechooser]** section.
@@ -40,7 +46,10 @@ These options need to be placed under the **[filechooser]** section.
 	configured to launch the pikeru file picker to select files.
 
 **default_dir** = _directory_
-	Default directory to save files in, if the invoking program does not
+	Default directory to save file paths in, if the invoking program does not
 	provide one.
 
 	The default value is /tmp.
+
+	This option will probably be deprecated in the
+	future.
