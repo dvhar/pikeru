@@ -241,7 +241,7 @@ class FilePicker(tk.Frame):
             if os.path.isfile(item_path):
                 ext = os.path.splitext(base_path)[-1].lower()
                 match ext:
-                    case '.png'|'.jpg'|'.jpeg'|'.gif':
+                    case '.png'|'.jpg'|'.jpeg'|'.gif'|'.webp':
                         img = self.prepare_cached_thumbnail(item_path, 'pic')
                         label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont)
                         label.__setattr__('img', img)
