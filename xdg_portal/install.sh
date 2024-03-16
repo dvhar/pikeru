@@ -2,7 +2,7 @@
 
 homeconfig=~/.config/xdg-desktop-portal
 mkdir -p $homeconfig
-cp contrib/portals.conf $homeconfig
+cp -u contrib/portals.conf $homeconfig
 
 meson setup \
   --prefix        /usr \

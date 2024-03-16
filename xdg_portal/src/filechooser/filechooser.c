@@ -16,9 +16,8 @@
 static const char object_path[] = "/org/freedesktop/portal/desktop";
 static const char interface_name[] = "org.freedesktop.impl.portal.FileChooser";
 
-static int exec_filechooser(void *data, bool writing, bool multiple,
-                            bool directory, char *path, char ***selected_files,
-                            size_t *num_selected_files) {
+static int exec_filechooser(void *data, bool writing, bool multiple, bool directory,
+                            char *path, char ***selected_files, size_t *num_selected_files) {
   struct xdpw_state *state = data;
   char *cmd_script = state->config->filechooser_conf.cmd;
   if (!cmd_script) {
@@ -31,11 +30,9 @@ static int exec_filechooser(void *data, bool writing, bool multiple,
   }
 
   size_t str_size = snprintf(NULL, 0, "%s %d %d %d \"%s\" \"%s\"", cmd_script,
-                             multiple, directory, writing, path, PATH_PORTAL) +
-                    1;
+                             multiple, directory, writing, path, PATH_PORTAL) + 1;
   char *cmd = malloc(str_size);
-  snprintf(cmd, str_size, "%s %d %d %d \"%s\" \"%s\"", cmd_script, multiple,
-           directory, writing, path, PATH_PORTAL);
+  snprintf(cmd, str_size, "%s %d %d %d \"%s\" \"%s\"", cmd_script, multiple, directory, writing, path, PATH_PORTAL);
 
   remove(PATH_PORTAL);
   logprint(TRACE, "executing command: %s", cmd);
@@ -101,13 +98,11 @@ static int exec_filechooser(void *data, bool writing, bool multiple,
   return 0;
 }
 
-static int method_open_file(sd_bus_message *msg, void *data,
-                            sd_bus_error *ret_error) {
+static int method_open_file(sd_bus_message *msg, void *data, sd_bus_error *ret_error) {
   int ret = 0;
 
   char *handle, *app_id, *parent_window, *title;
-  ret = sd_bus_message_read(msg, "osss", &handle, &app_id, &parent_window,
-                            &title);
+  ret = sd_bus_message_read(msg, "osss", &handle, &app_id, &parent_window, &title);
   if (ret < 0) {
     return ret;
   }
@@ -118,7 +113,7 @@ static int method_open_file(sd_bus_message *msg, void *data,
   }
   char *key;
   int inner_ret = 0;
-  int multiple, directory;
+  int multiple = 0, directory = 0;
   while ((ret = sd_bus_message_enter_container(msg, 'e', "sv")) > 0) {
     inner_ret = sd_bus_message_read(msg, "s", &key);
     if (inner_ret < 0) {
@@ -155,22 +150,19 @@ static int method_open_file(sd_bus_message *msg, void *data,
   }
 
   // TODO: cleanup this
-  struct xdpw_request *req =
-      xdpw_request_create(sd_bus_message_get_bus(msg), handle);
+  struct xdpw_request *req = xdpw_request_create(sd_bus_message_get_bus(msg), handle);
   if (req == NULL) {
     return -ENOMEM;
   }
 
   char **selected_files = NULL;
   size_t num_selected_files = 0;
-  ret = exec_filechooser(data, false, multiple, directory, NULL,
-                         &selected_files, &num_selected_files);
+  ret = exec_filechooser(data, false, multiple, directory, NULL, &selected_files, &num_selected_files);
   if (ret) {
     goto cleanup;
   }
 
-  logprint(TRACE, "(OpenFile) Number of selected files: %d",
-           num_selected_files);
+  logprint(TRACE, "(OpenFile) Number of selected files: %d", num_selected_files);
   for (size_t i = 0; i < num_selected_files; i++) {
     logprint(TRACE, "%d. %s", i, selected_files[i]);
   }
@@ -242,13 +234,11 @@ cleanup:
   return ret;
 }
 
-static int method_save_file(sd_bus_message *msg, void *data,
-                            sd_bus_error *ret_error) {
+static int method_save_file(sd_bus_message *msg, void *data, sd_bus_error *ret_error) {
   int ret = 0;
 
   char *handle, *app_id, *parent_window, *title;
-  ret = sd_bus_message_read(msg, "osss", &handle, &app_id, &parent_window,
-                            &title);
+  ret = sd_bus_message_read(msg, "osss", &handle, &app_id, &parent_window, &title);
   if (ret < 0) {
     return ret;
   }
@@ -296,8 +286,7 @@ static int method_save_file(sd_bus_message *msg, void *data,
   }
 
   // TODO: cleanup this
-  struct xdpw_request *req =
-      xdpw_request_create(sd_bus_message_get_bus(msg), handle);
+  struct xdpw_request *req = xdpw_request_create(sd_bus_message_get_bus(msg), handle);
   if (req == NULL) {
     return -ENOMEM;
   }
@@ -312,8 +301,7 @@ static int method_save_file(sd_bus_message *msg, void *data,
     current_folder = default_dir;
   }
 
-  size_t path_size =
-      snprintf(NULL, 0, "%s/%s", current_folder, current_name) + 1;
+  size_t path_size = snprintf(NULL, 0, "%s/%s", current_folder, current_name) + 1;
   char *path = malloc(path_size);
   snprintf(path, path_size, "%s/%s", current_folder, current_name);
 
@@ -333,16 +321,14 @@ static int method_save_file(sd_bus_message *msg, void *data,
 
   char **selected_files = NULL;
   size_t num_selected_files = 0;
-  ret = exec_filechooser(data, true, false, false, path, &selected_files,
-                         &num_selected_files);
+  ret = exec_filechooser(data, true, false, false, path, &selected_files, &num_selected_files);
   if (ret || num_selected_files == 0) {
     remove(path);
     ret = -1;
     goto cleanup;
   }
 
-  logprint(TRACE, "(SaveFile) Number of selected files: %d",
-           num_selected_files);
+  logprint(TRACE, "(SaveFile) Number of selected files: %d", num_selected_files);
   for (size_t i = 0; i < num_selected_files; i++) {
     logprint(TRACE, "%d. %s", i, selected_files[i]);
   }
@@ -417,10 +403,8 @@ cleanup:
 
 static const sd_bus_vtable filechooser_vtable[] = {
     SD_BUS_VTABLE_START(0),
-    SD_BUS_METHOD("OpenFile", "osssa{sv}", "ua{sv}", method_open_file,
-                  SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_METHOD("SaveFile", "osssa{sv}", "ua{sv}", method_save_file,
-                  SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("OpenFile", "osssa{sv}", "ua{sv}", method_open_file, SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("SaveFile", "osssa{sv}", "ua{sv}", method_save_file, SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END};
 
 int xdpw_filechooser_init(struct xdpw_state *state) {

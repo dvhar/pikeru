@@ -86,7 +86,6 @@ static char *config_path(const char *prefix, const char *filename) {
     }
 
     char *config_folder = "xdg-desktop-portal-pikeru";
-
     size_t size = 3 + strlen(prefix) + strlen(config_folder) + strlen(filename);
     char *path = calloc(size, sizeof(char));
     snprintf(path, size, "%s/%s/%s", prefix, config_folder, filename);
