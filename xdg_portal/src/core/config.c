@@ -8,7 +8,10 @@
 #include <unistd.h>
 #include <ini.h>
 
-#define FILECHOOSER_DEFAULT_CMD "/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh"
+static const char* const DEFAULT_CMDS[2] = {
+    "/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
+    "/usr/local/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh"
+};
 #define FILECHOOSER_DEFAULT_DIR "/tmp"
 
 void print_config(enum LOGLEVEL loglevel, struct xdpw_config *config) {
@@ -57,17 +60,24 @@ static int handle_ini_config(void *data, const char* section, const char *key, c
     return 0;
 }
 
+static bool file_exists(const char *path) {
+    return path && access(path, R_OK) != -1;
+}
+
 static void default_config(struct xdpw_config *config) {
-    size_t size = snprintf(NULL, 0, "%s", FILECHOOSER_DEFAULT_CMD) + 1;
+    const char* cmd = NULL;
+    for (size_t i=0; i<(sizeof(DEFAULT_CMDS)/sizeof(DEFAULT_CMDS[0])); i++) {
+        if (file_exists(DEFAULT_CMDS[i])) {
+            cmd = DEFAULT_CMDS[i];
+            break;
+        }
+    }
+    size_t size = snprintf(NULL, 0, "%s", cmd) + 1;
     config->filechooser_conf.cmd = malloc(size);
-    snprintf(config->filechooser_conf.cmd, size, "%s", FILECHOOSER_DEFAULT_CMD);
+    snprintf(config->filechooser_conf.cmd, size, "%s", cmd);
     size = snprintf(NULL, 0, "%s", FILECHOOSER_DEFAULT_DIR) + 1;
     config->filechooser_conf.default_dir = malloc(size);
     snprintf(config->filechooser_conf.default_dir, size, "%s", FILECHOOSER_DEFAULT_DIR);
-}
-
-static bool file_exists(const char *path) {
-    return path && access(path, R_OK) != -1;
 }
 
 static char *config_path(const char *prefix, const char *filename) {
