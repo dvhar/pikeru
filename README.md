@@ -1,6 +1,6 @@
  # Pikeru: The File Picker with Good Thumbnails
 
-Pikeru is a filepicker for linux that has working thumbnails and works on any desktop environment or window manager. Kind of like kdialog but with some added features.
+Pikeru is a filepicker for linux that has working thumbnails and works on any desktop environment or window manager. Kind of like kdialog but better and with some added features.
 
 ![Screenshot_20240313_233010_resized](https://github.com/dvhar/pikeru/assets/33729230/eab08fc2-c10a-4a49-b561-d8a78ee263f9)
 
@@ -21,11 +21,14 @@ Planned but not yet implemented:
 
 ## Installation and Usage
 
-* Create a venv in this directory with `python -m venv venv` or set env `PK_VENV` to point to one. If using PK_VENV, make sure it's set for the browser and not just shell, or set it in run.sh.
+### Install the filepicker
+* Create a venv in this directory with `python -m venv venv` or set env `PK_VENV` to point to one. If using PK_VENV, make sure it's set for the program launching pikeru and not just the shell, or set it in run.sh.
 * `. venv/bin/activate` and `pip install -r requirements.txt`. You may also need to install `tk` with your system package manager.
-* To use with chromium-based browsers, set environment variable `XDG_CURRENT_DESKTOP=KDE` and symlink the `kdialog` script in your path. That will trick the browser into thinking it's using the KDE dialog.
-* To use with Firefox, there's some work being done based on https://github.com/GermainZ/xdg-desktop-portal-termfilechooser to use pikeru via a portal. Will be merged shortly.
 * If using a high-dpi display, edit `dpi_scale` in ~/.config/pikeru.conf. Run `run.sh` first to create the file.
+
+### Make applications use it
+* The xdg-desktop-portal backend for pikeru is in the `xdg_portal` directory. Follow the readme there to install it. That should work for both Firefox and Chromium based browsers.
+* If your chromium-based browser is not using xdg portal, you can still use it by setting environment variable `XDG_CURRENT_DESKTOP=KDE` and symlinking the `kdialog` script in your path. That will trick the browser into thinking it's using the KDE dialog, assuming the real kdialog is not placed before this one in your path.
 
 ## License
 Pikeru is Public Domain.
