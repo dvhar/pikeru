@@ -11,7 +11,6 @@
 #include <unistd.h>
 
 #define PATH_PREFIX "file://"
-#define PATH_PORTAL "/tmp/pikeru.portal"
 
 static const char object_path[] = "/org/freedesktop/portal/desktop";
 static const char interface_name[] = "org.freedesktop.impl.portal.FileChooser";
@@ -24,77 +23,46 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
     logprint(ERROR, "cmd not specified");
     return -1;
   }
+  if (path == NULL)
+      path = getenv("HOME");
+  if (path == NULL)
+    path = "/";
 
-  if (path == NULL) {
-    path = "";
-  }
+  char buf[8096];
+  snprintf(buf, sizeof(buf), "%s %d %d %d \"%s\"", cmd_script, multiple, directory, writing, path);
 
-  size_t str_size = snprintf(NULL, 0, "%s %d %d %d \"%s\" \"%s\"", cmd_script,
-                             multiple, directory, writing, path, PATH_PORTAL) + 1;
-  char *cmd = malloc(str_size);
-  snprintf(cmd, str_size, "%s %d %d %d \"%s\" \"%s\"", cmd_script, multiple, directory, writing, path, PATH_PORTAL);
-
-  remove(PATH_PORTAL);
-  logprint(TRACE, "executing command: %s", cmd);
-  int ret = system(cmd);
-  if (ret) {
-    logprint(ERROR, "could not execute %s: %d", cmd, errno);
-    free(cmd);
+  logprint(TRACE, "executing command: %s", buf);
+  FILE *fp = popen(buf, "r");
+  if (!fp) {
+    logprint(ERROR, "could not execute %s: %d", buf, errno);
     return -1;
   }
-  free(cmd);
-
-  FILE *fp = fopen(PATH_PORTAL, "r");
-  if (fp == NULL) {
-    logprint(ERROR, "failed to open " PATH_PORTAL);
-    return -1;
-  }
-
   size_t num_lines = 0;
-  char cr;
-  do {
-    cr = getc(fp);
-    if (cr == '\n') {
-      num_lines++;
-    }
-    if (ferror(fp)) {
-      return 1;
-    }
-  } while (cr != EOF);
-  rewind(fp);
-
-  if (num_lines == 0) {
-    num_lines = 1;
-  } else {
-    ++num_lines;
+  size_t n = fread(buf, 1, sizeof(buf)-1, fp);
+  pclose(fp);
+  if (!n) {
+    logprint(INFO, "read 0 bytes. Errno: %d", errno);
+    return 0;
   }
-
+  buf[n] = 0;
+  logprint(TRACE, "cmd output: %s", buf);
+  for (char* c = buf; *c; ++c){
+      if (*c == '\n')
+          num_lines++;
+  }
   *num_selected_files = num_lines;
   *selected_files = malloc((num_lines + 1) * sizeof(char *));
-
-  for (size_t i = 0; i < num_lines; i++) {
-    size_t n = 0;
-    char *line = NULL;
-    ssize_t nread = getline(&line, &n, fp);
-    if (ferror(fp)) {
-      free(line);
-      for (size_t j = 0; j < i - 1; j++) {
-        free((*selected_files)[j]);
-      }
-      free(*selected_files);
-      return 1;
-    }
-    size_t str_size = nread + strlen(PATH_PREFIX) + 1;
-    if (line[nread - 1] == '\n') {
-      str_size -= 1;
-    }
-    (*selected_files)[i] = malloc(str_size);
-    snprintf((*selected_files)[i], str_size, "%s%s", PATH_PREFIX, line);
-    free(line);
-  }
   (*selected_files)[num_lines] = NULL;
-
-  fclose(fp);
+  const size_t prefixlen = strlen(PATH_PREFIX);
+  char* line = strtok(buf, "\n");
+  size_t i = 0;
+  while (line) {
+    size_t linesize = strlen(line) + prefixlen + 1;
+    char* sline = malloc(linesize+1);
+    (*selected_files)[i++] = sline;
+    snprintf(sline, linesize, "%s%s", PATH_PREFIX, line);
+    line = strtok(NULL, "\n");
+  }
   return 0;
 }
 
