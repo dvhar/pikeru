@@ -65,6 +65,49 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
   return 0;
 }
 
+static int read_filters(sd_bus_message *msg) {
+  const char* val = NULL;
+  unsigned int num = 0;
+  int ret = sd_bus_message_enter_container(msg, 'a', "(sa(us))");
+  if (ret < 0) {
+    logprint(ERROR, "dbus: error entering filters array %s", strerror(ret));
+    return ret;
+  }
+  while ((ret = sd_bus_message_enter_container(msg, 'r', "sa(us)")) > 0) { // enter each outer struct
+    if ((ret = sd_bus_message_read(msg, "s", &val)) < 0) { // read struct label
+      logprint(ERROR, "dbus: error reading filters label: %d", ret);
+      return ret;
+    }
+    logprint(TRACE, "dbus: filters label %s", val);
+    if ((ret = sd_bus_message_enter_container(msg, 'a', "(us)")) < 0) { // enter inner array
+      logprint(ERROR, "dbus: error reading filters inner array: %d", ret);
+      return ret;
+    }
+    while ((ret = sd_bus_message_enter_container(msg, 'r', "us")) > 0) { //enter inner struct
+      if ((ret = sd_bus_message_read(msg, "u", &num)) < 0) { // read inner num
+        logprint(ERROR, "dbus: error reading filters inner num: %d", ret);
+        return ret;
+      }
+      logprint(TRACE, "dbus: filters num %u", num);
+      if ((ret = sd_bus_message_read(msg, "s", &val)) < 0) { // read inner value
+        logprint(ERROR, "dbus: error reading filters inner value: %d", ret);
+        return ret;
+      }
+      logprint(TRACE, "dbus: filters value %s", val);
+      sd_bus_message_exit_container(msg); // exit inner struct
+    }
+    if ((ret = sd_bus_message_exit_container(msg)) < 0) { // exit inner array
+      logprint(ERROR, "dbus: error exiting filters inner array: %d", ret);
+      return ret;
+    };
+    if ((ret = sd_bus_message_exit_container(msg)) < 0) { // exit each outer struct
+      logprint(ERROR, "dbus: error exiting filters outer struct: %d", ret);
+      return ret;
+    };
+  }
+  sd_bus_message_exit_container(msg); // exit main array
+  return 0;
+}
 static int method_open_file(sd_bus_message *msg, void *data, sd_bus_error *ret_error) {
   int ret = 0;
 
@@ -98,6 +141,10 @@ static int method_open_file(sd_bus_message *msg, void *data, sd_bus_error *ret_e
     } else if (strcmp(key, "directory") == 0) {
       sd_bus_message_read(msg, "v", "b", &directory);
       logprint(DEBUG, "dbus: option directory: %d", directory);
+    } else if (strcmp(key, "filters") == 0) {
+      if ((ret = read_filters(msg)) < 0) {
+        return ret;
+      }
     } else {
       logprint(WARN, "dbus: unknown option %s", key);
       sd_bus_message_skip(msg, "v");
