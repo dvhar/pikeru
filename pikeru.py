@@ -673,7 +673,7 @@ def writeconfig(oldvals: CaseConfigParser|None = None):
     if os.path.isfile(config_file):
         return
     with open(config_file, 'w') as f:
-        print(f'writing config to {config_file}')
+        print(f'writing config to {config_file}', file=sys.stderr)
         confcomment = '''# Commands from the cmd menu will substitute the follwong values from the selected files before running, as seen in the convert examples. All paths and filenames are already quoted for you.
 # [path] is full file path
 # [name] is the filename without full path
