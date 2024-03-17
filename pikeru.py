@@ -469,7 +469,7 @@ class FilePicker(tk.Frame):
                 filepath = os.path.join(path, file)
                 if not self.mime_is_allowed(filepath) or filepath in self.already_added:
                     return
-                time.sleep(0.1)
+                time.sleep(0.5)
                 item = PathInfo(filepath)
                 item.idx = len(self.items)
                 self.items.append(None)

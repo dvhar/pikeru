@@ -62,7 +62,7 @@ fi
 
 cmd="python ./pikeru.py \
 	--mode '${MODE}' \
-	--path '${DIR}' \
+	--path \"${DIR}\" \
 	--title '${TITLE}' \
 	--mime_list '${MIME_LIST[@]:-}' \
 	--parent '${PARENT:-}'" 

@@ -18,13 +18,21 @@
 # The script should print the selected paths to the output path (argument #5),
 # one path per line.
 # If nothing is printed, then the operation is assumed to have been canceled.
+#
+# Notes:
+# Chrome doesn't provide the previous path via portal so need to do that here.
+# Mime filters not yet implemented in this xdg portal backend.
 
 multiple="$1"
 directory="$2"
 save="$3"
-path="${4:-$PWD}"
+path="$4"
 
-echo "'$1' '$2' '$3' '$path' '$5'" >> /tmp/pk.log
+prevpath=/tmp/pk.prevpath
+[ -z "$path" ] && [ ! $save = 1 ] && [ -r "$prevpath" ] && path="$(< $prevpath)"
+[ -z "$path" ] && path="$HOME"
+
+#echo "'$1' '$2' '$3' '$path' '$5'" >> /tmp/pk.log
 
 if [ $directory = 1 ]; then
     mode=dir
@@ -37,7 +45,11 @@ else
 fi
 
 pikerudir="$(dirname "$(readlink -f "$0")")"
-exe="$pikerudir/../../run.sh"
-cmd="$exe -m $mode -t 'File Picker' -p '$path'"
+cmd="$pikerudir/../../run.sh -m $mode -t 'File Picker' -p \"$path\""
 echo "$cmd" >> /tmp/pk.log
-eval "$cmd"
+res="$(eval "$cmd")" && [ $save = 0 ] && [ ! -z "$res" ] && {
+    prev="$res"
+    [ ! $directory = 1 ] && prev="$(dirname "$res")"
+    echo "$prev" > $prevpath
+}
+echo "$res"

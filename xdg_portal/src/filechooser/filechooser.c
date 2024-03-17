@@ -23,9 +23,7 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
     return -1;
   }
   if (path == NULL)
-      path = getenv("HOME");
-  if (path == NULL)
-    path = "/";
+      path = "";
 
   char buf[8096];
   snprintf(buf, sizeof(buf), "%s %d %d %d \"%s\"", cmd_script, multiple, directory, writing, path);

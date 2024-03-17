@@ -11,12 +11,12 @@ xdg-desktop-portal backend for picking files with pikeru.
 
 ## Running
 
-The install script will get the portal up and running but firefox needs to be configured to use it.
+The install script will get the portal up and running but firefox needs some extra configuration to use it.
 * set environment variable `GTK_USE_PORTAL=1`.
 * in `about:config`, set `widget.use-xdg-desktop-portal.file-picker` to `1`
 
 
-### Manual startup
+## Manual startup
 
 At the moment, some command line flags are available for development and
 testing. If you need to use one of these flags, you can start an instance of
@@ -33,6 +33,7 @@ To list the available options, you can run `xdg-desktop-portal-pikeru
 
 MIT
 
-[xdg-desktop-portal-termfilechooser]: https://github.com/GermainZ/xdg-desktop-portal-termfilechooser
-[xdg-desktop-portal]: https://github.com/flatpak/xdg-desktop-portal
-[xdg-desktop-portal-wlr]: https://github.com/emersion/xdg-desktop-portal-wlr
+This work is based on these:
+- [xdg-desktop-portal-termfilechooser](https://github.com/GermainZ/xdg-desktop-portal-termfilechooser)
+- [xdg-desktop-portal](https://github.com/flatpak/xdg-desktop-portal)
+- [xdg-desktop-portal-wlr](https://github.com/emersion/xdg-desktop-portal-wlr)
