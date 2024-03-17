@@ -686,7 +686,8 @@ def writeconfig(oldvals: CaseConfigParser|None = None):
             f.write(f'[{name}]\n')
             f.writelines(f'{v[0]} = {v[1]}\n' for v in it.items())
             f.write('\n')
-        cmds = {'resize':'convert -resize 1200 [path] [dir]/[part]_resized[ext]'}
+        cmds = {'resize':'convert -resize 1200 [path] "[dir]/[part]_resized[ext]"',
+                'convert webp':'convert [path] "[dir]/[part].jpg"'}
         sets = {'dpi_scale':'1'}
         bkmk = {'Home':home_dir}
         bkmk.update({k:os.path.join(home_dir,k) for k in ["Documents", "Pictures", "Downloads"]})
