@@ -2,13 +2,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "xdpw.h"
+#include "xdpp.h"
 #include "logger.h"
 
 static const char interface_name[] = "org.freedesktop.impl.portal.Request";
 
 static int method_close(sd_bus_message *msg, void *data, sd_bus_error *ret_error) {
-    struct xdpw_request *req = data;
+    struct xdpp_request *req = data;
     int ret = 0;
     logprint(INFO, "dbus: request closed");
 
@@ -25,7 +25,7 @@ static int method_close(sd_bus_message *msg, void *data, sd_bus_error *ret_error
 
     sd_bus_message_unref(reply);
 
-    xdpw_request_destroy(req);
+    xdpp_request_destroy(req);
 
     return 0;
 }
@@ -36,8 +36,8 @@ static const sd_bus_vtable request_vtable[] = {
     SD_BUS_VTABLE_END
 };
 
-struct xdpw_request *xdpw_request_create(sd_bus *bus, const char *object_path) {
-    struct xdpw_request *req = calloc(1, sizeof(struct xdpw_request));
+struct xdpp_request *xdpp_request_create(sd_bus *bus, const char *object_path) {
+    struct xdpp_request *req = calloc(1, sizeof(struct xdpp_request));
 
     if (sd_bus_add_object_vtable(bus, &req->slot, object_path, interface_name,
                 request_vtable, NULL) < 0) {
@@ -49,7 +49,7 @@ struct xdpw_request *xdpw_request_create(sd_bus *bus, const char *object_path) {
     return req;
 }
 
-void xdpw_request_destroy(struct xdpw_request *req) {
+void xdpp_request_destroy(struct xdpp_request *req) {
     if (req == NULL) {
         return;
     }

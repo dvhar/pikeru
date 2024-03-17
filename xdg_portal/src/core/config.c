@@ -1,5 +1,5 @@
 #include "config.h"
-#include "xdpw.h"
+#include "xdpp.h"
 #include "logger.h"
 
 #include <stdio.h>
@@ -14,14 +14,14 @@ static const char* const DEFAULT_CMDS[2] = {
 };
 #define FILECHOOSER_DEFAULT_DIR "/tmp"
 
-void print_config(enum LOGLEVEL loglevel, struct xdpw_config *config) {
+void print_config(enum LOGLEVEL loglevel, struct xdpp_config *config) {
     logprint(loglevel, "config: cmd:  %s", config->filechooser_conf.cmd);
     logprint(loglevel, "config: default_dir:  %s", config->filechooser_conf.default_dir);
 }
 
 // NOTE: calling finish_config won't prepare the config to be read again from config file
 // with init_config since to pointers and other values won't be reset to NULL, or 0
-void finish_config(struct xdpw_config *config) {
+void finish_config(struct xdpp_config *config) {
     logprint(DEBUG, "config: destroying config");
     free(config->filechooser_conf.cmd);
     free(config->filechooser_conf.default_dir);
@@ -49,7 +49,7 @@ static int handle_ini_filechooser(struct config_filechooser *filechooser_conf, c
 }
 
 static int handle_ini_config(void *data, const char* section, const char *key, const char *value) {
-    struct xdpw_config *config = (struct xdpw_config*)data;
+    struct xdpp_config *config = (struct xdpp_config*)data;
     logprint(TRACE, "config: parsing section %s, key %s, value %s", section, key, value);
 
     if (strcmp(section, "filechooser") == 0) {
@@ -64,7 +64,7 @@ static bool file_exists(const char *path) {
     return path && access(path, R_OK) != -1;
 }
 
-static void default_config(struct xdpw_config *config) {
+static void default_config(struct xdpp_config *config) {
     const char* cmd = NULL;
     for (size_t i=0; i<(sizeof(DEFAULT_CMDS)/sizeof(DEFAULT_CMDS[0])); i++) {
         if (file_exists(DEFAULT_CMDS[i])) {
@@ -151,14 +151,14 @@ static char *get_config_path(void) {
     return NULL;
 }
 
-void init_config(char ** const configfile, struct xdpw_config *config) {
+void init_config(char ** const configfile, struct xdpp_config *config) {
     if (*configfile == NULL) {
         *configfile = get_config_path();
     }
 
     default_config(config);
     if (*configfile == NULL) {
-        logprint(ERROR, "config: no config file found");
+        /*logprint(ERROR, "config: no config file found");*/
         return;
     }
     if (ini_parse(*configfile, handle_ini_config, config) < 0) {
