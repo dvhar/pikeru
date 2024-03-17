@@ -1,6 +1,6 @@
 # xdg-desktop-portal-pikeru
 
-xdg-desktop-portal backend for choosing files with pikeru.
+xdg-desktop-portal backend for picking files with pikeru.
 
 ## Building and Installing
 

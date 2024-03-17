@@ -23,7 +23,6 @@ multiple="$1"
 directory="$2"
 save="$3"
 path="${4:-$PWD}"
-out="$5"
 
 echo "'$1' '$2' '$3' '$path' '$5'" >> /tmp/pk.log
 
@@ -38,10 +37,7 @@ else
 fi
 
 pikerudir="$(dirname "$(readlink -f "$0")")"
-pikerudir="$(dirname $pikerudir)"
-pikerudir="$(dirname $pikerudir)"
-exe="$pikerudir/run.sh"
+exe="$pikerudir/../../run.sh"
 cmd="$exe -m $mode -t 'File Picker' -p '$path'"
-echo $cmd >> /tmp/pk.log
-res="$(eval $cmd)"
-echo "$res" | tee "$out"
+echo "$cmd" >> /tmp/pk.log
+eval "$cmd"
