@@ -596,8 +596,8 @@ class FilePicker(tk.Frame):
             cmd = cmd.replace('[path]', f'"{item_path}"')
             cmd = cmd.replace('[name]', f'"{base_name}"')
             cmd = cmd.replace('[ext]', ext)
-            cmd = cmd.replace('[dir]', directory)
-            cmd = cmd.replace('[part]', part)
+            cmd = cmd.replace('[dir]', f'"{directory}"')
+            cmd = cmd.replace('[part]', f'"{part}"')
             proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             stdout, stderr = proc.communicate()
             print(cmd, file=sys.stderr)
@@ -674,10 +674,10 @@ def writeconfig(oldvals: CaseConfigParser|None = None):
         return
     with open(config_file, 'w') as f:
         print(f'writing config to {config_file}')
-        confcomment = '''# Commands from the cmd menu will substitute these values from the selected files before running, as seen in the resize example:
+        confcomment = '''# Commands from the cmd menu will substitute the follwong values from the selected files before running, as seen in the convert examples. All paths and filenames are already quoted for you.
 # [path] is full file path
-# [dir] is directory
 # [name] is the filename without full path
+# [dir] is the current directory without trailing slash
 # [part] is the filename without path or extension
 # [ext] is the file extension, including the period
 '''
@@ -686,8 +686,8 @@ def writeconfig(oldvals: CaseConfigParser|None = None):
             f.write(f'[{name}]\n')
             f.writelines(f'{v[0]} = {v[1]}\n' for v in it.items())
             f.write('\n')
-        cmds = {'resize':'convert -resize 1200 [path] "[dir]/[part]_resized[ext]"',
-                'convert webp':'convert [path] "[dir]/[part].jpg"'}
+        cmds = {'resize':'convert -resize 1200 [path] [part]_resized[ext]',
+                'convert webp':'convert [path] [part].jpg'}
         sets = {'dpi_scale':'1'}
         bkmk = {'Home':home_dir}
         bkmk.update({k:os.path.join(home_dir,k) for k in ["Documents", "Pictures", "Downloads"]})
