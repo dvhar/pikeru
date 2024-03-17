@@ -1,5 +1,4 @@
-#include "filechooser.h"
-#include "xdpw.h"
+#include "xdpp.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -17,7 +16,7 @@ static const char interface_name[] = "org.freedesktop.impl.portal.FileChooser";
 
 static int exec_filechooser(void *data, bool writing, bool multiple, bool directory,
                             char *path, char ***selected_files, size_t *num_selected_files) {
-  struct xdpw_state *state = data;
+  struct xdpp_state *state = data;
   char *cmd_script = state->config->filechooser_conf.cmd;
   if (!cmd_script) {
     logprint(ERROR, "cmd not specified");
@@ -118,7 +117,7 @@ static int method_open_file(sd_bus_message *msg, void *data, sd_bus_error *ret_e
   }
 
   // TODO: cleanup this
-  struct xdpw_request *req = xdpw_request_create(sd_bus_message_get_bus(msg), handle);
+  struct xdpp_request *req = xdpp_request_create(sd_bus_message_get_bus(msg), handle);
   if (req == NULL) {
     return -ENOMEM;
   }
@@ -254,13 +253,13 @@ static int method_save_file(sd_bus_message *msg, void *data, sd_bus_error *ret_e
   }
 
   // TODO: cleanup this
-  struct xdpw_request *req = xdpw_request_create(sd_bus_message_get_bus(msg), handle);
+  struct xdpp_request *req = xdpp_request_create(sd_bus_message_get_bus(msg), handle);
   if (req == NULL) {
     return -ENOMEM;
   }
 
   if (current_folder == NULL) {
-    struct xdpw_state *state = data;
+    struct xdpp_state *state = data;
     char *default_dir = state->config->filechooser_conf.default_dir;
     if (!default_dir) {
       logprint(ERROR, "default_dir not specified");
@@ -375,7 +374,7 @@ static const sd_bus_vtable filechooser_vtable[] = {
     SD_BUS_METHOD("SaveFile", "osssa{sv}", "ua{sv}", method_save_file, SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END};
 
-int xdpw_filechooser_init(struct xdpw_state *state) {
+int xdpp_filechooser_init(struct xdpp_state *state) {
   // TODO: cleanup
   sd_bus_slot *slot = NULL;
   logprint(DEBUG, "dbus: init %s", interface_name);

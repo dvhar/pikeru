@@ -5,7 +5,7 @@
 #include <poll.h>
 #include <unistd.h>
 
-#include "xdpw.h"
+#include "xdpp.h"
 #include "logger.h"
 
 enum event_loop_fd {
@@ -14,7 +14,7 @@ enum event_loop_fd {
 
 static const char service_name[] = "org.freedesktop.impl.portal.desktop.pikeru";
 
-static int xdpw_usage(FILE *stream, int rc) {
+static int xdpp_usage(FILE *stream, int rc) {
     static const char *usage =
         "Usage: xdg-desktop-portal-pikeru [options]\n"
         "\n"
@@ -37,7 +37,7 @@ static int handle_name_lost(sd_bus_message *m, void *userdata, sd_bus_error *ret
 }
 
 int main(int argc, char *argv[]) {
-    struct xdpw_config config = {};
+    struct xdpp_config config = {};
     char *configfile = NULL;
     enum LOGLEVEL loglevel = DEFAULT_LOGLEVEL;
     bool replace = false;
@@ -68,9 +68,9 @@ int main(int argc, char *argv[]) {
                 replace = true;
                 break;
             case 'h':
-                return xdpw_usage(stdout, EXIT_SUCCESS);
+                return xdpp_usage(stdout, EXIT_SUCCESS);
             default:
-                return xdpw_usage(stderr, EXIT_FAILURE);
+                return xdpp_usage(stderr, EXIT_FAILURE);
         }
     }
 
@@ -88,12 +88,12 @@ int main(int argc, char *argv[]) {
     }
     logprint(DEBUG, "dbus: connected");
 
-    struct xdpw_state state = {
+    struct xdpp_state state = {
         .bus = bus,
         .config = &config,
     };
 
-    xdpw_filechooser_init(&state);
+    xdpp_filechooser_init(&state);
 
     uint64_t flags = SD_BUS_NAME_ALLOW_REPLACEMENT;
     if (replace) {

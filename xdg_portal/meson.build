@@ -50,7 +50,7 @@ else
 endif
 add_project_arguments('-DHAVE_' + sdbus.name().to_upper() + '=1', language: 'c')
 
-xdpw_files = files([
+xdpp_files = files([
     'src/core/main.c',
     'src/core/logger.c',
     'src/core/config.c',
@@ -60,7 +60,7 @@ xdpw_files = files([
 
 executable(
     'xdg-desktop-portal-pikeru',
-    [xdpw_files],
+    [xdpp_files],
     dependencies: [
         sdbus,
         rt,
