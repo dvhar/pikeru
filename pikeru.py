@@ -341,16 +341,21 @@ class FilePicker(tk.Frame):
                 hi = max(item.path.idx, hi)
             for i in range(lo, hi+1):
                 if not self.items[i].sel:
-                    self.items[i].sel = True
-                    self.items[i].config(relief="solid", bg='red')
-                    self.prev_sel.append(self.items[i])
+                    item = self.items[i]
+                    item.sel = True
+                    cfg = item.cget('background')
+                    item.origbg = cfg
+                    item.config(bg='red')
+                    self.prev_sel.append(item)
             return
         # toggle clicked item on or off
         if label.sel == False:
-            label.config(relief="solid", bg='red')
+            cfg = label.cget('background')
+            label.origbg = cfg
+            label.config(bg='red')
             label.sel = True
         elif len(self.prev_sel) == 1 or ctrl:
-            label.config(relief="flat", bg='black')
+            label.config(bg=label.origbg)
             label.sel = False
             self.path_textfield.delete(0, 'end')
             self.path_textfield.insert(0, os.getcwd())
@@ -362,7 +367,7 @@ class FilePicker(tk.Frame):
                 if ps.path != label.path:
                     ps.sel = False
                     try:
-                        ps.config(relief="flat", bg='black')
+                        ps.config(bg=label.origbg)
                     except:
                         pass
             self.prev_sel = []
@@ -588,8 +593,8 @@ class FilePicker(tk.Frame):
             base_name = os.path.basename(item_path)
             directory = os.path.dirname(item_path)
             part, ext = os.path.splitext(base_name) if os.path.isfile(item_path) else (base_name,'')
-            cmd = cmd.replace('[path]', item_path)
-            cmd = cmd.replace('[name]', base_name)
+            cmd = cmd.replace('[path]', f'"{item_path}"')
+            cmd = cmd.replace('[name]', f'"{base_name}"')
             cmd = cmd.replace('[ext]', ext)
             cmd = cmd.replace('[dir]', directory)
             cmd = cmd.replace('[part]', part)
