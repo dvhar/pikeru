@@ -43,6 +43,8 @@ class FilePicker(tk.Frame):
         self.watch_thread.start()
         self.already_added = set()
         self.items = []
+        self.ls_depth = 0
+        self.show_hidden = False
         self.config()
 
         self.root = TkinterDnD.Tk()
@@ -102,8 +104,8 @@ class FilePicker(tk.Frame):
         self.up_dir_button.pack(side='right')
         self.new_dir_button = tk.Button(self.button_frame, width=7, text="New Dir", command=self.create_directory, font=self.widgetfont)
         self.new_dir_button.pack(side='right')
-        self.sort_button = tk.Button(self.button_frame, width=7, text="Sort", command=self.show_sort_menu, font=self.widgetfont)
-        self.sort_button.pack(side='right')
+        self.view_button = tk.Button(self.button_frame, width=7, text="View", command=self.show_view_menu, font=self.widgetfont)
+        self.view_button.pack(side='right')
         self.root.bind("<Button-1>", self.withdraw_menus)
         self.cmd_button = tk.Button(self.button_frame, width=7, text="Cmd", command=self.show_cmd_menu, font=self.widgetfont)
         self.cmd_button.pack(side='right')
@@ -207,76 +209,76 @@ class FilePicker(tk.Frame):
         while True:
             self.load_item(self.queue.get())
 
-    def prep_file(self, label, item_path):
+    def prep_file(self, label, path):
         label.sel = False
-        label.path = item_path
-        if item_path.idx >= len(self.items):
+        label.path = path
+        if path.idx >= len(self.items):
             return
-        self.items[item_path.idx] = label
+        self.items[path.idx] = label
         self.bind_listeners(label)
         if not self.select_dir:
             label.bind("<Button-1>", self.on_click_file)
             label.bind("<Double-Button-1>", self.on_double_click_file)
-        if os.path.dirname(item_path) == os.getcwd():
-            label.grid(row=item_path.idx//self.max_cols, column=item_path.idx%self.max_cols)
+        if os.path.dirname(path) == os.getcwd():
+            label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols)
 
-    def prep_dir(self, label, item_path):
-        if item_path.idx >= len(self.items):
+    def prep_dir(self, label, path):
+        if path.idx >= len(self.items):
             return
-        label.path = item_path
+        label.path = path
         label.sel = False
-        self.items[item_path.idx] = label
+        self.items[path.idx] = label
         self.bind_listeners(label)
         label.bind("<Double-Button-1>", self.on_double_click_dir)
         if self.select_dir:
             label.bind("<Button-1>", self.on_click_file)
         label.bind("<ButtonRelease-1>", self.on_drag_dir_end)
-        if os.path.dirname(item_path) == os.getcwd():
-            label.grid(row=item_path.idx//self.max_cols, column=item_path.idx%self.max_cols)
+        if os.path.dirname(path) == os.getcwd():
+            label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols)
 
-    def load_item(self, item_path):
-        base_path = os.path.basename(item_path)
+    def load_item(self, path):
+        base_path = os.path.basename(path)
         name = base_path if len(base_path) < 20 else '...'+base_path[len(base_path)-17:]
         try:
-            if os.path.isfile(item_path):
+            if os.path.isfile(path):
                 ext = os.path.splitext(base_path)[-1].lower()
                 match ext:
                     case '.png'|'.jpg'|'.jpeg'|'.gif'|'.webp':
-                        img = self.prepare_cached_thumbnail(item_path, 'pic')
+                        img = self.prepare_cached_thumbnail(path, 'pic')
                         label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont)
                         label.__setattr__('img', img)
                         label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
-                        self.prep_file(label, item_path)
+                        self.prep_file(label, path)
                     case '.mp4'|'.avi'|'.mkv'|'.webm':
-                        img = self.prepare_cached_thumbnail(item_path, 'vid')
+                        img = self.prepare_cached_thumbnail(path, 'vid')
                         label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont)
                         label.__setattr__('img', img)
                         label.__setattr__('vid', True)
                         label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
-                        self.prep_file(label, item_path)
+                        self.prep_file(label, path)
                     case '.txt'|'.pdf'|'.doc'|'.docx':
                         label = tk.Label(self.items_frame, image=self.doc_icon, text=name, compound='top', font=self.itemfont)
                         label.__setattr__('img', self.doc_icon)
-                        self.prep_file(label, item_path)
+                        self.prep_file(label, path)
                     case _:
                         label = tk.Label(self.items_frame, image=self.unknown_icon, text=name, compound='top', font=self.itemfont)
                         label.__setattr__('img', self.unknown_icon)
-                        self.prep_file(label, item_path)
-            elif os.path.isdir(item_path):
+                        self.prep_file(label, path)
+            elif os.path.isdir(path):
                 label = tk.Label(self.items_frame, image=self.folder_icon, text=name, compound='top', font=self.itemfont)
-                self.prep_dir(label, item_path)
+                self.prep_dir(label, path)
             else:
                 return
         except Exception as e:
             label = tk.Label(self.items_frame, image=self.error_icon, text=name, compound='top', font=self.itemfont)
             label.__setattr__('img', self.unknown_icon)
-            self.prep_file(label, item_path)
-            label.__setattr__('path', item_path)
+            self.prep_file(label, path)
+            label.__setattr__('path', path)
             label.path.mime = 'application/octet-stream'
-            sys.stderr.write(f'Error loading item: {e}\t{item_path}\n')
+            sys.stderr.write(f'Error loading item: {e}\t{path}\n')
 
-    def prepare_cached_thumbnail(self, item_path, imtype):
-        md5hash = hashlib.md5(item_path.encode()).hexdigest()
+    def prepare_cached_thumbnail(self, path, imtype):
+        md5hash = hashlib.md5(path.encode()).hexdigest()
         cache_path = os.path.join(cache_dir, f'{md5hash}{SCALE}.png')
         if os.path.isfile(cache_path):
             img = Image.open(cache_path)
@@ -284,13 +286,13 @@ class FilePicker(tk.Frame):
             return img
         else:
             if imtype == 'pic':
-                img = Image.open(item_path)
+                img = Image.open(path)
                 img.thumbnail((self.THUMBNAIL_WIDTH, self.THUMBNAIL_HEIGHT))
                 img.save(cache_path)
                 img = ImageTk.PhotoImage(img)
                 return img
             else:
-                cap = cv2.VideoCapture(item_path)
+                cap = cv2.VideoCapture(path)
                 ret, frame = cap.read()
                 cap.release()
                 if not ret:
@@ -547,21 +549,38 @@ class FilePicker(tk.Frame):
         self.items_frame.bind('<Configure>', self.on_frame_configure)
         self.bind_listeners(self.canvas)
         self.bind_listeners(self.items_frame)
-        paths = [pi for pi in (PathInfo(p) for p in glob.glob(os.path.join(os.getcwd(), '*')))
-                 if self.mime_is_allowed(pi) or not self.enable_mime_filtering]
+        ps = ls(os.getcwd(), self.ls_depth, self.show_hidden)
+        paths = []
+        for p in ps:
+            try:
+                if not self.enable_mime_filtering or self.mime_is_allowed(p):
+                    paths.append(PathInfo(p))
+            except:
+                pass
         paths.sort(key=lambda p: (not p.isdir, p.lname))
         self.items = [None] * len(paths)
         for i, path in enumerate(paths):
             path.idx = i
             self.queue.put(path)
 
-    def show_sort_menu(self):
+    def change_depth(self, n):
+        self.ls_depth = n
+        self.load_dir()
+    def on_show(self):
+        self.show_hidden = not self.show_hidden
+        self.load_dir()
+
+    def show_view_menu(self):
+        show = 'Show' if not self.show_hidden else 'Hide'
         self.sort_popup = tk.Menu(self.root, tearoff=False, font=self.widgetfont)
-        self.sort_popup.add_command(label="Name asc", command=lambda :self.on_sort('name', True))
-        self.sort_popup.add_command(label="Name desc", command=lambda :self.on_sort('name', False))
-        self.sort_popup.add_command(label="Date oldest first", command=lambda :self.on_sort('time', True))
-        self.sort_popup.add_command(label="Date newest first", command=lambda :self.on_sort('time', False))
-        self.sort_popup.post(self.sort_button.winfo_rootx(), self.sort_button.winfo_rooty())
+        self.sort_popup.add_command(label="Sort name asc", command=lambda :self.on_sort('name', True))
+        self.sort_popup.add_command(label="Sort name desc", command=lambda :self.on_sort('name', False))
+        self.sort_popup.add_command(label="Sort oldest first", command=lambda :self.on_sort('time', True))
+        self.sort_popup.add_command(label="Sort newest first", command=lambda :self.on_sort('time', False))
+        self.sort_popup.add_command(label=f"{show} Hidden files", command=self.on_show)
+        # self.sort_popup.add_command(label="View depth 0", command=lambda :self.change_depth(0))
+        # self.sort_popup.add_command(label="View depth 1", command=lambda :self.change_depth(1))
+        self.sort_popup.post(self.view_button.winfo_rootx(), self.view_button.winfo_rooty())
 
     def on_sort(self, by, asc):
         match (by, asc):
@@ -589,11 +608,11 @@ class FilePicker(tk.Frame):
 
     def run_cmd(self, cmd: str):
         selected_items = [label.path for label in self.items if label.sel]
-        for item_path in selected_items:
-            base_name = os.path.basename(item_path)
-            directory = os.path.dirname(item_path)
-            part, ext = os.path.splitext(base_name) if os.path.isfile(item_path) else (base_name,'')
-            cmd = cmd.replace('[path]', f'"{item_path}"')
+        for path in selected_items:
+            base_name = os.path.basename(path)
+            directory = os.path.dirname(path)
+            part, ext = os.path.splitext(base_name) if os.path.isfile(path) else (base_name,'')
+            cmd = cmd.replace('[path]', f'"{path}"')
             cmd = cmd.replace('[name]', f'"{base_name}"')
             cmd = cmd.replace('[ext]', ext)
             cmd = cmd.replace('[dir]', f'"{directory}"')
@@ -668,7 +687,6 @@ class CaseConfigParser(configparser.RawConfigParser):
     def optionxform(self, optionstr):
         return optionstr
 
-
 def write_config(oldvals: CaseConfigParser|None = None):
     if os.path.isfile(config_file):
         return
@@ -695,6 +713,19 @@ def write_config(oldvals: CaseConfigParser|None = None):
         write_section('Commands', cmds)
         write_section('Settings', sets)
         write_section('Bookmarks', bkmk)
+
+def ls(directory: str, depth: int, hidden: bool) -> list:
+    def show(path: str):
+        return hidden or not path.startswith('.')
+    files = [os.path.join(directory,f) for f in os.listdir(directory) if show(f)]
+    if depth == 0:
+        return files
+    ret = []
+    for entry in files:
+        if os.path.isdir(entry):
+            ret += ls(entry, depth-1, hidden)
+    return files + ret
+
 
 def main():
     parser = argparse.ArgumentParser(description="A filepicker with proper thumbnail support")
