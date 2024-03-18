@@ -47,7 +47,7 @@ class FilePicker(tk.Frame):
 
         self.root = TkinterDnD.Tk()
         self.widgetfont = tkinter.font.Font(family="Helvetica", size=12)
-        self.itemfont = tkinter.font.Font(family="Helvetica", size=10)
+        self.itemfont = tkinter.font.Font(family="Helvetica", size=9)
         self.root.geometry(f'{self.INIT_WIDTH}x{self.INIT_HEIGHT}')
         self.root.tk.call('tk','scaling',SCALE)
         self.root.wm_title(args.title or 'File Picker')
@@ -130,7 +130,7 @@ class FilePicker(tk.Frame):
             self.threads.append(loading_thread)
 
         self.frame.bind('<Configure>', self.on_resize)
-        max_width = self.INIT_WIDTH - self.bookmark_frame.winfo_width()
+        max_width = self.root.winfo_width() - self.bookmark_frame.winfo_width()
         self.max_cols = max(1, int(max_width / (self.THUMBNAIL_WIDTH+6)))
         self.folder_icon = get_asset('folder.png')
         self.doc_icon = get_asset('document.png')
@@ -621,8 +621,8 @@ class FilePicker(tk.Frame):
             print(e, file=sys.stderr)
             print(f'updated config file - backing up to {config_file}.old', file=sys.stderr)
             os.rename(config_file, config_file+'.old')
-            writeconfig(config)
-        self.INIT_WIDTH = int(1024*SCALE)
+            write_config(config)
+        self.INIT_WIDTH = int(980*SCALE)
         self.INIT_HEIGHT = int(720*SCALE)
         self.THUMBNAIL_WIDTH = int(140*SCALE)
         self.THUMBNAIL_HEIGHT = int(140*SCALE)
@@ -669,7 +669,7 @@ class CaseConfigParser(configparser.RawConfigParser):
         return optionstr
 
 
-def writeconfig(oldvals: CaseConfigParser|None = None):
+def write_config(oldvals: CaseConfigParser|None = None):
     if os.path.isfile(config_file):
         return
     with open(config_file, 'w') as f:
@@ -681,7 +681,7 @@ def writeconfig(oldvals: CaseConfigParser|None = None):
 # [part] is the filename without path or extension
 # [ext] is the file extension, including the period
 '''
-        def getsection(name, default):
+        def write_section(name, default):
             it = oldvals[name] if oldvals and oldvals.has_section(name) else default
             f.write(f'[{name}]\n')
             f.writelines(f'{v[0]} = {v[1]}\n' for v in it.items())
@@ -692,9 +692,9 @@ def writeconfig(oldvals: CaseConfigParser|None = None):
         bkmk = {'Home':home_dir}
         bkmk.update({k:os.path.join(home_dir,k) for k in ["Documents", "Pictures", "Downloads"]})
         f.write(confcomment)
-        getsection('Commands', cmds)
-        getsection('Settings', sets)
-        getsection('Bookmarks', bkmk)
+        write_section('Commands', cmds)
+        write_section('Settings', sets)
+        write_section('Bookmarks', bkmk)
 
 def main():
     parser = argparse.ArgumentParser(description="A filepicker with proper thumbnail support")
@@ -705,7 +705,7 @@ def main():
     parser.add_argument("-i", "--mime_list", default=None, help="list of allowed mime types. Can be empty.")
     args = parser.parse_args()
     os.makedirs(cache_dir, exist_ok=True)
-    writeconfig()
+    write_config()
     
     picker = FilePicker(args)
     picker.run()

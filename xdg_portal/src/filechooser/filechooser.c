@@ -48,15 +48,13 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
           num_lines++;
   }
   *num_selected_files = num_lines;
-  *selected_files = malloc((num_lines + 1) * sizeof(char *));
-  (*selected_files)[num_lines] = NULL;
+  *selected_files = calloc(1, (num_lines + 1) * sizeof(char *));
   const size_t prefixlen = strlen(PATH_PREFIX);
   char* line = strtok(buf, "\n");
-  size_t i = 0;
-  while (line) {
+  for (size_t i = 0; line && i<num_lines; ++i) {
     size_t linesize = strlen(line) + prefixlen + 1;
-    char* sline = malloc(linesize+1);
-    (*selected_files)[i++] = sline;
+    char* sline = calloc(1, linesize+1);
+    (*selected_files)[i] = sline;
     snprintf(sline, linesize, "%s%s", PATH_PREFIX, line);
     line = strtok(NULL, "\n");
   }
@@ -267,13 +265,13 @@ static int method_save_file(sd_bus_message *msg, void *data, sd_bus_error *ret_e
   }
 
   size_t path_size = snprintf(NULL, 0, "%s/%s", current_folder, current_name) + 1;
-  char *path = malloc(path_size);
+  char *path = calloc(1, path_size);
   snprintf(path, path_size, "%s/%s", current_folder, current_name);
 
   bool file_already_exists = true;
   while (file_already_exists) {
     if (access(path, F_OK) == 0) {
-      char *path_tmp = malloc(path_size);
+      char *path_tmp = calloc(1, path_size);
       snprintf(path_tmp, path_size, "%s", path);
       path_size += 1;
       path = realloc(path, path_size);

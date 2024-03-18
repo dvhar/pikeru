@@ -8,9 +8,10 @@
 #include <unistd.h>
 #include <ini.h>
 
-static const char* const DEFAULT_CMDS[2] = {
+static const char* const DEFAULT_CMDS[3] = {
     "/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
-    "/usr/local/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh"
+    "/usr/local/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
+    "/opt/pikeru/xdg_portal/contrib/pikeru-wrapper.sh"
 };
 #define FILECHOOSER_DEFAULT_DIR "/tmp"
 
@@ -66,7 +67,7 @@ static bool file_exists(const char *path) {
 
 static void default_config(struct xdpp_config *config) {
     const char* cmd = NULL;
-    for (size_t i=0; i<(sizeof(DEFAULT_CMDS)/sizeof(DEFAULT_CMDS[0])); i++) {
+    for (size_t i=0; i<(sizeof(DEFAULT_CMDS)/sizeof(*DEFAULT_CMDS)); i++) {
         if (file_exists(DEFAULT_CMDS[i])) {
             cmd = DEFAULT_CMDS[i];
             break;
