@@ -6,7 +6,7 @@ debug=0
 
 logfile=/tmp/pk.log
 
-# LD_PRELOAD is set by the browser and can interfere with an opencv lib used to capture video frames
+# LD_PRELOAD is set by the browser and can interfere with an opencv lib used to display video frames
 unset LD_PRELOAD
 
 
@@ -36,14 +36,14 @@ while getopts "e:t:m:p:i:" opt; do
       MIME_LIST="$OPTARG"
       ;;
     \?)
-      echo "Invalid option: -$opt $OPTARG" >> $logfile
+      echo "Invalid option: -$opt $OPTARG" | tee -a $logfile > /dev/stderr
       exit 1
       ;;
   esac
 done
 
 if [[ ! "$MODE" =~ ^(file|files|dir|save)$ ]]; then
-  echo "Error: Invalid mode flag value (-m). It should be one of [file files dir save]." >> $logfile
+  echo "Error: Invalid mode flag value (-m). It should be one of [file files dir save]." | tee -a $logfile > /dev/stderr
   exit 1
 fi
 

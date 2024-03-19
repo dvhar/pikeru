@@ -41,6 +41,7 @@ class FilePicker(tk.Frame):
         self.watch_thread.start()
         self.already_added = set()
         self.items = []
+        self.dir_history = []
         self.show_hidden = False
         self.nav_id = 0
         self.config()
@@ -196,6 +197,7 @@ class FilePicker(tk.Frame):
             case 4: self.canvas.yview_scroll(-2,'units')
             case 5: self.canvas.yview_scroll(2,'units')
             case 8: self.on_up_dir()
+            case 9: self.on_down_dir()
 
     def bind_listeners(self, thing):
         thing.bind('<Button>', self.mouse_nav)
@@ -332,27 +334,32 @@ class FilePicker(tk.Frame):
         label = event.widget
         shift = event.state & 0x1
         ctrl = event.state & 0x4
-        # select a whole range
-        if self.select_multi and shift and len(self.prev_sel) > 0:
+        isdir = label.path.isdir
+        # select a whole range of same type. Always allow multi if dir
+        while (self.select_multi or isdir) and shift and len(self.prev_sel) > 0:
+            prevdir = self.prev_sel[0].path.isdir
+            if prevdir != isdir:
+                break
             lo = hi = label.path.idx
             for item in self.prev_sel:
                 lo = min(item.path.idx, lo)
                 hi = max(item.path.idx, hi)
             for i in range(lo, hi+1):
-                if not self.items[i].sel:
-                    item = self.items[i]
+                item = self.items[i]
+                if not item.sel and item.path.isdir == prevdir:
                     item.sel = True
                     cfg = item.cget('background')
                     item.origbg = cfg
                     item.config(bg='red')
                     self.prev_sel.append(item)
             return
-        # toggle clicked item on or off
+        # select a new item
         if label.sel == False:
             cfg = label.cget('background')
             label.origbg = cfg
             label.config(bg='red')
             label.sel = True
+        # deselect a selected item
         elif len(self.prev_sel) == 1 or ctrl:
             label.config(bg=label.origbg)
             label.sel = False
@@ -370,6 +377,7 @@ class FilePicker(tk.Frame):
                     except:
                         pass
             self.prev_sel = []
+        # TODO deselect items that are not of the same type if multi-selecting with ctrl
         # handle newly selected file or clear textbox
         if label.sel:
             self.prev_sel.append(label)
@@ -379,6 +387,14 @@ class FilePicker(tk.Frame):
                 self.size_label.configure(text=get_size(label.path))
         else:
             self.size_label.configure(text='')
+
+    def image_binds(self, event):
+        match event.num:
+            case 2: self.close_expanded_image(event)
+            case 3: self.close_expanded_image(event)
+            case 4: self.on_scroll_image(event)
+            case 5: self.on_scroll_image(event)
+            case 8: self.close_expanded_image(event)
 
     def on_view_image(self, event, goback):
         label : tk.Label = event.widget
@@ -411,17 +427,11 @@ class FilePicker(tk.Frame):
         x_pos = (self.canvas.winfo_width() - big_image.winfo_width()) // 2
         y_pos = (self.canvas.winfo_height() - big_image.winfo_height()) // 2
         self.canvas.create_window(x_pos, y_pos, window=big_image, anchor='center')
-        big_image.bind("<Button-2>", self.close_expanded_image)
-        big_image.bind("<Button-3>", self.close_expanded_image)
-        big_image.bind("<Button-4>", self.on_scroll_image)
-        big_image.bind("<Button-5>", self.on_scroll_image)
+        big_image.bind("<Button>", self.image_binds)
         big_image.bind("<Double-Button-1>",lambda _: self.on_double_click_file(event))
         self.__setattr__('bigimg', big_image)
         if not event.widget.sel:
             self.on_click_file(event)
-            self.unselect = event
-        else:
-            self.unselect = None
 
     def on_scroll_image(self, event):
         step = -1 if event.num==4 else 1
@@ -462,9 +472,6 @@ class FilePicker(tk.Frame):
         self.canvas.bind("<Button>", self.mouse_nav)
         self.canvas.unbind("<Button-4>")
         self.canvas.unbind("<Button-5>")
-        if self.unselect:
-            self.on_click_file(self.unselect)
-            self.unselect = None
 
     def watch_loop(self):
         for e in self.ino.event_gen():
@@ -479,11 +486,14 @@ class FilePicker(tk.Frame):
                 self.items.append(None)
                 self.load_item(item)
 
-    def change_dir(self, new_dir):
+    def change_dir(self, new_dir, save=False):
         if self.select_save and not os.path.isdir(new_dir):
             new_dir = os.path.dirname(new_dir)
         if os.path.isdir(new_dir):
-            self.ino.remove_watch(os.getcwd())
+            cwd = os.getcwd()
+            if save:
+                self.dir_history.append(cwd)
+            self.ino.remove_watch(cwd)
             self.ino.add_watch(new_dir, mask=inotify.constants.IN_CREATE)
             self.prev_sel = []
             os.chdir(new_dir)
@@ -498,7 +508,12 @@ class FilePicker(tk.Frame):
             self.canvas.yview_moveto(0)
 
     def on_up_dir(self):
-        self.change_dir(os.path.dirname(os.getcwd()))
+        self.change_dir(os.path.dirname(os.getcwd()), True)
+
+    def on_down_dir(self):
+        if len(self.dir_history) > 0:
+            self.change_dir(self.dir_history.pop())
+
 
     def on_double_click_dir(self, event):
         new_dir = event.widget.path
@@ -721,8 +736,8 @@ def write_config(oldvals: CaseConfigParser|None = None):
             f.write(f'[{name}]\n')
             f.writelines(f'{v[0]} = {v[1]}\n' for v in it.items())
             f.write('\n')
-        cmds = {'resize':'convert -resize 1200 [path] [part]_resized[ext]',
-                'convert webp':'convert [path] [part].jpg'}
+        cmds = {'resize':'convert -resize 1200 [path] [dir]/[part]_resized[ext]',
+                'convert webp':'convert [path] [dir]/[part].jpg'}
         sets = {'dpi_scale':'1'}
         bkmk = {'Home':home_dir}
         bkmk.update({k:os.path.join(home_dir,k) for k in ["Documents", "Pictures", "Downloads"]})
