@@ -30,6 +30,7 @@ Planned but not yet implemented:
 ### Make applications use it
 * The xdg-desktop-portal backend for pikeru is in the `xdg_portal` directory. Follow the readme there to install it. That should work for both Firefox and Chromium based browsers.
 * If your chromium-based browser is not using xdg portal, you can still use pikeru by setting environment variable `XDG_CURRENT_DESKTOP=KDE` and symlinking the `kdialog` script in your path. That will trick the browser into thinking it's using the KDE dialog, assuming the real kdialog is not placed before this one in your path.
+* The xdg portal should run on any distro but some of them can be tricky to configure to use it. Make a pull request if yours requires some tinkering to make it work. The kdialog hack should work anywhere.
 
 ## License
 Pikeru is Public Domain.
