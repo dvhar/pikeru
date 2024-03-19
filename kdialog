@@ -63,6 +63,6 @@ done
 [ $debug = 1 ] && echo "mimes: '$mimes'" >> $logfile
 [ -z "$mimes" ] || mimes="-i '$mimes'"
 pikerudir="$(dirname "$(readlink -f "$0")")"
-cmd="$pikerudir/run.sh -p '$attach' -t '$title' -m '$mode' -p '$path' $mimes"
+cmd="$pikerudir/pikeru -p '$attach' -t '$title' -m '$mode' -p '$path' $mimes"
 [ $debug = 1 ] && echo "cmd: $cmd" >> $logfile
 eval $cmd

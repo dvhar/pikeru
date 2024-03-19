@@ -45,7 +45,7 @@ else
 fi
 
 pikerudir="$(dirname "$(readlink -f "$0")")"
-cmd="$pikerudir/../../run.sh -m $mode -t 'File Picker' -p \"$path\""
+cmd="$pikerudir/../../pikeru -m $mode -t 'File Picker' -p \"$path\""
 echo "$cmd" >> /tmp/pk.log
 res="$(eval "$cmd")" && [ $save = 0 ] && [ ! -z "$res" ] && {
     prev="$res"

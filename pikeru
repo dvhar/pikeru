@@ -60,7 +60,7 @@ else
 	. $venv/bin/activate
 fi
 
-cmd="python ./pikeru.py \
+cmd="python ./main.py \
 	--mode '${MODE}' \
 	--path \"${DIR}\" \
 	--title '${TITLE}' \
