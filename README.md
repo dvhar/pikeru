@@ -22,9 +22,10 @@ Planned but not yet implemented:
 ## Installation and Usage
 
 ### Install the filepicker
-* Create a venv in this directory with `python -m venv venv`
-* `. venv/bin/activate` and `pip install -r requirements.txt`. You may also need to install `tk` with your system package manager.
-* If using a high-dpi display, edit `dpi_scale` in ~/.config/pikeru.conf. Run `./pikeru` first to create the file.
+* Install `tk` with your system package manager. Or whichever tkinter-related package python complains about when you run it.
+* Make sure the python `venv` module is installed.
+* Run `./pikeru`. That will create the venv and config file the first time and launch the filepicker.
+* If using a high-dpi display, edit `dpi_scale` in ~/.config/pikeru.conf.
 
 ### Make applications use it
 * The xdg-desktop-portal backend for pikeru is in the `xdg_portal` directory. Follow the readme there to install it. That should work for both Firefox and Chromium based browsers.
