@@ -34,7 +34,6 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
     logprint(ERROR, "could not execute %s: %d", buf, errno);
     return -1;
   }
-  size_t num_lines = 0;
   size_t n = fread(buf, 1, sizeof(buf)-1, fp);
   pclose(fp);
   if (!n) {
@@ -43,6 +42,7 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
   }
   buf[n] = 0;
   logprint(TRACE, "cmd output: %s", buf);
+  size_t num_lines = 0;
   for (char* c = buf; *c; ++c){
       if (*c == '\n')
           num_lines++;

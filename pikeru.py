@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 import argparse, configparser
-import glob
 import os, sys, time
 import tkinter as tk
 from PIL import Image, ImageTk
@@ -19,7 +18,6 @@ import mimetypes
 import inotify.adapters
 import inotify.constants
 import tkinter.font
-
 SCALE = 1
 
 # https://icon-icons.com
@@ -43,8 +41,8 @@ class FilePicker(tk.Frame):
         self.watch_thread.start()
         self.already_added = set()
         self.items = []
-        self.ls_depth = 0
         self.show_hidden = False
+        self.nav_id = 0
         self.config()
 
         self.root = TkinterDnD.Tk()
@@ -150,8 +148,8 @@ class FilePicker(tk.Frame):
         self.change_dir(args.path)
 
     def withdraw_menus(self, event):
-        if hasattr(self, 'sort_popup') and self.sort_popup.winfo_exists():
-            self.sort_popup.unpost()
+        if hasattr(self, 'view_menu') and self.view_menu.winfo_exists():
+            self.view_menu.unpost()
         if hasattr(self, 'cmd_menu') and self.cmd_menu.winfo_exists():
             self.cmd_menu.unpost()
 
@@ -219,7 +217,7 @@ class FilePicker(tk.Frame):
         if not self.select_dir:
             label.bind("<Button-1>", self.on_click_file)
             label.bind("<Double-Button-1>", self.on_double_click_file)
-        if os.path.dirname(path) == os.getcwd():
+        if path.nav_id == self.nav_id:
             label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols)
 
     def prep_dir(self, label, path):
@@ -230,10 +228,9 @@ class FilePicker(tk.Frame):
         self.items[path.idx] = label
         self.bind_listeners(label)
         label.bind("<Double-Button-1>", self.on_double_click_dir)
-        if self.select_dir:
-            label.bind("<Button-1>", self.on_click_file)
+        label.bind("<Button-1>", self.on_click_file)
         label.bind("<ButtonRelease-1>", self.on_drag_dir_end)
-        if os.path.dirname(path) == os.getcwd():
+        if path.nav_id == self.nav_id:
             label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols)
 
     def load_item(self, path):
@@ -524,13 +521,24 @@ class FilePicker(tk.Frame):
             self.root.destroy()
 
     def on_select_button(self):
-        selected_files = [label.path for label in self.items if label.sel]
-        if self.select_save and len(selected_files) == 0:
+        selections = [label.path for label in self.prev_sel]
+        has_dir = any(path.isdir for path in selections)
+        has_file = any(hasattr(label,'mime') for label in self.prev_sel)
+        if has_dir and not self.select_dir:
+            if has_file:
+                selections = [f for f in selections if not f.isdir]
+            elif len(selections) == 1:
+                self.on_double_click_dir(FakeEvent(FakeWidget(selections[0])))
+                return
+            else:
+                self.load_dir(selections)
+                return
+        if self.select_save and len(selections) == 0:
             self.final_selection(self.path_textfield.get())
         elif self.select_save:
-            self.final_selection(selected_files[0])
+            self.final_selection(selections[0])
         else:
-            print('\n'.join(selected_files))
+            print('\n'.join(selections))
             self.root.destroy()
 
     def on_type_enter(self, event):
@@ -540,7 +548,25 @@ class FilePicker(tk.Frame):
         elif self.select_save and txt[-1] != '/':
             self.final_selection(txt)
 
-    def load_dir(self):
+    def ls(self, dirs: str|list) -> list:
+        if isinstance(dirs, list):
+            files = []
+            for d in dirs:
+                files += self.ls(d)
+            return files
+        ret = []
+        for f in os.listdir(dirs):
+            try:
+                if (not self.enable_mime_filtering or self.mime_is_allowed(f)) \
+                    and (self.show_hidden or not f.startswith('.')):
+                    ret.append(PathInfo(os.path.join(dirs,f)))
+            except:
+                pass
+        ret.sort(key=lambda p: (not p.isdir, p.lname))
+        return ret
+
+    def load_dir(self, dirs = None):
+        self.nav_id += 1
         if hasattr(self, 'bigimg'):
             self.close_expanded_image(None)
         self.items_frame.destroy()
@@ -549,38 +575,26 @@ class FilePicker(tk.Frame):
         self.items_frame.bind('<Configure>', self.on_frame_configure)
         self.bind_listeners(self.canvas)
         self.bind_listeners(self.items_frame)
-        ps = ls(os.getcwd(), self.ls_depth, self.show_hidden)
-        paths = []
-        for p in ps:
-            try:
-                if not self.enable_mime_filtering or self.mime_is_allowed(p):
-                    paths.append(PathInfo(p))
-            except:
-                pass
-        paths.sort(key=lambda p: (not p.isdir, p.lname))
+        paths = self.ls(dirs if dirs else os.getcwd())
         self.items = [None] * len(paths)
         for i, path in enumerate(paths):
             path.idx = i
+            path.nav_id = self.nav_id
             self.queue.put(path)
 
-    def change_depth(self, n):
-        self.ls_depth = n
-        self.load_dir()
     def on_show(self):
         self.show_hidden = not self.show_hidden
         self.load_dir()
 
     def show_view_menu(self):
         show = 'Show' if not self.show_hidden else 'Hide'
-        self.sort_popup = tk.Menu(self.root, tearoff=False, font=self.widgetfont)
-        self.sort_popup.add_command(label="Sort name asc", command=lambda :self.on_sort('name', True))
-        self.sort_popup.add_command(label="Sort name desc", command=lambda :self.on_sort('name', False))
-        self.sort_popup.add_command(label="Sort oldest first", command=lambda :self.on_sort('time', True))
-        self.sort_popup.add_command(label="Sort newest first", command=lambda :self.on_sort('time', False))
-        self.sort_popup.add_command(label=f"{show} Hidden files", command=self.on_show)
-        # self.sort_popup.add_command(label="View depth 0", command=lambda :self.change_depth(0))
-        # self.sort_popup.add_command(label="View depth 1", command=lambda :self.change_depth(1))
-        self.sort_popup.post(self.view_button.winfo_rootx(), self.view_button.winfo_rooty())
+        self.view_menu = tk.Menu(self.root, tearoff=False, font=self.widgetfont)
+        self.view_menu.add_command(label="Sort name asc", command=lambda :self.on_sort('name', True))
+        self.view_menu.add_command(label="Sort name desc", command=lambda :self.on_sort('name', False))
+        self.view_menu.add_command(label="Sort oldest first", command=lambda :self.on_sort('time', True))
+        self.view_menu.add_command(label="Sort newest first", command=lambda :self.on_sort('time', False))
+        self.view_menu.add_command(label=f"{show} Hidden files", command=self.on_show)
+        self.view_menu.post(self.view_button.winfo_rootx(), self.view_button.winfo_rooty())
 
     def on_sort(self, by, asc):
         match (by, asc):
@@ -663,6 +677,9 @@ def get_size(path):
         return f'{size//1024}KB'
     return f'{size}B'
 
+class FakeWidget:
+    def __init__(self, path):
+        self.path = path
 class FakeEvent:
     def __init__(self, widget, num=0):
         self.widget = widget
@@ -713,19 +730,6 @@ def write_config(oldvals: CaseConfigParser|None = None):
         write_section('Commands', cmds)
         write_section('Settings', sets)
         write_section('Bookmarks', bkmk)
-
-def ls(directory: str, depth: int, hidden: bool) -> list:
-    def show(path: str):
-        return hidden or not path.startswith('.')
-    files = [os.path.join(directory,f) for f in os.listdir(directory) if show(f)]
-    if depth == 0:
-        return files
-    ret = []
-    for entry in files:
-        if os.path.isdir(entry):
-            ret += ls(entry, depth-1, hidden)
-    return files + ret
-
 
 def main():
     parser = argparse.ArgumentParser(description="A filepicker with proper thumbnail support")
