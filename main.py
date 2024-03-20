@@ -46,6 +46,7 @@ class FilePicker(tk.Frame):
         self.items = []
         self.dir_history = []
         self.show_hidden = False
+        self.multidir = False
         self.nav_id = 0
         self.config()
 
@@ -207,7 +208,7 @@ class FilePicker(tk.Frame):
             case 4: self.canvas.yview_scroll(-2,'units')
             case 5: self.canvas.yview_scroll(2,'units')
             case 8: self.on_up_dir()
-            case 9: self.on_down_dir()
+            case 9: self.on_down_dir(event)
 
     def bind_listeners(self, thing):
         thing.bind('<Button>', self.mouse_nav)
@@ -228,6 +229,7 @@ class FilePicker(tk.Frame):
         self.bind_listeners(label)
         if not self.select_dir:
             label.bind("<Button-1>", self.on_click_file)
+            label.bind("<Button-2>", lambda _:self.on_click_file(FakeEvent(label, state=0x4)))
             label.bind("<Double-Button-1>", self.on_double_click_file)
         if path.nav_id == self.nav_id:
             self.root.after(0,lambda: label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols))
@@ -241,6 +243,8 @@ class FilePicker(tk.Frame):
         self.bind_listeners(label)
         label.bind("<Double-Button-1>", self.on_double_click_dir)
         label.bind("<Button-1>", self.on_click_file)
+        label.bind("<Button-2>", lambda _:self.on_click_file(FakeEvent(label, state=0x4)))
+        label.bind("<Button-3>", lambda _:self.on_click_file(FakeEvent(label, state=0x1)))
         label.bind("<ButtonRelease-1>", self.on_drag_dir_end)
         if path.nav_id == self.nav_id:
             self.root.after(0,lambda: label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols))
@@ -447,8 +451,8 @@ class FilePicker(tk.Frame):
         self.canvas.yview_moveto(0)
         self.canvas.delete("all")
         self.canvas.unbind("<Button>")
-        self.canvas.bind("<Button-4>", lambda _:self.on_scroll_image(FakeEvent(big_image,4)))
-        self.canvas.bind("<Button-5>", lambda _:self.on_scroll_image(FakeEvent(big_image,5)))
+        self.canvas.bind("<Button-4>", lambda _:self.on_scroll_image(FakeEvent(big_image, num=4)))
+        self.canvas.bind("<Button-5>", lambda _:self.on_scroll_image(FakeEvent(big_image, num=5)))
         x_pos = (self.canvas.winfo_width() - big_image.winfo_width()) // 2
         y_pos = (self.canvas.winfo_height() - big_image.winfo_height()) // 2
         self.canvas.create_window(x_pos, y_pos, window=big_image, anchor='center')
@@ -533,10 +537,12 @@ class FilePicker(tk.Frame):
             self.canvas.yview_moveto(0)
 
     def on_up_dir(self):
-        self.change_dir(os.path.dirname(os.getcwd()), True)
+        self.change_dir(os.getcwd() if self.multidir else os.path.dirname(os.getcwd()), True)
 
-    def on_down_dir(self):
-        if len(self.dir_history) > 0:
+    def on_down_dir(self, event):
+        if self.multidir and hasattr(event.widget, 'path'):
+            self.change_dir(os.path.dirname(event.widget.path))
+        elif len(self.dir_history) > 0:
             self.change_dir(self.dir_history.pop())
 
 
@@ -605,6 +611,7 @@ class FilePicker(tk.Frame):
 
     def load_dir(self, dirs = None):
         self.nav_id += 1
+        self.multidir = dirs != None
         if hasattr(self, 'bigimg'):
             self.close_expanded_image(None)
         self.items_frame.destroy()
@@ -716,10 +723,10 @@ def get_size(path):
     return f'{size}B'
 
 class FakeEvent:
-    def __init__(self, widget, num=0):
+    def __init__(self, widget, num=0, state=0):
         self.widget = widget
         self.num = num
-        self.state = 0
+        self.state = state
 
 class PathInfo(str):
     def __new__(cls, path):
