@@ -28,8 +28,6 @@ directory="$2"
 save="$3"
 path="$4"
 
-prevpath=/tmp/pk.prevpath
-[ -z "$path" ] && [ ! $save = 1 ] && [ -r "$prevpath" ] && path="$(< $prevpath)"
 [ -z "$path" ] && path="$HOME"
 
 #echo "'$1' '$2' '$3' '$path' '$5'" >> /tmp/pk.log
@@ -47,9 +45,4 @@ fi
 pikerudir="$(dirname "$(readlink -f "$0")")"
 cmd="$pikerudir/../../pikeru -m $mode -t 'File Picker' -p \"$path\""
 echo "$cmd" >> /tmp/pk.log
-res="$(eval "$cmd")" && [ $save = 0 ] && [ ! -z "$res" ] && {
-    prev="$res"
-    [ ! $directory = 1 ] && prev="$(dirname "$res")"
-    echo "$prev" > $prevpath
-}
-echo "$res"
+eval "$cmd"

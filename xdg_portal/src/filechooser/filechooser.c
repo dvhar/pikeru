@@ -14,6 +14,15 @@
 static const char object_path[] = "/org/freedesktop/portal/desktop";
 static const char interface_name[] = "org.freedesktop.impl.portal.FileChooser";
 
+char* getdir(char* path, size_t len) {
+    for (size_t i = len-1; i > 0; --i) {
+        if (path[i] == '/') {
+            return strndup(path, i);
+        }
+    }
+    return NULL;
+}
+
 static int exec_filechooser(void *data, bool writing, bool multiple, bool directory,
                             char *path, char ***selected_files, size_t *num_selected_files) {
   struct xdpp_state *state = data;
@@ -22,8 +31,13 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
     logprint(ERROR, "cmd not specified");
     return -1;
   }
+  static char* prev_path = NULL;
+  if (prev_path == NULL) {
+      char* home = getenv("HOME");
+      prev_path = home ? strdup(home) : strdup("");
+  }
   if (path == NULL)
-      path = "";
+      path = prev_path;
 
   char buf[8096];
   snprintf(buf, sizeof(buf), "%s %d %d %d \"%s\"", cmd_script, multiple, directory, writing, path);
@@ -52,7 +66,12 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
   const size_t prefixlen = strlen(PATH_PREFIX);
   char* line = strtok(buf, "\n");
   for (size_t i = 0; line && i<num_lines; ++i) {
-    size_t linesize = strlen(line) + prefixlen + 1;
+    size_t linesize = strlen(line);
+    if (i == 0 && linesize) {
+        free(prev_path);
+        prev_path = getdir(line, linesize);
+    }
+    linesize += prefixlen + 1;
     char* sline = calloc(1, linesize+1);
     (*selected_files)[i] = sline;
     snprintf(sline, linesize, "%s%s", PATH_PREFIX, line);
