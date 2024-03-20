@@ -6,6 +6,7 @@ from PIL import Image, ImageTk
 from tkinter.messagebox import askyesno
 from tkinter import simpledialog, messagebox
 from tkinter import ttk
+from ttkthemes import ThemedTk
 import threading
 from multiprocessing import cpu_count
 import queue
@@ -25,6 +26,11 @@ asset_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
 home_dir = os.environ['HOME']
 config_file = os.path.join(home_dir,'.config','pikeru.conf')
 cache_dir = os.path.join(home_dir,'.cache','pikeru')
+
+class PTk(ThemedTk, TkinterDnD.DnDWrapper):
+    def __init__(self, *args, **kw):
+        ThemedTk.__init__(self, *args, **kw)
+        self.TkdndVersion = TkinterDnD._require(self)
 
 class FilePicker(tk.Frame):
     def __init__(self, args: argparse.Namespace, **kwargs):
@@ -46,7 +52,11 @@ class FilePicker(tk.Frame):
         self.nav_id = 0
         self.config()
 
-        self.root = TkinterDnD.Tk()
+        self.root = PTk()
+        self.root.drop_target_register(DND_FILES, DND_TEXT)
+        self.root.dnd_bind('<<Drop>>', self.drop_data)
+        self.root.set_theme('arc')
+        # self.root = TkinterDnD.Tk()
         self.widgetfont = tkinter.font.Font(family="Helvetica", size=12)
         self.itemfont = tkinter.font.Font(family="Helvetica", size=9)
         self.root.geometry(f'{self.INIT_WIDTH}x{self.INIT_HEIGHT}')
@@ -59,9 +69,6 @@ class FilePicker(tk.Frame):
         self.frame.grid_columnconfigure(0, weight=1)
         self.frame.grid_rowconfigure(0, weight=0)
         self.frame.grid_rowconfigure(1, weight=1)
-
-        self.root.drop_target_register(DND_FILES, DND_TEXT)
-        self.root.dnd_bind('<<Drop>>', self.drop_data)
 
         lower_frame = tk.Frame(self.frame)
         lower_frame.grid(row=1, column=0, sticky='news')
