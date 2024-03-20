@@ -4,3 +4,4 @@ tkinterdnd2==0.3.0
 opencv-python==4.9.0.80
 inotify==0.2.10
 ttkthemes==3.2.2
+sv_ttk==2.6.0
