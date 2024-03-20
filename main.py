@@ -381,7 +381,7 @@ class FilePicker(tk.Frame):
                 self.prev_sel = prevsel
         # clear previous selections if normal click
         if not (self.select_multi and ctrl):
-            if isdir:
+            if isdir and ctrl:
                 prune_different_types()
             else:
                 for ps in self.prev_sel:
