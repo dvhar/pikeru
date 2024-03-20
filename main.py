@@ -331,16 +331,16 @@ class FilePicker(tk.Frame):
                     self.items[idx].grid(row=row, column=col)
 
     def on_click_file(self, event):
-        label = event.widget
+        clicked = event.widget
         shift = event.state & 0x1
         ctrl = event.state & 0x4
-        isdir = label.path.isdir
+        isdir = clicked.path.isdir
         # select a whole range of same type. Always allow multi if dir
         while (self.select_multi or isdir) and shift and len(self.prev_sel) > 0:
             prevdir = self.prev_sel[0].path.isdir
             if prevdir != isdir:
                 break
-            lo = hi = label.path.idx
+            lo = hi = clicked.path.idx
             for item in self.prev_sel:
                 lo = min(item.path.idx, lo)
                 hi = max(item.path.idx, hi)
@@ -354,37 +354,52 @@ class FilePicker(tk.Frame):
                     self.prev_sel.append(item)
             return
         # select a new item
-        if label.sel == False:
-            cfg = label.cget('background')
-            label.origbg = cfg
-            label.config(bg='red')
-            label.sel = True
+        if clicked.sel == False:
+            cfg = clicked.cget('background')
+            clicked.origbg = cfg
+            clicked.config(bg='red')
+            clicked.sel = True
         # deselect a selected item
         elif len(self.prev_sel) == 1 or ctrl:
-            label.config(bg=label.origbg)
-            label.sel = False
+            clicked.config(bg=clicked.origbg)
+            clicked.sel = False
             self.path_textfield.delete(0, 'end')
             self.path_textfield.insert(0, os.getcwd())
             if ctrl:
-                self.prev_sel = [ps for ps in self.prev_sel if ps.path != label.path]
+                self.prev_sel = [ps for ps in self.prev_sel if ps.path != clicked.path]
+        def prune_different_types():
+            prune = any(ps for ps in self.prev_sel if ps.path.isdir != clicked.path.isdir)
+            if prune:
+                prevsel = []
+                for ps in self.prev_sel:
+                    if ps.path.isdir != clicked.path.isdir:
+                        ps.config(bg=ps.origbg)
+                        ps.sel = False
+                    else:
+                        prevsel.append(ps)
+                self.prev_sel = prevsel
         # clear previous selections if normal click
         if not (self.select_multi and ctrl):
-            for ps in self.prev_sel:
-                if ps.path != label.path:
-                    ps.sel = False
-                    try:
-                        ps.config(bg=label.origbg)
-                    except:
-                        pass
-            self.prev_sel = []
-        # TODO deselect items that are not of the same type if multi-selecting with ctrl
+            if isdir:
+                prune_different_types()
+            else:
+                for ps in self.prev_sel:
+                    if ps.path != clicked.path:
+                        ps.sel = False
+                        try:
+                            ps.config(bg=clicked.origbg)
+                        except:
+                            pass
+                self.prev_sel = []
+        else:
+            prune_different_types()
         # handle newly selected file or clear textbox
-        if label.sel:
-            self.prev_sel.append(label)
+        if clicked.sel:
+            self.prev_sel.append(clicked)
             self.path_textfield.delete(0, 'end')
-            self.path_textfield.insert(0, label.path)
-            if os.path.isfile(label.path):
-                self.size_label.configure(text=get_size(label.path))
+            self.path_textfield.insert(0, clicked.path)
+            if os.path.isfile(clicked.path):
+                self.size_label.configure(text=get_size(clicked.path))
         else:
             self.size_label.configure(text='')
 
@@ -537,13 +552,9 @@ class FilePicker(tk.Frame):
 
     def on_select_button(self):
         selections = [label.path for label in self.prev_sel]
-        has_dir = any(path.isdir for path in selections)
-        has_file = any(hasattr(label,'mime') for label in self.prev_sel)
-        if has_dir and not self.select_dir:
-            if has_file:
-                selections = [f for f in selections if not f.isdir]
-            elif len(selections) == 1:
-                self.on_double_click_dir(FakeEvent(FakeWidget(selections[0])))
+        if not self.select_dir and any(path.isdir for path in selections):
+            if len(selections) == 1:
+                self.change_dir(selections[0])
                 return
             else:
                 self.load_dir(selections)
@@ -692,9 +703,6 @@ def get_size(path):
         return f'{size//1024}KB'
     return f'{size}B'
 
-class FakeWidget:
-    def __init__(self, path):
-        self.path = path
 class FakeEvent:
     def __init__(self, widget, num=0):
         self.widget = widget
