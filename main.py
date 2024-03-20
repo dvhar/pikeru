@@ -232,7 +232,7 @@ class FilePicker(tk.Frame):
             label.bind("<Button-1>", self.on_click_file)
             label.bind("<Double-Button-1>", self.on_double_click_file)
         if path.nav_id == self.nav_id:
-            label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols)
+            self.root.after(0,lambda: label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols))
 
     def prep_dir(self, label, path):
         if path.idx >= len(self.items):
@@ -245,7 +245,7 @@ class FilePicker(tk.Frame):
         label.bind("<Button-1>", self.on_click_file)
         label.bind("<ButtonRelease-1>", self.on_drag_dir_end)
         if path.nav_id == self.nav_id:
-            label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols)
+            self.root.after(0,lambda: label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols))
 
     def load_item(self, path):
         base_path = os.path.basename(path)
@@ -362,14 +362,14 @@ class FilePicker(tk.Frame):
                     item.sel = True
                     cfg = item.cget('background')
                     item.origbg = cfg
-                    item.config(bg='red')
+                    item.config(bg='#800000')
                     self.prev_sel.append(item)
             return
         # select a new item
         if clicked.sel == False:
             cfg = clicked.cget('background')
             clicked.origbg = cfg
-            clicked.config(bg='red')
+            clicked.config(bg='#800000')
             clicked.sel = True
         # deselect a selected item
         elif len(self.prev_sel) == 1 or ctrl:
