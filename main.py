@@ -50,13 +50,13 @@ class FilePicker(tk.Frame):
         self.config()
 
         self.root = TkinterDnD.Tk()
-        self.root.drop_target_register(DND_FILES, DND_TEXT)
-        self.root.dnd_bind('<<Drop>>', self.drop_data)
-        sv_ttk.set_theme('dark')
-        self.widgetfont = tkinter.font.Font(family="Helvetica", size=12)
-        self.itemfont = tkinter.font.Font(family="Helvetica", size=9)
         self.root.geometry(f'{self.INIT_WIDTH}x{self.INIT_HEIGHT}')
         self.root.tk.call('tk','scaling',SCALE)
+        sv_ttk.set_theme('dark')
+        self.root.drop_target_register(DND_FILES, DND_TEXT)
+        self.root.dnd_bind('<<Drop>>', self.drop_data)
+        self.widgetfont = tkinter.font.Font(family="Helvetica", size=12)
+        self.itemfont = tkinter.font.Font(family="Helvetica", size=9)
         global bd
         bd = int(SCALE)
         self.root.wm_title(args.title or 'File Picker')
@@ -127,10 +127,8 @@ class FilePicker(tk.Frame):
         self.size_label.pack(side='left')
 
         if self.enable_mime_filtering:
-            self.mime_switch = tk.BooleanVar()
-            self.mime_switch.set(self.enable_mime_filtering)
-            self.mime_switch_btn = ttk.Checkbutton(self.button_frame, variable=self.mime_switch,
-                  text="Filter mime", command=self.toggle_mime_filter)
+            self.mime_switch_btn = tk.Checkbutton(self.button_frame,
+                  text="Filter mime", command=self.toggle_mime_filter, font=self.widgetfont)
             self.mime_switch_btn.pack(side='left')
 
         self.queue = queue.Queue()
@@ -595,9 +593,11 @@ class FilePicker(tk.Frame):
         ret = []
         for f in os.listdir(dirs):
             try:
-                if (not self.enable_mime_filtering or self.mime_is_allowed(f)) \
-                    and (self.show_hidden or not f.startswith('.')):
-                    ret.append(PathInfo(os.path.join(dirs,f)))
+                if f.startswith('.') and not self.show_hidden:
+                    continue
+                path = PathInfo(os.path.join(dirs,f))
+                if (not self.enable_mime_filtering or self.mime_is_allowed(path)):
+                    ret.append(path)
             except:
                 pass
         ret.sort(key=lambda p: (not p.isdir, p.lname))
