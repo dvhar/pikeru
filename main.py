@@ -174,6 +174,7 @@ class FilePicker(tk.Frame):
                 f.write(response.content)
             item = PathInfo(filepath)
             item.idx = len(self.items)
+            item.nav_id = self.nav_id
             self.items.append(None)
             self.load_item(item)
             self.on_click_file(FakeEvent(self.items[-1]))
