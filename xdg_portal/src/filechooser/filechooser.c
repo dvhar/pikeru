@@ -68,8 +68,13 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
   for (size_t i = 0; line && i<num_lines; ++i) {
     size_t linesize = strlen(line);
     if (i == 0 && linesize) {
-        free(prev_path);
-        prev_path = getdir(line, linesize);
+        char* dirname = getdir(line, linesize);
+        if (!strcmp(dirname, "/tmp/pk_postprocessed")) {
+            free(dirname);
+        } else {
+            free(prev_path);
+            prev_path = dirname;
+        }
     }
     linesize += prefixlen + 1;
     char* sline = calloc(1, linesize+1);

@@ -17,6 +17,12 @@ Pikeru is a filepicker for linux that has working thumbnails and works on any de
 * If your chromium-based browser is not using xdg portal, you can still use pikeru by setting environment variable `XDG_CURRENT_DESKTOP=KDE` and symlinking the `kdialog` script in your path. That will trick the browser into thinking it's using the KDE dialog, assuming the real kdialog is not placed before this one in your path.
 * The xdg portal should run on any distro but some of them can be tricky to configure to use it. Make a pull request if yours requires some tinkering to make it work. The kdialog hack should work anywhere.
 
+## Special features
+* Putting `postprocess.sh` in this directory enables post-processing, such as automatically converting images before uploading them. Use the example fie with `cp postprocess.example.sh postprocess.sh`.
+* `Cmd` menu shows commands specified in ~/.config/pikeru.conf. Click one to run it on the selected files.
+* Right click an image to view it. Scroll the image to view the next and previous images.
+* Select multiple directories with ctrl, shift, middle-click, or right-click. Click `Open` to view the contents of all selected directories at the same time.
+
 ### Command Line Arguments
 Pikeru takes several command line args and returns the selected file(s) to stdout separated by newlines.
 

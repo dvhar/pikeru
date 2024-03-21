@@ -68,4 +68,9 @@ cmd="python ./main.py \
 	--mime_list '${MIME_LIST[@]:-}' \
 	--parent '${PARENT:-}'" 
 [ $debug = 1 ] && echo "cmd: $cmd" >> $logfile
-eval "$cmd"
+
+if [ -r ./postprocess.sh ]; then
+	eval "$cmd"|bash ./postprocess.sh
+else
+	eval "$cmd"
+fi
