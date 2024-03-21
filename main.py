@@ -258,32 +258,38 @@ class FilePicker(tk.Frame):
                 match ext:
                     case '.png'|'.jpg'|'.jpeg'|'.gif'|'.webp':
                         img = self.prepare_cached_thumbnail(path, 'pic')
-                        label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont)
+                        label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont,
+                                         width=self.THUMBNAIL_WIDTH)
                         label.__setattr__('img', img)
                         label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
                         self.prep_file(label, path)
                     case '.mp4'|'.avi'|'.mkv'|'.webm':
                         img = self.prepare_cached_thumbnail(path, 'vid')
-                        label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont)
+                        label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont,
+                                         width=self.THUMBNAIL_WIDTH)
                         label.__setattr__('img', img)
                         label.__setattr__('vid', True)
                         label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
                         self.prep_file(label, path)
                     case '.txt'|'.pdf'|'.doc'|'.docx':
-                        label = tk.Label(self.items_frame, image=self.doc_icon, text=name, compound='top', font=self.itemfont)
+                        label = tk.Label(self.items_frame, image=self.doc_icon, text=name, compound='top', font=self.itemfont,
+                                         width=self.THUMBNAIL_WIDTH)
                         label.__setattr__('img', self.doc_icon)
                         self.prep_file(label, path)
                     case _:
-                        label = tk.Label(self.items_frame, image=self.unknown_icon, text=name, compound='top', font=self.itemfont)
+                        label = tk.Label(self.items_frame, image=self.unknown_icon, text=name, compound='top', font=self.itemfont,
+                                         width=self.THUMBNAIL_WIDTH)
                         label.__setattr__('img', self.unknown_icon)
                         self.prep_file(label, path)
             elif os.path.isdir(path):
-                label = tk.Label(self.items_frame, image=self.folder_icon, text=name, compound='top', font=self.itemfont)
+                label = tk.Label(self.items_frame, image=self.folder_icon, text=name, compound='top', font=self.itemfont,
+                                 width=self.THUMBNAIL_WIDTH)
                 self.prep_dir(label, path)
             else:
                 return
         except Exception as e:
-            label = tk.Label(self.items_frame, image=self.error_icon, text=name, compound='top', font=self.itemfont)
+            label = tk.Label(self.items_frame, image=self.error_icon, text=name, compound='top', font=self.itemfont,
+                             width=self.THUMBNAIL_WIDTH)
             label.__setattr__('img', self.unknown_icon)
             self.prep_file(label, path)
             label.__setattr__('path', path)
@@ -660,8 +666,8 @@ class FilePicker(tk.Frame):
 
     def on_resize(self, event=None):
         old = self.max_cols
-        max_width = self.frame.winfo_width() - self.bookmark_frame.winfo_width()
-        self.max_cols = max(1, int(max_width / (self.THUMBNAIL_WIDTH+6))) # figure out proper width calculation
+        max_width = self.frame.winfo_width() - self.bookmark_frame.winfo_width() - self.scrollbar.winfo_width()
+        self.max_cols = max(1, max_width // (self.THUMBNAIL_WIDTH+4))
         if old != self.max_cols:
             self.reorganize_items()
 
@@ -700,7 +706,7 @@ class FilePicker(tk.Frame):
             print(f'updated config file - backing up to {config_file}.old', file=sys.stderr)
             os.rename(config_file, config_file+'.old')
             write_config(config)
-        self.INIT_WIDTH = int(980*SCALE)
+        self.INIT_WIDTH = int(970*SCALE)
         self.INIT_HEIGHT = int(720*SCALE)
         self.THUMBNAIL_WIDTH = int(140*SCALE)
         self.THUMBNAIL_HEIGHT = int(140*SCALE)
