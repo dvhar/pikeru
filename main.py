@@ -147,7 +147,7 @@ class FilePicker(tk.Frame):
         self.doc_icon = get_asset('document.png')
         self.unknown_icon = get_asset('unknown.png')
         self.error_icon = get_asset('error.png')
-        self.prev_sel = []
+        self.prev_sel: list[tk.Label] = []
 
         for i, (name, path) in enumerate(self.bookmarks.items()):
             btn = tk.Button(self.bookmark_frame, text=name, bd=bd, font=self.widgetfont)
@@ -683,12 +683,13 @@ class FilePicker(tk.Frame):
         if old != self.max_cols:
             self.reorganize_items()
 
-    def run_cmd(self, cmd: str):
-        selected_items = [label.path for label in self.items if label.sel]
-        for path in selected_items:
+    def run_cmd(self, cmdtemplate: str):
+        for item in self.prev_sel:
+            path = item.path
             base_name = os.path.basename(path)
             directory = os.path.dirname(path)
             part, ext = os.path.splitext(base_name) if os.path.isfile(path) else (base_name,'')
+            cmd = cmdtemplate
             cmd = cmd.replace('[path]', f'"{path}"')
             cmd = cmd.replace('[name]', f'"{base_name}"')
             cmd = cmd.replace('[ext]', ext)
