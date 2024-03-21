@@ -43,10 +43,10 @@ class FilePicker(tk.Frame):
         self.watch_thread = threading.Thread(target=self.watch_loop, daemon=True)
         self.watch_thread.start()
         self.already_added = set()
-        self.items = []
+        self.items: list[tk.Label] = []
         self.dir_history = []
         self.show_hidden = False
-        self.multidir = False
+        self.multidir = None
         self.nav_id = 0
         self.config()
 
@@ -511,15 +511,24 @@ class FilePicker(tk.Frame):
     def watch_loop(self):
         for e in self.ino.event_gen():
             if e:
-                path, file = e[2], e[3]
+                action, path, file = e[1], e[2], e[3]
                 filepath = os.path.join(path, file)
-                if not self.mime_is_allowed(filepath) or filepath in self.already_added:
-                    return
-                time.sleep(0.5)
-                item = PathInfo(filepath)
-                item.idx = len(self.items)
-                self.items.append(None)
-                self.load_item(item)
+                if 'IN_CREATE' in action:
+                    if not self.mime_is_allowed(filepath) or filepath in self.already_added:
+                        return
+                    time.sleep(0.5)
+                    item = PathInfo(filepath)
+                    item.idx = len(self.items)
+                    item.nav_id = self.nav_id
+                    self.items.append(None)
+                    self.load_item(item)
+                elif 'IN_DELETE' in action:
+                    for item in self.items:
+                        if item.path == filepath:
+                            item.destroy()
+                            break
+                    self.items = [f for f in self.items if f.path != filepath]
+                    self.reorganize_items()
 
     def change_dir(self, new_dir, save=False):
         if self.select_save and not os.path.isdir(new_dir):
@@ -529,7 +538,7 @@ class FilePicker(tk.Frame):
             if save:
                 self.dir_history.append(cwd)
             self.ino.remove_watch(cwd)
-            self.ino.add_watch(new_dir, mask=inotify.constants.IN_CREATE)
+            self.ino.add_watch(new_dir, mask=inotify.constants.IN_CREATE|inotify.constants.IN_DELETE)
             self.prev_sel = []
             os.chdir(new_dir)
             self.path_textfield.delete(0, 'end')
@@ -579,6 +588,9 @@ class FilePicker(tk.Frame):
                 self.change_dir(selections[0])
                 return
             else:
+                self.ino.remove_watch(os.getcwd())
+                for new_dir in selections:
+                    self.ino.add_watch(new_dir, mask=inotify.constants.IN_CREATE|inotify.constants.IN_DELETE)
                 self.load_dir(selections)
                 return
         if self.select_save and len(selections) == 0:
@@ -617,7 +629,7 @@ class FilePicker(tk.Frame):
 
     def load_dir(self, dirs = None):
         self.nav_id += 1
-        self.multidir = dirs != None
+        self.multidir = dirs
         if hasattr(self, 'bigimg'):
             self.close_expanded_image(None)
         self.items_frame.destroy()
@@ -682,7 +694,7 @@ class FilePicker(tk.Frame):
             cmd = cmd.replace('[ext]', ext)
             cmd = cmd.replace('[dir]', f'"{directory}"')
             cmd = cmd.replace('[part]', f'"{part}"')
-            proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=directory)
             stdout, stderr = proc.communicate()
             print(cmd, file=sys.stderr)
             if stderr:
