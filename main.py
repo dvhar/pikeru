@@ -27,6 +27,9 @@ home_dir = os.environ['HOME']
 config_file = os.path.join(home_dir,'.config','pikeru.conf')
 cache_dir = os.path.join(home_dir,'.cache','pikeru')
 
+butstyle = 'solid'
+bd = 1
+
 class FilePicker(tk.Frame):
     def __init__(self, args: argparse.Namespace, **kwargs):
         self.select_dir = args.mode == 'dir'
@@ -46,12 +49,14 @@ class FilePicker(tk.Frame):
         self.show_hidden = False
         self.multidir = None
         self.nav_id = 0
-        self.config()
+        self.read_config()
 
         self.root = TkinterDnD.Tk()
         self.root.geometry(f'{self.INIT_WIDTH}x{self.INIT_HEIGHT}')
         self.root.tk.call('tk','scaling',SCALE)
         sv_ttk.set_theme('dark')
+        global bd
+        bd = SCALE
         self.root.drop_target_register(DND_FILES, DND_TEXT)
         self.root.dnd_bind('<<Drop>>', self.drop_data)
         self.widgetfont = tkinter.font.Font(family="Helvetica", size=12)
@@ -98,23 +103,23 @@ class FilePicker(tk.Frame):
         self.button_frame.grid(row=0, column=0, sticky='we')
         button_text = "Save" if self.select_save else "Open"
         self.open_button = tk.Button(self.button_frame,
-                                     width=10, text=button_text, command=self.on_select_button, font=self.widgetfont)
+                                     bd=bd, relief=butstyle, width=10, text=button_text, command=self.on_select_button, font=self.widgetfont)
         self.open_button.pack(side='right')
         self.cancel_button = tk.Button(self.button_frame,
-                                       width=10, text="Cancel", command=self.root.destroy, font=self.widgetfont)
+                                       bd=bd, relief=butstyle, width=10, text="Cancel", command=self.root.destroy, font=self.widgetfont)
         self.cancel_button.pack(side='right')
         self.up_dir_button = tk.Button(self.button_frame,
-                                       width=7, text="Up Dir", command=self.on_up_dir, font=self.widgetfont)
+                                       bd=bd, relief=butstyle, width=7, text="Up Dir", command=self.on_up_dir, font=self.widgetfont)
         self.up_dir_button.pack(side='right')
         self.new_dir_button = tk.Button(self.button_frame,
-                                        width=7, text="New Dir", command=self.create_directory, font=self.widgetfont)
+                                        bd=bd, relief=butstyle, width=7, text="New Dir", command=self.create_directory, font=self.widgetfont)
         self.new_dir_button.pack(side='right')
         self.view_button = tk.Button(self.button_frame,
-                                     width=7, text="View", command=self.show_view_menu, font=self.widgetfont)
+                                     bd=bd, relief=butstyle, width=7, text="View", command=self.show_view_menu, font=self.widgetfont)
         self.view_button.pack(side='right')
         self.root.bind("<Button-1>", self.withdraw_menus)
         self.cmd_button = tk.Button(self.button_frame,
-                                    width=7, text="Cmd", command=self.show_cmd_menu, font=self.widgetfont)
+                                    bd=bd, relief=butstyle, width=7, text="Cmd", command=self.show_cmd_menu, font=self.widgetfont)
         self.cmd_button.pack(side='right')
         self.cmd_menu = tk.Menu(self.root, tearoff=False, font=self.widgetfont)
         for cmd_name, cmd_val in self.commands.items():
@@ -137,8 +142,8 @@ class FilePicker(tk.Frame):
             self.threads.append(loading_thread)
 
         self.frame.bind('<Configure>', self.on_resize)
-        max_width = self.root.winfo_width() - self.bookmark_frame.winfo_width()
-        self.max_cols = max(1, int(max_width / (self.THUMBNAIL_WIDTH+6)))
+        max_width = self.frame.winfo_width() - self.bookmark_frame.winfo_width() - self.scrollbar.winfo_width()
+        self.max_cols = max(1, max_width // (self.THUMBNAIL_SIZE+4))
         self.folder_icon = get_asset('folder.png')
         self.doc_icon = get_asset('document.png')
         self.unknown_icon = get_asset('unknown.png')
@@ -146,7 +151,7 @@ class FilePicker(tk.Frame):
         self.prev_sel: list[tk.Label] = []
 
         for i, (name, path) in enumerate(self.bookmarks.items()):
-            btn = tk.Button(self.bookmark_frame, text=name, font=self.widgetfont)
+            btn = tk.Button(self.bookmark_frame, text=name, font=self.widgetfont, relief=butstyle, bd=bd)
             btn.path = path
             btn.grid(row=i, column=0, sticky='news')
             btn.bind("<Button-1>", lambda e: self.change_dir(e.widget.path))
@@ -255,37 +260,37 @@ class FilePicker(tk.Frame):
                     case '.png'|'.jpg'|'.jpeg'|'.gif'|'.webp':
                         img = self.prepare_cached_thumbnail(path, 'pic')
                         label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont,
-                                         width=self.THUMBNAIL_WIDTH)
+                                         width=self.THUMBNAIL_SIZE)
                         label.__setattr__('img', img)
                         label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
                         self.prep_file(label, path)
                     case '.mp4'|'.avi'|'.mkv'|'.webm':
                         img = self.prepare_cached_thumbnail(path, 'vid')
                         label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont,
-                                         width=self.THUMBNAIL_WIDTH)
+                                         width=self.THUMBNAIL_SIZE)
                         label.__setattr__('img', img)
                         label.__setattr__('vid', True)
                         label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
                         self.prep_file(label, path)
                     case '.txt'|'.pdf'|'.doc'|'.docx':
                         label = tk.Label(self.items_frame, image=self.doc_icon, text=name, compound='top', font=self.itemfont,
-                                         width=self.THUMBNAIL_WIDTH)
+                                         width=self.THUMBNAIL_SIZE)
                         label.__setattr__('img', self.doc_icon)
                         self.prep_file(label, path)
                     case _:
                         label = tk.Label(self.items_frame, image=self.unknown_icon, text=name, compound='top', font=self.itemfont,
-                                         width=self.THUMBNAIL_WIDTH)
+                                         width=self.THUMBNAIL_SIZE)
                         label.__setattr__('img', self.unknown_icon)
                         self.prep_file(label, path)
             elif os.path.isdir(path):
                 label = tk.Label(self.items_frame, image=self.folder_icon, text=name, compound='top', font=self.itemfont,
-                                 width=self.THUMBNAIL_WIDTH)
+                                 width=self.THUMBNAIL_SIZE)
                 self.prep_dir(label, path)
             else:
                 return
         except Exception as e:
             label = tk.Label(self.items_frame, image=self.error_icon, text=name, compound='top', font=self.itemfont,
-                             width=self.THUMBNAIL_WIDTH)
+                             width=self.THUMBNAIL_SIZE)
             label.__setattr__('img', self.unknown_icon)
             self.prep_file(label, path)
             label.__setattr__('path', path)
@@ -302,7 +307,7 @@ class FilePicker(tk.Frame):
         else:
             if imtype == 'pic':
                 img = Image.open(path)
-                img.thumbnail((self.THUMBNAIL_WIDTH, self.THUMBNAIL_HEIGHT))
+                img.thumbnail((self.THUMBNAIL_SIZE, self.THUMBNAIL_SIZE))
                 img.save(cache_path)
                 img = ImageTk.PhotoImage(img)
                 return img
@@ -314,7 +319,7 @@ class FilePicker(tk.Frame):
                     return self.error_icon
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 img = Image.fromarray(frame)
-                img.thumbnail((self.THUMBNAIL_WIDTH, self.THUMBNAIL_HEIGHT))
+                img.thumbnail((self.THUMBNAIL_SIZE, self.THUMBNAIL_SIZE))
                 img.save(cache_path)
                 img = ImageTk.PhotoImage(img)
                 return img
@@ -675,7 +680,7 @@ class FilePicker(tk.Frame):
     def on_resize(self, event=None):
         old = self.max_cols
         max_width = self.frame.winfo_width() - self.bookmark_frame.winfo_width() - self.scrollbar.winfo_width()
-        self.max_cols = max(1, max_width // (self.THUMBNAIL_WIDTH+4))
+        self.max_cols = max(1, max_width // (self.THUMBNAIL_SIZE+4))
         if old != self.max_cols:
             self.reorganize_items()
 
@@ -702,23 +707,69 @@ class FilePicker(tk.Frame):
     def show_cmd_menu(self):
         self.cmd_menu.post(self.cmd_button.winfo_rootx(), self.cmd_button.winfo_rooty())
 
-    def config(self):
+    def read_config(self):
+        self.write_config()
         config = CaseConfigParser()
         config.read(os.path.expanduser(config_file))
+        s1 = s2 = s3 = False
         try:
             self.bookmarks = config['Bookmarks']
+        except Exception as e:
+            s1 = True
+        try:
             self.commands = config['Commands']
+        except Exception as e:
+            s2 = True
+        try:
             global SCALE
             SCALE = float(config.get('Settings','dpi_scale'))
+            window_size = config.get('Settings','window_size')
+            self.INIT_WIDTH, self.INIT_HEIGHT = window_size.split('x')
+            self.INIT_WIDTH, self.INIT_HEIGHT = int(self.INIT_WIDTH), int(self.INIT_HEIGHT)
         except Exception as e:
-            print(e, file=sys.stderr)
-            print(f'updated config file - backing up to {config_file}.old', file=sys.stderr)
+            s3 = True
+        if s1 or s2 or s3:
+            print(f'Updating config file. Backing up to {config_file}.old', file=sys.stderr)
             os.rename(config_file, config_file+'.old')
-            write_config(config)
-        self.INIT_WIDTH = int(970*SCALE)
-        self.INIT_HEIGHT = int(720*SCALE)
-        self.THUMBNAIL_WIDTH = int(140*SCALE)
-        self.THUMBNAIL_HEIGHT = int(140*SCALE)
+            self.write_config(config)
+            self.read_config()
+            return
+        self.INIT_WIDTH *= int(SCALE)
+        self.INIT_HEIGHT *= int(SCALE)
+        self.THUMBNAIL_SIZE = int(140*SCALE)
+
+    def write_config(self, oldvals = None):
+        if os.path.isfile(config_file):
+            return
+        with open(config_file, 'w') as f:
+            print(f'writing config to {config_file}', file=sys.stderr)
+            confcomment = '''# Commands from the cmd menu will substitute the follwong values from the selected files before running, as seen in the convert examples. All paths and filenames are already quoted for you.
+# [path] is full file path
+# [name] is the filename without full path
+# [dir] is the current directory without trailing slash
+# [part] is the filename without path or extension
+# [ext] is the file extension, including the period
+'''
+            def write_section(name, default: dict):
+                section = oldvals[name] if oldvals and oldvals.has_section(name) else default
+                f.write(f'[{name}]\n')
+                if oldvals:
+                    default.update(section)
+                    section = default
+                for k,v in section.items():
+                    f.write(f'{k} = {v}\n')
+                f.write('\n')
+            cmds = {'resize':'convert -resize 1200 [path] [dir]/[part]_resized[ext]',
+                    'convert webp':'convert [path] [dir]/[part].jpg'}
+            sets = {'dpi_scale':'1',
+                    'window_size':'970x720'}
+            bkmk = {'Home':home_dir}
+            bkmk.update({k:os.path.join(home_dir,k) for k in ["Documents", "Pictures", "Downloads"]})
+            f.write(confcomment)
+            write_section('Commands', cmds)
+            write_section('Settings', sets)
+            write_section('Bookmarks', bkmk)
+
 
 def get_asset(file):
     img = Image.open(os.path.join(asset_dir, file))
@@ -761,33 +812,6 @@ class CaseConfigParser(configparser.RawConfigParser):
     def optionxform(self, optionstr):
         return optionstr
 
-def write_config(oldvals: CaseConfigParser|None = None):
-    if os.path.isfile(config_file):
-        return
-    with open(config_file, 'w') as f:
-        print(f'writing config to {config_file}', file=sys.stderr)
-        confcomment = '''# Commands from the cmd menu will substitute the follwong values from the selected files before running, as seen in the convert examples. All paths and filenames are already quoted for you.
-# [path] is full file path
-# [name] is the filename without full path
-# [dir] is the current directory without trailing slash
-# [part] is the filename without path or extension
-# [ext] is the file extension, including the period
-'''
-        def write_section(name, default):
-            it = oldvals[name] if oldvals and oldvals.has_section(name) else default
-            f.write(f'[{name}]\n')
-            f.writelines(f'{v[0]} = {v[1]}\n' for v in it.items())
-            f.write('\n')
-        cmds = {'resize':'convert -resize 1200 [path] [dir]/[part]_resized[ext]',
-                'convert webp':'convert [path] [dir]/[part].jpg'}
-        sets = {'dpi_scale':'1'}
-        bkmk = {'Home':home_dir}
-        bkmk.update({k:os.path.join(home_dir,k) for k in ["Documents", "Pictures", "Downloads"]})
-        f.write(confcomment)
-        write_section('Commands', cmds)
-        write_section('Settings', sets)
-        write_section('Bookmarks', bkmk)
-
 def main():
     parser = argparse.ArgumentParser(description="A filepicker with proper thumbnail support")
     parser.add_argument("-e", "--parent", help="window id of the window this one is transient to")
@@ -797,7 +821,6 @@ def main():
     parser.add_argument("-i", "--mime_list", default=None, help="list of allowed mime types. Can be empty.")
     args = parser.parse_args()
     os.makedirs(cache_dir, exist_ok=True)
-    write_config()
     
     picker = FilePicker(args)
     picker.run()
