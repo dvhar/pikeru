@@ -16,9 +16,10 @@ cd "$(dirname "$(readlink -f "$0")")"
 TITLE="File Picker"
 MODE="files"
 MIME_LIST=""
+update=0
 
 [ $debug = 1 ] && echo "launcher args: $*" >> $logfile
-while getopts "e:t:m:p:i:" opt; do
+while getopts "e:t:m:p:i:u" opt; do
   case $opt in
     e)
       PARENT="$OPTARG"
@@ -34,6 +35,9 @@ while getopts "e:t:m:p:i:" opt; do
       ;;
     i)
       MIME_LIST="$OPTARG"
+      ;;
+    u)
+      update=1
       ;;
     \?)
       echo "Invalid option: -$opt $OPTARG" | tee -a $logfile > /dev/stderr
@@ -54,6 +58,7 @@ if [ ! -f "./venv/bin/activate" ]; then
 	pip3 install -r requirements.txt
 else
 	. ./venv/bin/activate
+	[ $update = 1 ] && pip3 install -r requirements.txt
 fi
 
 cmd="python ./main.py \

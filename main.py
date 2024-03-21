@@ -27,8 +27,6 @@ home_dir = os.environ['HOME']
 config_file = os.path.join(home_dir,'.config','pikeru.conf')
 cache_dir = os.path.join(home_dir,'.cache','pikeru')
 
-bd = SCALE
-
 class FilePicker(tk.Frame):
     def __init__(self, args: argparse.Namespace, **kwargs):
         self.select_dir = args.mode == 'dir'
@@ -58,8 +56,6 @@ class FilePicker(tk.Frame):
         self.root.dnd_bind('<<Drop>>', self.drop_data)
         self.widgetfont = tkinter.font.Font(family="Helvetica", size=12)
         self.itemfont = tkinter.font.Font(family="Helvetica", size=9)
-        global bd
-        bd = int(SCALE)
         self.root.wm_title(args.title or 'File Picker')
         x = (self.root.winfo_screenwidth() / 2) - (self.INIT_WIDTH / 2)
         y = (self.root.winfo_screenheight() / 2) - (self.INIT_HEIGHT / 2)
@@ -93,7 +89,7 @@ class FilePicker(tk.Frame):
         self.bind_listeners(self.canvas)
         self.bind_listeners(self.items_frame)
 
-        self.path_textfield = tk.Entry(upper_frame, bd=bd, insertbackground='red', font=self.widgetfont)
+        self.path_textfield = tk.Entry(upper_frame, insertbackground='red', font=self.widgetfont)
         self.path_textfield.grid(row=1, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
         self.path_textfield.insert(0, args.path)
         self.path_textfield.bind("<Return>", self.on_type_enter)
@@ -102,23 +98,23 @@ class FilePicker(tk.Frame):
         self.button_frame.grid(row=0, column=0, sticky='we')
         button_text = "Save" if self.select_save else "Open"
         self.open_button = tk.Button(self.button_frame,
-                                     bd=bd, width=10, text=button_text, command=self.on_select_button, font=self.widgetfont)
+                                     width=10, text=button_text, command=self.on_select_button, font=self.widgetfont)
         self.open_button.pack(side='right')
         self.cancel_button = tk.Button(self.button_frame,
-                                       bd=bd, width=10, text="Cancel", command=self.root.destroy, font=self.widgetfont)
+                                       width=10, text="Cancel", command=self.root.destroy, font=self.widgetfont)
         self.cancel_button.pack(side='right')
         self.up_dir_button = tk.Button(self.button_frame,
-                                       bd=bd, width=7, text="Up Dir", command=self.on_up_dir, font=self.widgetfont)
+                                       width=7, text="Up Dir", command=self.on_up_dir, font=self.widgetfont)
         self.up_dir_button.pack(side='right')
         self.new_dir_button = tk.Button(self.button_frame,
-                                        bd=bd, width=7, text="New Dir", command=self.create_directory, font=self.widgetfont)
+                                        width=7, text="New Dir", command=self.create_directory, font=self.widgetfont)
         self.new_dir_button.pack(side='right')
         self.view_button = tk.Button(self.button_frame,
-                                     bd=bd, width=7, text="View", command=self.show_view_menu, font=self.widgetfont)
+                                     width=7, text="View", command=self.show_view_menu, font=self.widgetfont)
         self.view_button.pack(side='right')
         self.root.bind("<Button-1>", self.withdraw_menus)
         self.cmd_button = tk.Button(self.button_frame,
-                                    bd=bd, width=7, text="Cmd", command=self.show_cmd_menu, font=self.widgetfont)
+                                    width=7, text="Cmd", command=self.show_cmd_menu, font=self.widgetfont)
         self.cmd_button.pack(side='right')
         self.cmd_menu = tk.Menu(self.root, tearoff=False, font=self.widgetfont)
         for cmd_name, cmd_val in self.commands.items():
@@ -150,7 +146,7 @@ class FilePicker(tk.Frame):
         self.prev_sel: list[tk.Label] = []
 
         for i, (name, path) in enumerate(self.bookmarks.items()):
-            btn = tk.Button(self.bookmark_frame, text=name, bd=bd, font=self.widgetfont)
+            btn = tk.Button(self.bookmark_frame, text=name, font=self.widgetfont)
             btn.path = path
             btn.grid(row=i, column=0, sticky='news')
             btn.bind("<Button-1>", lambda e: self.change_dir(e.widget.path))

@@ -25,9 +25,10 @@ Pikeru takes several command line args and returns the selected file(s) to stdou
   - `file`: Select a single file.
   - `files`: Select multiple files.
   - `dir`: Select a single directory.
-  - `save`: Save a file with the specified filename. Prompt user if file already exists.
-- `-p path`: Specifies the initial directory to display when Pikeru launches.
-- `-i mime_list`: Space-separated list of MIME types accepted during file selection.
+  - `save`: Save a file with the filename specified with -p
+- `-p path`: Specifies the initial directory or filename.
+- `-i mime_list`: Space-separated list of MIME types to display.
+- `-u`: Update python dependencies. Useful if you did a git pull and a new dep was added.
 
 Planned but not yet implemented:
 - `-e windowId`: Specifies the X11 window ID of the parent window if Pikeru should be transient to an existing window.
