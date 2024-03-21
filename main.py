@@ -55,8 +55,6 @@ class FilePicker(tk.Frame):
         self.root.geometry(f'{self.INIT_WIDTH}x{self.INIT_HEIGHT}')
         self.root.tk.call('tk','scaling',SCALE)
         sv_ttk.set_theme('dark')
-        global bd
-        bd = SCALE
         self.root.drop_target_register(DND_FILES, DND_TEXT)
         self.root.dnd_bind('<<Drop>>', self.drop_data)
         self.widgetfont = tkinter.font.Font(family="Helvetica", size=12)

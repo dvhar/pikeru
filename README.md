@@ -2,7 +2,7 @@
 
 Pikeru is a filepicker for linux that has working thumbnails and works on any desktop environment or window manager. Kind of like kdialog but better and with some added features.
 
-![Screenshot_20240321_071346_resized](https://github.com/dvhar/pikeru/assets/33729230/5070c9b6-aa5a-4166-8e9f-e929d9d92bcb)
+![Screenshot_20240321_072233_resized](https://github.com/dvhar/pikeru/assets/33729230/6257fa5e-e94e-4d3e-8dad-b4269e2d1ad3)
 
 ## Installation and Usage
 
