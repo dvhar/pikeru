@@ -12,10 +12,10 @@ meson setup \
   --auto-features enabled \
   --wrap-mode     nodownload \
   -D              b_pie=true \
-  -D              python.bytecompile=1 \
   -Dsd-bus-provider=libsystemd build
 
 ninja -C build
 ninja -C build install
 systemctl --user daemon-reload
+systemctl --user restart xdg-desktop-portal-pikeru.service
 systemctl --user restart xdg-desktop-portal.service

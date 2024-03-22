@@ -5,7 +5,7 @@ xdg-desktop-portal backend for picking files with pikeru.
 ## Building and Installing
 
 * `./install.sh`
-* This works on arch, other distros may need some work
+* This works on arch and ubuntu, haven't tested other distros.
 * This creates a symlink to this repo so if you want it to work for other users, put this repo in `/opt` first.
 * If installing for multiple users, you can uncomment the block in `meson.build` that installs `portals.conf`
 

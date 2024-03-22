@@ -10,7 +10,7 @@ files with the Pikeru file picker
 xdg-desktop-portal-pikeru (or xdpp for short) allows applications to
 choose files via xdg-desktop-portal using your favorite filepiker, Pikeru.
 
-xdpp will try to load the configuration file from these locations:
+xdpp will try to load the configuration file from these locations before going with settings:
 
 - $XDG_CONFIG_HOME/xdg-desktop-portal-pikeru/$XDG_CURRENT_DESKTOP
 - $XDG_CONFIG_HOME/xdg-desktop-portal-pikeru/config
@@ -38,11 +38,9 @@ pikeru wrapper:
 These options need to be placed under the **[filechooser]** section.
 
 **cmd** = _command_
-	Command to execute. For invocation details, please refer to the default
-	wrapper script.
+	Command to execute. For invocation details, please refer to the wrapper script.
 
-	The wrapper script is provided at
-	/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh, and is
+	The wrapper script is a symlink to contrib/pikeru-wrapper.sh, and is
 	configured to launch the pikeru file picker to select files.
 
 **default_dir** = _directory_
@@ -51,5 +49,4 @@ These options need to be placed under the **[filechooser]** section.
 
 	The default value is /tmp.
 
-	This option will probably be deprecated in the
-	future.
+	This option will probably be deprecated in the future.
