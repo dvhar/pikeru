@@ -2,19 +2,9 @@
 
 xdg-desktop-portal backend for picking files with pikeru.
 
-## Building and Installing
+## Installing and using
 
-* Check `pikeru.portal` and make sure the value of your `$XDG_CURRENT_DESKTOP` is in the `UseIn` section. Add it if not.
-* `./install.sh`
-* This works on arch and ubuntu, haven't tested other distros.
-* install.sh creates a symlink to this repo so if you want it to work for other users, put this repo in `/opt` first.
-* If installing for multiple users, you can uncomment the block in `meson.build` that installs `portals.conf`, or copy `contrib/portals.conf` to the ~/.config/xdg-desktop-portal/ directory of each user.
-
-## Running
-
-The install script will get the portal up and running but firefox needs some extra configuration to use it.
-* set environment variable `GTK_USE_PORTAL=1`.
-* in `about:config`, set `widget.use-xdg-desktop-portal.file-picker` to `1`
+See the readme in the top level directory
 
 ## Manual startup
 

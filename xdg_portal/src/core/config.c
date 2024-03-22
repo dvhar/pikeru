@@ -39,8 +39,8 @@ static void parse_string(char **dest, const char* value) {
         size_t size = snprintf(NULL, 0, "%s%s", getenv("HOME"), value+1) + 1;
         char* default_dir = malloc(size);
         snprintf(default_dir, size, "%s%s", getenv("HOME"), value+1);
-        logprint(TRACE, "default dir: '%s'\n", default_dir);
         *dest = default_dir;
+        return;
     }
     *dest = strdup(value);
 }

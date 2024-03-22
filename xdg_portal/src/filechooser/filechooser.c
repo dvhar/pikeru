@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #define PATH_PREFIX "file://"
+#define POSTPROCESS_DIR "/tmp/pk_postprocessed"
 
 static const char object_path[] = "/org/freedesktop/portal/desktop";
 static const char interface_name[] = "org.freedesktop.impl.portal.FileChooser";
@@ -17,7 +18,19 @@ static const char interface_name[] = "org.freedesktop.impl.portal.FileChooser";
 char* getdir(char* path, size_t len) {
     for (size_t i = len-1; i > 0; --i) {
         if (path[i] == '/') {
-            return strndup(path, i);
+            char* dir = strndup(path, i);
+            if (!strcmp(dir,POSTPROCESS_DIR)) {
+                free(dir);
+                return NULL;
+            }
+            struct stat path_stat;
+            if (stat(dir, &path_stat) == 0) {
+                if (S_ISDIR(path_stat.st_mode)) {
+                    return dir;
+                }
+            }
+            free(dir);
+            return NULL;
         }
     }
     return NULL;
@@ -69,9 +82,7 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
     size_t linesize = strlen(line);
     if (i == 0 && linesize) {
         char* dirname = getdir(line, linesize);
-        if (!strcmp(dirname, "/tmp/pk_postprocessed")) {
-            free(dirname);
-        } else {
+        if (dirname) {
             free(prev_path);
             prev_path = dirname;
         }
