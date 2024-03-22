@@ -7,13 +7,13 @@
 #include <string.h>
 #include <unistd.h>
 #include <ini.h>
+#include <sys/stat.h>
 
 static const char* const DEFAULT_CMDS[3] = {
     "/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
     "/usr/local/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
     "/opt/pikeru/xdg_portal/contrib/pikeru-wrapper.sh"
 };
-#define FILECHOOSER_DEFAULT_DIR "/tmp"
 
 void print_config(enum LOGLEVEL loglevel, struct xdpp_config *config) {
     logprint(loglevel, "config: cmd:  %s", config->filechooser_conf.cmd);
@@ -34,6 +34,14 @@ static void parse_string(char **dest, const char* value) {
         return;
     }
     free(*dest);
+    if (value[0] == '~' && getenv("HOME") && strlen(value) > 1) {
+        logprint(TRACE, "expanding home tilda from config");
+        size_t size = snprintf(NULL, 0, "%s%s", getenv("HOME"), value+1) + 1;
+        char* default_dir = malloc(size);
+        snprintf(default_dir, size, "%s%s", getenv("HOME"), value+1);
+        logprint(TRACE, "default dir: '%s'\n", default_dir);
+        *dest = default_dir;
+    }
     *dest = strdup(value);
 }
 
@@ -76,9 +84,30 @@ static void default_config(struct xdpp_config *config) {
     size_t size = snprintf(NULL, 0, "%s", cmd) + 1;
     config->filechooser_conf.cmd = malloc(size);
     snprintf(config->filechooser_conf.cmd, size, "%s", cmd);
-    size = snprintf(NULL, 0, "%s", FILECHOOSER_DEFAULT_DIR) + 1;
+    char* home = getenv("HOME");
+    if (!home) {
+        goto nohome;
+    }
+    size = snprintf(NULL, 0, "%s/Downloads", home) + 1;
+    char* default_dir = malloc(size);
+    snprintf(default_dir, size, "%s/Downloads", home);
+    struct stat path_stat;
+    if (stat(default_dir, &path_stat) == 0) {
+        if (!S_ISDIR(path_stat.st_mode)) {
+            free(default_dir);
+            goto nohome;
+        }
+        config->filechooser_conf.default_dir = default_dir;
+        return;
+    } else {
+        perror("stat");
+        free(default_dir);
+        goto nohome;
+    }
+nohome:
+    size = snprintf(NULL, 0, "%s", "/tmp") + 1;
     config->filechooser_conf.default_dir = malloc(size);
-    snprintf(config->filechooser_conf.default_dir, size, "%s", FILECHOOSER_DEFAULT_DIR);
+    snprintf(config->filechooser_conf.default_dir, size, "%s", "/tmp");
 }
 
 static char *config_path(const char *prefix, const char *filename) {

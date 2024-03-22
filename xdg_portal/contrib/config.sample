@@ -1,2 +1,3 @@
 [filechooser]
 cmd=/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
+default_dir=~/Downloads

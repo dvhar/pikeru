@@ -1,5 +1,6 @@
 #!/bin/bash
 
+cd xdg_portal
 homeconfig=~/.config/xdg-desktop-portal
 mkdir -p $homeconfig
 cp -u contrib/portals.conf $homeconfig
