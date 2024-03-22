@@ -104,6 +104,10 @@ install_data(
     install_dir: join_paths(get_option('datadir'), 'xdg-desktop-portal', 'portals'),
 )
 install_data(
+    'pikeru.portal',
+    install_dir: '/usr/share/xdg-desktop-portal/portals',
+)
+install_data(
     'contrib/pikeru-portals.conf',
     install_dir: join_paths(get_option('datadir'), 'xdg-desktop-portal'),
 )
