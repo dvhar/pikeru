@@ -37,7 +37,8 @@ pikeru wrapper:
 
 # FILECHOOSER OPTIONS
 
-These options need to be placed under the **[filechooser]** section.
+These options need to be placed under the **[filechooser]** section. The "~"
+chacacter will be expanded to your home directory.
 
 **cmd** = _command_
 	Command to execute. For invocation details, please refer to the wrapper script.
@@ -45,7 +46,14 @@ These options need to be placed under the **[filechooser]** section.
 	The wrapper script is a symlink to contrib/pikeru-wrapper.sh, and is
 	configured to launch the pikeru file picker to select files.
 
-**default_dir** = _directory_
+**default_save_dir** = _directory_
 	Default directory to save file paths in, if the invoking program does not provide one.
 
 	The default value is ~/Downloads or /tmp.
+
+**postprocess_dir** = _directory_
+	Default directory to save post-processed files to when using postprocess.sh.
+	The xdg portal will avoid using this as the starting directory next time you
+	select a file for upload.
+
+	The default value is /tmp/pk_postprocess

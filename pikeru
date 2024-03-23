@@ -69,7 +69,7 @@ cmd="python ./main.py \
 	--parent '${PARENT:-}'" 
 [ $debug = 1 ] && echo "cmd: $cmd" >> $logfile
 
-if [ -r ./postprocess.sh ]; then
+if [ -r ./postprocess.sh ] && [ ! -z "$POSTPROCESS_DIR" ]; then
 	eval "$cmd"|bash ./postprocess.sh
 else
 	eval "$cmd"

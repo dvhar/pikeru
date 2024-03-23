@@ -55,6 +55,7 @@ xdpp_files = files([
     'src/core/logger.c',
     'src/core/config.c',
     'src/core/request.c',
+    'src/core/sds.c',
     'src/filechooser/filechooser.c',
 ])
 

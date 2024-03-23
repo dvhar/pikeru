@@ -10,16 +10,15 @@
 #include <unistd.h>
 
 #define PATH_PREFIX "file://"
-#define POSTPROCESS_DIR "/tmp/pk_postprocessed"
 
 static const char object_path[] = "/org/freedesktop/portal/desktop";
 static const char interface_name[] = "org.freedesktop.impl.portal.FileChooser";
 
-char* getdir(char* path, size_t len) {
+char* getdir(char* path, size_t len, char* postproc) {
     for (size_t i = len-1; i > 0; --i) {
         if (path[i] == '/') {
             char* dir = strndup(path, i);
-            if (!strcmp(dir,POSTPROCESS_DIR)) {
+            if (!strcmp(dir,postproc)) {
                 free(dir);
                 return NULL;
             }
@@ -40,9 +39,13 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
                             char *path, char ***selected_files, size_t *num_selected_files) {
   struct xdpp_state *state = data;
   char *cmd_script = state->config->filechooser_conf.cmd;
+  char *postproc_dir = state->config->filechooser_conf.postprocess_dir;
   if (!cmd_script) {
     logprint(ERROR, "cmd not specified");
     return -1;
+  }
+  if (!postproc_dir) {
+      postproc_dir = "/tmp";
   }
   static char* prev_path = NULL;
   if (prev_path == NULL) {
@@ -53,7 +56,8 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
       path = prev_path;
 
   char buf[8096];
-  snprintf(buf, sizeof(buf), "%s %d %d %d \"%s\"", cmd_script, multiple, directory, writing, path);
+  snprintf(buf, sizeof(buf), "POSTPROCESS_DIR=%s %s %d %d %d \"%s\"",
+          postproc_dir, cmd_script, multiple, directory, writing, path);
 
   logprint(TRACE, "executing command: %s", buf);
   FILE *fp = popen(buf, "r");
@@ -81,7 +85,7 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
   for (size_t i = 0; line && i<num_lines; ++i) {
     size_t linesize = strlen(line);
     if (i == 0 && linesize) {
-        char* dirname = getdir(line, linesize);
+        char* dirname = getdir(line, linesize, postproc_dir);
         if (dirname) {
             free(prev_path);
             prev_path = dirname;
@@ -291,12 +295,12 @@ static int method_save_file(sd_bus_message *msg, void *data, sd_bus_error *ret_e
 
   if (current_folder == NULL) {
     struct xdpp_state *state = data;
-    char *default_dir = state->config->filechooser_conf.default_dir;
-    if (!default_dir) {
-      logprint(ERROR, "default_dir not specified");
+    char *default_save_dir = state->config->filechooser_conf.default_save_dir;
+    if (!default_save_dir) {
+      logprint(ERROR, "default_save_dir not specified");
       return -1;
     }
-    current_folder = default_dir;
+    current_folder = default_save_dir;
   }
 
   size_t path_size = snprintf(NULL, 0, "%s/%s", current_folder, current_name) + 1;

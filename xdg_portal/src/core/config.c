@@ -1,5 +1,6 @@
 #include "config.h"
 #include "xdpp.h"
+#include "sds.h"
 #include "logger.h"
 
 #include <stdio.h>
@@ -9,6 +10,7 @@
 #include <ini.h>
 #include <sys/stat.h>
 
+#define POSTPROCESS_DIR "/tmp/pk_postprocess"
 static const char* const DEFAULT_CMDS[3] = {
     "/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
     "/usr/local/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
@@ -17,15 +19,16 @@ static const char* const DEFAULT_CMDS[3] = {
 
 void print_config(enum LOGLEVEL loglevel, struct xdpp_config *config) {
     logprint(loglevel, "config: cmd:  %s", config->filechooser_conf.cmd);
-    logprint(loglevel, "config: default_dir:  %s", config->filechooser_conf.default_dir);
+    logprint(loglevel, "config: default_save_dir:  %s", config->filechooser_conf.default_save_dir);
+    logprint(loglevel, "config: postprocess_dir:  %s", config->filechooser_conf.postprocess_dir);
 }
 
 // NOTE: calling finish_config won't prepare the config to be read again from config file
 // with init_config since to pointers and other values won't be reset to NULL, or 0
 void finish_config(struct xdpp_config *config) {
     logprint(DEBUG, "config: destroying config");
-    free(config->filechooser_conf.cmd);
-    free(config->filechooser_conf.default_dir);
+    sdsfree(config->filechooser_conf.cmd);
+    sdsfree(config->filechooser_conf.default_save_dir);
 }
 
 static void parse_string(char **dest, const char* value) {
@@ -33,23 +36,24 @@ static void parse_string(char **dest, const char* value) {
         logprint(TRACE, "config: skipping empty value in config file");
         return;
     }
-    free(*dest);
+    sdsfree(*dest);
     if (value[0] == '~' && getenv("HOME") && strlen(value) > 1) {
         logprint(TRACE, "expanding home tilda from config");
-        size_t size = snprintf(NULL, 0, "%s%s", getenv("HOME"), value+1) + 1;
-        char* default_dir = malloc(size);
-        snprintf(default_dir, size, "%s%s", getenv("HOME"), value+1);
-        *dest = default_dir;
+        char* dir = sdsempty();
+        sdscatfmt(dir, "%s%s", getenv("HOME"), value+1);
+        *dest = dir;
         return;
     }
-    *dest = strdup(value);
+    *dest = sdsnew(value);
 }
 
 static int handle_ini_filechooser(struct config_filechooser *filechooser_conf, const char *key, const char *value) {
     if (strcmp(key, "cmd") == 0) {
         parse_string(&filechooser_conf->cmd, value);
-    } else if (strcmp(key, "default_dir") == 0) {
-        parse_string(&filechooser_conf->default_dir, value);
+    } else if (strcmp(key, "default_save_dir") == 0) {
+        parse_string(&filechooser_conf->default_save_dir, value);
+    } else if (strcmp(key, "postprocess_dir") == 0) {
+        parse_string(&filechooser_conf->postprocess_dir, value);
     } else {
         logprint(TRACE, "config: skipping invalid key in config file");
         return 0;
@@ -72,6 +76,17 @@ static int handle_ini_config(void *data, const char* section, const char *key, c
 static bool file_exists(const char *path) {
     return path && access(path, R_OK) != -1;
 }
+static bool dir_exists(const char *path) {
+    struct stat path_stat;
+    if (stat(path, &path_stat) == 0) {
+        if (S_ISDIR(path_stat.st_mode)) {
+            return 1;
+        }
+    } else {
+        perror("stat");
+    }
+    return 0;
+}
 
 static void default_config(struct xdpp_config *config) {
     const char* cmd = NULL;
@@ -81,33 +96,22 @@ static void default_config(struct xdpp_config *config) {
             break;
         }
     }
-    size_t size = snprintf(NULL, 0, "%s", cmd) + 1;
-    config->filechooser_conf.cmd = malloc(size);
-    snprintf(config->filechooser_conf.cmd, size, "%s", cmd);
+    config->filechooser_conf.cmd = sdsnew(cmd);
+    config->filechooser_conf.default_save_dir = NULL;
     char* home = getenv("HOME");
-    if (!home) {
-        goto nohome;
-    }
-    size = snprintf(NULL, 0, "%s/Downloads", home) + 1;
-    char* default_dir = malloc(size);
-    snprintf(default_dir, size, "%s/Downloads", home);
-    struct stat path_stat;
-    if (stat(default_dir, &path_stat) == 0) {
-        if (!S_ISDIR(path_stat.st_mode)) {
-            free(default_dir);
-            goto nohome;
+    if (home) {
+        char* default_save = sdsempty();
+        default_save = sdscatfmt(default_save, "%s/Downloads", home);
+        if (dir_exists(default_save)) {
+            config->filechooser_conf.default_save_dir = default_save;
+        } else {
+            sdsfree(default_save);
         }
-        config->filechooser_conf.default_dir = default_dir;
-        return;
-    } else {
-        perror("stat");
-        free(default_dir);
-        goto nohome;
     }
-nohome:
-    size = snprintf(NULL, 0, "%s", "/tmp") + 1;
-    config->filechooser_conf.default_dir = malloc(size);
-    snprintf(config->filechooser_conf.default_dir, size, "%s", "/tmp");
+    if (!config->filechooser_conf.default_save_dir) {
+        config->filechooser_conf.default_save_dir = sdsnew("/tmp");
+    }
+    config->filechooser_conf.postprocess_dir = sdsnew(POSTPROCESS_DIR);
 }
 
 static char *config_path(const char *prefix, const char *filename) {
@@ -116,19 +120,16 @@ static char *config_path(const char *prefix, const char *filename) {
     }
 
     char *config_folder = "xdg-desktop-portal-pikeru";
-    size_t size = 3 + strlen(prefix) + strlen(config_folder) + strlen(filename);
-    char *path = calloc(size, sizeof(char));
-    snprintf(path, size, "%s/%s/%s", prefix, config_folder, filename);
+    char *path = sdsempty();
+    path = sdscatfmt(path, "%s/%s/%s", prefix, config_folder, filename);
     return path;
 }
 
 static char *get_config_path(void) {
     const char *home = getenv("HOME");
-    char *config_home_fallback = NULL;
+    char *config_home_fallback = sdsempty();
     if (home != NULL && home[0] != '\0') {
-        size_t size_fallback = 1 + strlen(home) + strlen("/.config");
-        config_home_fallback = calloc(size_fallback, sizeof(char));
-        snprintf(config_home_fallback, size_fallback, "%s/.config", home);
+        config_home_fallback = sdscatfmt(config_home_fallback, "%s/.config", home);
     }
 
     const char *config_home = getenv("XDG_CONFIG_HOME");
@@ -146,7 +147,7 @@ static char *get_config_path(void) {
     char *config_list = NULL;
     for (size_t i = 0; i < 2; i++) {
         if (xdg_current_desktop) {
-            config_list = strdup(xdg_current_desktop);
+            config_list = sdsnew(xdg_current_desktop);
             char *config = strtok(config_list, ":");
             while (config) {
                 char *path = config_path(prefix[i], config);
@@ -156,14 +157,14 @@ static char *get_config_path(void) {
                 }
                 logprint(TRACE, "config: trying config file %s", path);
                 if (file_exists(path)) {
-                    free(config_list);
-                    free(config_home_fallback);
+                    sdsfree(config_list);
+                    sdsfree(config_home_fallback);
                     return path;
                 }
-                free(path);
+                sdsfree(path);
                 config = strtok(NULL, ":");
             }
-            free(config_list);
+            sdsfree(config_list);
         }
         char *path = config_path(prefix[i], config_fallback);
         if (!path) {
@@ -171,13 +172,13 @@ static char *get_config_path(void) {
         }
         logprint(TRACE, "config: trying config file %s", path);
         if (file_exists(path)) {
-            free(config_home_fallback);
+            sdsfree(config_home_fallback);
             return path;
         }
-        free(path);
+        sdsfree(path);
     }
 
-    free(config_home_fallback);
+    sdsfree(config_home_fallback);
     return NULL;
 }
 

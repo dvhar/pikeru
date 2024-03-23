@@ -1,8 +1,11 @@
 #!/bin/bash
 # postprocess.sh must read lines of files from stdin and write lines of files to stdout.
-# /tmp/pk_postprocessed is hardcoded into the xdg portal to avoid using it as the starting dir next time you open a file.
+# $POSTPROCESS_DIR is exported by xdg portal to avoid using it as the starting dir next time you
+#   open a file. It can be set in the config file mentioned in the man page for
+#   xdg-desktop-portal-pikeru.
+# This script needs to make the $POSTPROCESS_DIR directory if it doesn't exist already.
 
-dir=/tmp/pk_postprocessed
+dir=${POSTPROCESS_DIR:-/tmp/pk_postprocess}
 mkdir -p $dir
 
 while read file; do

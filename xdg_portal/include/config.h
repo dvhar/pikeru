@@ -5,7 +5,8 @@
 
 struct config_filechooser {
     char *cmd;
-    char *default_dir;
+    char *default_save_dir;
+    char *postprocess_dir;
 };
 
 struct xdpp_config {

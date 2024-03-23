@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include "xdpp.h"
+#include "sds.h"
 #include "logger.h"
 
 enum event_loop_fd {
@@ -62,7 +63,7 @@ int main(int argc, char *argv[]) {
                 loglevel = get_loglevel(optarg);
                 break;
             case 'c':
-                configfile = strdup(optarg);
+                configfile = sdsnew(optarg);
                 break;
             case 'r':
                 replace = true;
@@ -161,7 +162,7 @@ int main(int argc, char *argv[]) {
 
     // TODO: cleanup
     finish_config(&config);
-    free(configfile);
+    sdsfree(configfile);
 
     return EXIT_SUCCESS;
 

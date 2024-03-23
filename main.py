@@ -531,8 +531,9 @@ class FilePicker():
             if e:
                 action, directory, file = e[1], e[2], e[3]
                 try:
-                    path = PathInfo(os.path.join(directory, file))
+                    path = os.path.join(directory, file)
                     if 'IN_CREATE' in action:
+                        path = PathInfo(path)
                         if not self.mime_is_allowed(path) or path in self.already_added:
                             return
                         self.root.after(500, self.load_newfile, path)
@@ -677,7 +678,8 @@ class FilePicker():
         self.view_menu.add_command(label="Sort oldest first", command=lambda :self.on_sort('time', True))
         self.view_menu.add_command(label="Sort newest first", command=lambda :self.on_sort('time', False))
         self.view_menu.add_command(label=f"{show} Hidden files", command=self.on_show)
-        self.view_menu.post(self.view_button.winfo_rootx(), self.view_button.winfo_rooty())
+        self.view_menu.post(self.view_button.winfo_rootx(),
+                            self.view_button.winfo_rooty()+self.view_button.winfo_height())
 
     def on_sort(self, by, asc):
         match (by, asc):
@@ -724,7 +726,8 @@ class FilePicker():
                 print(stdout, file=sys.stderr)
 
     def show_cmd_menu(self):
-        self.cmd_menu.post(self.cmd_button.winfo_rootx(), self.cmd_button.winfo_rooty())
+        self.cmd_menu.post(self.cmd_button.winfo_rootx(),
+                           self.cmd_button.winfo_rooty()+self.cmd_button.winfo_height())
 
     def read_config(self):
         self.write_config()
