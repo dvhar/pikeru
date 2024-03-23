@@ -155,6 +155,7 @@ class FilePicker():
             btn.bind("<Button-1>", lambda e: self.change_dir(e.widget.path))
 
         self.frame.pack(fill='both', expand=True)
+        self.root.after(0, self.thumb_listener)
         self.change_dir(args.path)
 
     def withdraw_menus(self, event):
@@ -246,7 +247,7 @@ class FilePicker():
                     self.prep_file(label, path)
             self.root.after(0, self.thumb_listener)
         except:
-            self.root.after(200, self.thumb_listener)
+            self.root.after(100, self.thumb_listener)
 
     def prep_file(self, label, path):
         label.sel = False
@@ -520,28 +521,30 @@ class FilePicker():
         self.canvas.unbind("<Button-5>")
 
     def load_newfile(self, path):
-        item = PathInfo(path)
-        item.idx = len(self.items)
-        item.nav_id = self.nav_id
+        path.idx = len(self.items)
+        path.nav_id = self.nav_id
         self.items.append(None)
-        self.load_item(item)
+        self.load_item(path)
 
     def watch_loop(self):
         for e in self.ino.event_gen():
             if e:
                 action, directory, file = e[1], e[2], e[3]
-                path = os.path.join(directory, file)
-                if 'IN_CREATE' in action:
-                    if not self.mime_is_allowed(path) or path in self.already_added:
-                        return
-                    self.root.after(500, self.load_newfile, path)
-                elif 'IN_DELETE' in action:
-                    for item in self.items:
-                        if item.path == path:
-                            item.destroy()
-                            break
-                    self.items = [f for f in self.items if f.path != path]
-                    self.reorganize_items()
+                try:
+                    path = PathInfo(os.path.join(directory, file))
+                    if 'IN_CREATE' in action:
+                        if not self.mime_is_allowed(path) or path in self.already_added:
+                            return
+                        self.root.after(500, self.load_newfile, path)
+                    elif 'IN_DELETE' in action:
+                        for item in self.items:
+                            if item.path == path:
+                                item.destroy()
+                                break
+                        self.items = [f for f in self.items if f.path != path]
+                        self.reorganize_items()
+                except Exception as e:
+                    print('Error reading new file:', e, file=sys.stderr)
 
     def change_dir(self, new_dir, save=False):
         if self.select_save and not os.path.isdir(new_dir):
@@ -642,7 +645,6 @@ class FilePicker():
 
     def load_dir(self, dirs = None):
         self.nav_id += 1
-        self.root.after(0, self.thumb_listener)
         if self.multidir:
             for prevdir in self.multidir:
                 self.ino.remove_watch(prevdir)
