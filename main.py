@@ -256,14 +256,14 @@ class FilePicker(tk.Frame):
                 ext = os.path.splitext(base_path)[-1].lower()
                 match ext:
                     case '.png'|'.jpg'|'.jpeg'|'.gif'|'.webp':
-                        img = self.prepare_cached_thumbnail(path, 'pic')
+                        img = self.prepare_cached_thumbnail(path, 'pic', ext)
                         label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont,
                                          width=self.THUMBNAIL_SIZE)
                         label.__setattr__('img', img)
                         label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
                         self.prep_file(label, path)
                     case '.mp4'|'.avi'|'.mkv'|'.webm':
-                        img = self.prepare_cached_thumbnail(path, 'vid')
+                        img = self.prepare_cached_thumbnail(path, 'vid', '.jpg')
                         label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont,
                                          width=self.THUMBNAIL_SIZE)
                         label.__setattr__('img', img)
@@ -295,11 +295,16 @@ class FilePicker(tk.Frame):
             label.path.mime = 'application/octet-stream'
             sys.stderr.write(f'Error loading item: {e}\t{path}\n')
 
-    def prepare_cached_thumbnail(self, path, imtype):
+    def prepare_cached_thumbnail(self, path, imtype, ext):
         md5hash = hashlib.md5(path.encode()).hexdigest()
-        cache_path = os.path.join(cache_dir, f'{md5hash}{SCALE}.png')
+        cache_path = os.path.join(cache_dir, f'{md5hash}{SCALE}{ext}')
         if os.path.isfile(cache_path):
             img = Image.open(cache_path)
+            img = ImageTk.PhotoImage(img)
+            return img
+        elif os.path.dirname(path) == cache_dir:
+            img = Image.open(path)
+            img.thumbnail((self.THUMBNAIL_SIZE, self.THUMBNAIL_SIZE))
             img = ImageTk.PhotoImage(img)
             return img
         else:
