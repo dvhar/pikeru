@@ -643,6 +643,9 @@ class FilePicker():
     def load_dir(self, dirs = None):
         self.nav_id += 1
         self.root.after(0, self.thumb_listener)
+        if self.multidir:
+            for prevdir in self.multidir:
+                self.ino.remove_watch(prevdir)
         self.multidir = dirs
         if hasattr(self, 'bigimg'):
             self.close_expanded_image(None)
