@@ -542,7 +542,7 @@ class FilePicker(tk.Frame):
             os.chdir(new_dir)
             self.path_textfield.delete(0, 'end')
             if self.save_filename:
-                new_dir += '/' + self.save_filename
+                new_dir = os.path.join(new_dir, self.save_filename)
             self.path_textfield.insert(0, new_dir)
             while self.queue.qsize() > 0:
                 self.queue.get()
@@ -633,6 +633,7 @@ class FilePicker(tk.Frame):
             self.close_expanded_image(None)
         self.items_frame.destroy()
         self.items_frame = tk.Frame(self.canvas)
+        self.canvas.delete("all")
         self.canvas.create_window((0,0), window=self.items_frame, anchor='nw')
         self.items_frame.bind('<Configure>', self.on_frame_configure)
         self.bind_listeners(self.canvas)
