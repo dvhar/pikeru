@@ -91,6 +91,8 @@ class FilePicker():
         self.items_frame.bind('<Configure>', self.on_frame_configure)
         self.bind_listeners(self.canvas)
         self.bind_listeners(self.items_frame)
+        self.canvas.bind('<Button-1>', self.deselect_all)
+        self.items_frame.bind('<Button-1>', self.deselect_all)
 
         self.path_textfield = tk.Entry(upper_frame, insertbackground='red', font=self.widgetfont)
         self.path_textfield.grid(row=1, column=0, padx=(10, 0), pady=(1, 0), sticky='ew')
@@ -361,6 +363,11 @@ class FilePicker():
                 idx = start + col
                 if idx < len(self.items) and self.items[idx]:
                     self.items[idx].grid(row=row, column=col)
+
+    def deselect_all(self, e):
+        for ps in self.prev_sel:
+            ps.config(bg=ps.origbg)
+            ps.sel = False
 
     def on_click_file(self, event):
         clicked = event.widget

@@ -96,6 +96,7 @@ static void default_config(struct xdpp_config *config) {
         }
     }
     config->filechooser_conf.cmd = sdsnew(cmd);
+    config->filechooser_conf.postprocess_dir = sdsnew(POSTPROCESS_DIR);
     config->filechooser_conf.default_save_dir = NULL;
     char* home = getenv("HOME");
     if (home) {
@@ -109,7 +110,6 @@ static void default_config(struct xdpp_config *config) {
     if (!config->filechooser_conf.default_save_dir) {
         config->filechooser_conf.default_save_dir = sdsnew("/tmp");
     }
-    config->filechooser_conf.postprocess_dir = sdsnew(POSTPROCESS_DIR);
 }
 
 static char *config_path(const char *prefix, const char *filename) {
