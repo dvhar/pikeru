@@ -39,8 +39,7 @@ static void parse_string(char **dest, const char* value) {
     sdsfree(*dest);
     if (value[0] == '~' && getenv("HOME") && strlen(value) > 1) {
         logprint(TRACE, "expanding home tilda from config");
-        char* dir = sdsempty();
-        sdscatfmt(dir, "%s%s", getenv("HOME"), value+1);
+        char* dir = sdscatfmt(sdsempty(), "%s%s", getenv("HOME"), value+1);
         *dest = dir;
         return;
     }
@@ -100,8 +99,7 @@ static void default_config(struct xdpp_config *config) {
     config->filechooser_conf.default_save_dir = NULL;
     char* home = getenv("HOME");
     if (home) {
-        char* default_save = sdsempty();
-        default_save = sdscatfmt(default_save, "%s/Downloads", home);
+        char* default_save = sdscatfmt(sdsempty(), "%s/Downloads", home);
         if (dir_exists(default_save)) {
             config->filechooser_conf.default_save_dir = default_save;
         } else {
@@ -120,8 +118,7 @@ static char *config_path(const char *prefix, const char *filename) {
     }
 
     char *config_folder = "xdg-desktop-portal-pikeru";
-    char *path = sdsempty();
-    path = sdscatfmt(path, "%s/%s/%s", prefix, config_folder, filename);
+    char *path = sdscatfmt(sdsempty(), "%s/%s/%s", prefix, config_folder, filename);
     return path;
 }
 

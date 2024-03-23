@@ -56,7 +56,7 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
       path = prev_path;
 
   char buf[8096];
-  snprintf(buf, sizeof(buf), "POSTPROCESS_DIR=%s %s %d %d %d \"%s\"",
+  snprintf(buf, sizeof(buf), "POSTPROCESS_DIR='%s' %s %d %d %d \"%s\"",
           postproc_dir, cmd_script, multiple, directory, writing, path);
 
   logprint(TRACE, "executing command: %s", buf);
