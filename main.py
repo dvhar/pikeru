@@ -30,7 +30,7 @@ cache_dir = os.path.join(home_dir,'.cache','pikeru')
 butstyle = 'solid'
 bd = 1
 
-class FilePicker(tk.Frame):
+class FilePicker():
     def __init__(self, args: argparse.Namespace, **kwargs):
         self.select_dir = args.mode == 'dir'
         self.select_multi = args.mode == 'files'
@@ -131,8 +131,8 @@ class FilePicker(tk.Frame):
                   text="Filter mime", command=self.toggle_mime_filter, font=self.widgetfont)
             self.mime_switch_btn.pack(side='left')
 
-        self.queue = queue.Queue()
-        self.lock = threading.Lock()
+        self.in_queue = queue.Queue()
+        self.out_queue = queue.Queue()
         self.threads = []
         for i in range(cpu_count()):
             loading_thread = threading.Thread(target=self.load_items, daemon=True)
@@ -217,7 +217,36 @@ class FilePicker(tk.Frame):
 
     def load_items(self):
         while True:
-            self.load_item(self.queue.get())
+            self.load_item(self.in_queue.get())
+
+    def thumb_listener(self):
+        try:
+            name, path, img, ftype = self.out_queue.get(block=False)
+            if path.nav_id != self.nav_id or path.idx >= len(self.items):
+                self.root.after(0, self.thumb_listener)
+                return
+            label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont, width=self.THUMBNAIL_SIZE)
+            match ftype:
+                case 1: # img
+                    label.__setattr__('img', img)
+                    label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
+                    self.prep_file(label, path)
+                case 2: # vid
+                    label.__setattr__('img', img)
+                    label.__setattr__('vid', True)
+                    label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
+                    self.prep_file(label, path)
+                case 3: # doc or uncategorized
+                    self.prep_file(label, path)
+                case 4: # directory
+                    self.prep_dir(label, path)
+                case 5: # error
+                    label.__setattr__('path', path)
+                    label.path.mime = 'application/octet-stream'
+                    self.prep_file(label, path)
+            self.root.after(0, self.thumb_listener)
+        except:
+            self.root.after(200, self.thumb_listener)
 
     def prep_file(self, label, path):
         label.sel = False
@@ -231,7 +260,7 @@ class FilePicker(tk.Frame):
             label.bind("<Button-2>", lambda _:self.on_click_file(FakeEvent(label, state=0x4)))
             label.bind("<Double-Button-1>", self.on_double_click_file)
         if path.nav_id == self.nav_id:
-            self.root.after(0,lambda: label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols))
+            label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols)
 
     def prep_dir(self, label, path):
         if path.idx >= len(self.items):
@@ -246,7 +275,7 @@ class FilePicker(tk.Frame):
         label.bind("<Button-3>", lambda _:self.on_click_file(FakeEvent(label, state=0x1)))
         label.bind("<ButtonRelease-1>", self.on_drag_dir_end)
         if path.nav_id == self.nav_id:
-            self.root.after(0,lambda: label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols))
+            label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols)
 
     def load_item(self, path):
         base_path = os.path.basename(path)
@@ -257,42 +286,20 @@ class FilePicker(tk.Frame):
                 match ext:
                     case '.png'|'.jpg'|'.jpeg'|'.gif'|'.webp':
                         img = self.prepare_cached_thumbnail(path, 'pic', ext)
-                        label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont,
-                                         width=self.THUMBNAIL_SIZE)
-                        label.__setattr__('img', img)
-                        label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
-                        self.prep_file(label, path)
+                        self.out_queue.put((name, path, img, 1))
                     case '.mp4'|'.avi'|'.mkv'|'.webm':
                         img = self.prepare_cached_thumbnail(path, 'vid', '.jpg')
-                        label = tk.Label(self.items_frame, image=img, text=name, compound='top', font=self.itemfont,
-                                         width=self.THUMBNAIL_SIZE)
-                        label.__setattr__('img', img)
-                        label.__setattr__('vid', True)
-                        label.bind("<Button-3>", lambda e:self.on_view_image(e, True))
-                        self.prep_file(label, path)
+                        self.out_queue.put((name, path, img, 2))
                     case '.txt'|'.pdf'|'.doc'|'.docx':
-                        label = tk.Label(self.items_frame, image=self.doc_icon, text=name, compound='top', font=self.itemfont,
-                                         width=self.THUMBNAIL_SIZE)
-                        label.__setattr__('img', self.doc_icon)
-                        self.prep_file(label, path)
+                        self.out_queue.put((name, path, self.doc_icon, 3))
                     case _:
-                        label = tk.Label(self.items_frame, image=self.unknown_icon, text=name, compound='top', font=self.itemfont,
-                                         width=self.THUMBNAIL_SIZE)
-                        label.__setattr__('img', self.unknown_icon)
-                        self.prep_file(label, path)
+                        self.out_queue.put((name, path, self.unknown_icon, 3))
             elif os.path.isdir(path):
-                label = tk.Label(self.items_frame, image=self.folder_icon, text=name, compound='top', font=self.itemfont,
-                                 width=self.THUMBNAIL_SIZE)
-                self.prep_dir(label, path)
+                self.out_queue.put((name, path, self.folder_icon, 4))
             else:
                 return
         except Exception as e:
-            label = tk.Label(self.items_frame, image=self.error_icon, text=name, compound='top', font=self.itemfont,
-                             width=self.THUMBNAIL_SIZE)
-            label.__setattr__('img', self.unknown_icon)
-            self.prep_file(label, path)
-            label.__setattr__('path', path)
-            label.path.mime = 'application/octet-stream'
+            self.out_queue.put((name, path, self.error_icon, 5))
             sys.stderr.write(f'Error loading item: {e}\t{path}\n')
 
     def prepare_cached_thumbnail(self, path, imtype, ext):
@@ -551,8 +558,8 @@ class FilePicker(tk.Frame):
             if self.save_filename:
                 new_dir = os.path.join(new_dir, self.save_filename)
             self.path_textfield.insert(0, new_dir)
-            while self.queue.qsize() > 0:
-                self.queue.get()
+            while self.in_queue.qsize() > 0:
+                self.in_queue.get()
             self.already_added.clear()
             self.load_dir()
             self.canvas.yview_moveto(0)
@@ -635,6 +642,7 @@ class FilePicker(tk.Frame):
 
     def load_dir(self, dirs = None):
         self.nav_id += 1
+        self.root.after(0, self.thumb_listener)
         self.multidir = dirs
         if hasattr(self, 'bigimg'):
             self.close_expanded_image(None)
@@ -650,7 +658,7 @@ class FilePicker(tk.Frame):
         for i, path in enumerate(paths):
             path.idx = i
             path.nav_id = self.nav_id
-            self.queue.put(path)
+            self.in_queue.put(path)
 
     def on_show(self):
         self.show_hidden = not self.show_hidden
