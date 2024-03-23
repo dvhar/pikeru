@@ -512,26 +512,28 @@ class FilePicker(tk.Frame):
         self.canvas.unbind("<Button-4>")
         self.canvas.unbind("<Button-5>")
 
+    def load_newfile(self, path):
+        item = PathInfo(path)
+        item.idx = len(self.items)
+        item.nav_id = self.nav_id
+        self.items.append(None)
+        self.load_item(item)
+
     def watch_loop(self):
         for e in self.ino.event_gen():
             if e:
-                action, path, file = e[1], e[2], e[3]
-                filepath = os.path.join(path, file)
+                action, directory, file = e[1], e[2], e[3]
+                path = os.path.join(directory, file)
                 if 'IN_CREATE' in action:
-                    if not self.mime_is_allowed(filepath) or filepath in self.already_added:
+                    if not self.mime_is_allowed(path) or path in self.already_added:
                         return
-                    time.sleep(0.5)
-                    item = PathInfo(filepath)
-                    item.idx = len(self.items)
-                    item.nav_id = self.nav_id
-                    self.items.append(None)
-                    self.load_item(item)
+                    self.root.after(500, self.load_newfile, path)
                 elif 'IN_DELETE' in action:
                     for item in self.items:
-                        if item.path == filepath:
+                        if item.path == path:
                             item.destroy()
                             break
-                    self.items = [f for f in self.items if f.path != filepath]
+                    self.items = [f for f in self.items if f.path != path]
                     self.reorganize_items()
 
     def change_dir(self, new_dir, save=False):
