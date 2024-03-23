@@ -176,20 +176,32 @@ class FilePicker():
         return path.mime in self.allowed_mimes
 
     def drop_data(self, event):
-        url = event.data
-        if url.startswith('http://') or url.startswith('https://'):
-            response = requests.get(url)
-            filename = os.path.basename(url)
-            filepath = os.path.join(os.getcwd(), filename)
-            self.already_added.add(filepath)
-            with open(filepath, 'wb') as f:
-                f.write(response.content)
-            item = PathInfo(filepath)
-            item.idx = len(self.items)
-            item.nav_id = self.nav_id
-            self.items.append(None)
-            self.load_item(item)
-            self.on_click_file(FakeEvent(self.items[-1]))
+        url: str = event.data
+        tries = 2
+        while tries > 0:
+            if url.startswith('http://') or url.startswith('https://'):
+                try:
+                    print('url:', url, file=sys.stderr)
+                    response = requests.get(url, allow_redirects=True, timeout=5)
+                    print('status code:', response.status_code, file=sys.stderr)
+                    filename = os.path.basename(url.split('?')[0])
+                    filepath = os.path.join(os.getcwd(), filename)
+                    if response.status_code < 300:
+                        self.already_added.add(filepath)
+                        with open(filepath, 'wb') as f:
+                            f.write(response.content)
+                        item = PathInfo(filepath)
+                        item.idx = len(self.items)
+                        item.nav_id = self.nav_id
+                        self.items.append(None)
+                        self.load_item(item)
+                        self.on_click_file(FakeEvent(self.items[-1]))
+                        break
+                    url = url.split('?')[0]
+                    tries -= 1
+                except:
+                    url = url.split('?')[0]
+                    tries -= 1
 
     def create_directory(self):
         new_dir_name = simpledialog.askstring("New Directory", "Enter the name of the new directory:")
