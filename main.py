@@ -408,17 +408,25 @@ class FilePicker():
             ps.config(bg=ps.origbg)
             ps.sel = False
 
-    def on_click_file(self, event):
+    def on_click_file(self, event, noscroll=False):
         clicked: tk.Label = event.widget
         # scroll to keep selection in view
-        cy1, cy2 = self.canvas.yview()
+        cvy1, cvy2 = self.canvas.yview()
         ifh = self.items_frame.winfo_height()
-        vp1, vp2 = ifh * cy1, ifh *cy2
-        cl1, cl2 = clicked.winfo_y(), clicked.winfo_y()+clicked.winfo_height()
-        if cl1 < vp1:
-            self.canvas.yview_moveto(cl1/ifh)
-        elif cl2 > vp2:
-            self.canvas.yview_moveto((cl2/ifh)-(cy2-cy1))
+        vp1, vp2, cly1, cly2 = ifh * cvy1, ifh *cvy2, clicked.winfo_y(), clicked.winfo_y()+clicked.winfo_height()
+        if noscroll:
+            pass
+            # TODO scroll to keep viewed image in viewport
+            # cvy1, cvy2 = self.current_y
+            # if cly1 < vp1:
+                # self.current_y = (cly1/ifh,0)
+            # elif cly2 > vp2:
+                # self.current_y = ((cly2/ifh)-(cvy2-cvy1), 0)
+        else:
+            if cly1 < vp1:
+                self.canvas.yview_moveto(cly1/ifh)
+            elif cly2 > vp2:
+                self.canvas.yview_moveto((cly2/ifh)-(cvy2-cvy1))
         self.last_clicked = clicked.path.idx
         shift = event.state & 0x1
         ctrl = event.state & 0x4
@@ -521,7 +529,7 @@ class FilePicker():
         big_image.orig = img
         big_image.path = label.path
         if goback:
-            self.current_y = self.canvas.yview()[0]
+            self.current_y = self.canvas.yview()
         self.canvas.yview_moveto(0)
         self.canvas.delete("all")
         self.canvas.unbind("<Button>")
@@ -534,7 +542,7 @@ class FilePicker():
         big_image.bind("<Double-Button-1>",lambda _: self.on_double_click_file(event))
         self.__setattr__('bigimg', big_image)
         if not event.widget.sel:
-            self.on_click_file(event)
+            self.on_click_file(event, noscroll=True)
 
     def on_scroll_image(self, event):
         step = -1 if event.num==4 else 1
@@ -568,7 +576,7 @@ class FilePicker():
     def close_expanded_image(self, event):
         self.bigimg.destroy()
         del self.bigimg
-        self.canvas.yview_moveto(self.current_y)
+        self.canvas.yview_moveto(self.current_y[0])
         self.items_frame.grid()
         self.canvas.delete("all")
         self.canvas.create_window(0, 0, window=self.items_frame, anchor='nw')
