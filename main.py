@@ -110,7 +110,8 @@ class FilePicker():
         self.button_frame.grid(row=0, column=0, sticky='we')
         button_text = "Save" if self.select_save else "Open"
         self.open_button = tk.Button(self.button_frame,
-                                     bd=bd, relief=butstyle, width=10, text=button_text, command=self.on_select_button, font=self.widgetfont)
+                                     bd=bd, relief=butstyle, width=10, text=button_text,
+                                     command=lambda:self.on_select_button(None), font=self.widgetfont)
         self.open_button.pack(side='right')
         self.cancel_button = tk.Button(self.button_frame,
                                        bd=bd, relief=butstyle, width=10, text="Cancel", command=self.root.destroy, font=self.widgetfont)
@@ -408,7 +409,16 @@ class FilePicker():
             ps.sel = False
 
     def on_click_file(self, event):
-        clicked = event.widget
+        clicked: tk.Label = event.widget
+        # scroll to keep selection in view
+        cy1, cy2 = self.canvas.yview()
+        ifh = self.items_frame.winfo_height()
+        vp1, vp2 = ifh * cy1, ifh *cy2
+        cl1, cl2 = clicked.winfo_y(), clicked.winfo_y()+clicked.winfo_height()
+        if cl1 < vp1:
+            self.canvas.yview_moveto(cl1/ifh)
+        elif cl2 > vp2:
+            self.canvas.yview_moveto((cl2/ifh)-(cy2-cy1))
         self.last_clicked = clicked.path.idx
         shift = event.state & 0x1
         ctrl = event.state & 0x4
