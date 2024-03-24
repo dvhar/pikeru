@@ -49,6 +49,7 @@ class FilePicker():
         self.show_hidden = False
         self.multidir = None
         self.nav_id = 0
+        self.last_clicked = 0
         self.read_config()
 
         self.root = TkinterDnD.Tk()
@@ -63,6 +64,12 @@ class FilePicker():
         x = (self.root.winfo_screenwidth() / 2) - (self.INIT_WIDTH / 2)
         y = (self.root.winfo_screenheight() / 2) - (self.INIT_HEIGHT / 2)
         self.root.geometry(f'+{int(x)}+{int(y)}')
+        self.root.bind('<Left>', self.on_key_press)
+        self.root.bind('<Right>', self.on_key_press)
+        self.root.bind('<Up>', self.on_key_press)
+        self.root.bind('<Down>', self.on_key_press)
+        self.root.bind('<Return>', self.on_select_button)
+
         self.frame = tk.Frame(self.root, **kwargs)
         self.frame.grid_columnconfigure(0, weight=1)
         self.frame.grid_rowconfigure(0, weight=0)
@@ -376,6 +383,25 @@ class FilePicker():
                 if idx < len(self.items) and self.items[idx]:
                     self.items[idx].grid(row=row, column=col)
 
+    def on_key_press(self, event):
+        if len(self.prev_sel) < 1:
+            return
+        state = event.state & 7
+        mc = self.max_cols
+        idx = 0
+        match event.keysym:
+            case 'Up':
+                idx = self.last_clicked - mc
+            case 'Down':
+                idx = self.last_clicked + mc
+            case 'Left':
+                idx = self.last_clicked - 1
+            case 'Right':
+                idx = self.last_clicked + 1
+        if idx < 0 or idx >= len(self.items):
+            return
+        self.on_click_file(FakeEvent(self.items[idx], state=state))
+
     def deselect_all(self, e):
         for ps in self.prev_sel:
             ps.config(bg=ps.origbg)
@@ -383,6 +409,7 @@ class FilePicker():
 
     def on_click_file(self, event):
         clicked = event.widget
+        self.last_clicked = clicked.path.idx
         shift = event.state & 0x1
         ctrl = event.state & 0x4
         isdir = clicked.path.isdir
@@ -617,7 +644,7 @@ class FilePicker():
             print(event.widget.path)
             self.root.destroy()
 
-    def on_select_button(self):
+    def on_select_button(self, event):
         selections = [label.path for label in self.prev_sel]
         if not self.select_dir and any(path.isdir for path in selections):
             if len(selections) == 1:
