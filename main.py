@@ -411,22 +411,22 @@ class FilePicker():
     def on_click_file(self, event, noscroll=False):
         clicked: tk.Label = event.widget
         # scroll to keep selection in view
-        cvy1, cvy2 = self.canvas.yview()
+        cvy1, cvy2 = self.canvas.yview() if not noscroll else self.current_y
+        dif = cvy2-cvy1
         ifh = self.items_frame.winfo_height()
-        vp1, vp2, cly1, cly2 = ifh * cvy1, ifh *cvy2, clicked.winfo_y(), clicked.winfo_y()+clicked.winfo_height()
+        vp1, vp2 = ifh * cvy1, ifh *cvy2
+        cly1, cly2 = clicked.winfo_y(), clicked.winfo_y()+clicked.winfo_height()
+        newvp1, newvp2 = cly1/ifh, cly2/ifh
         if noscroll:
-            pass
-            # TODO scroll to keep viewed image in viewport
-            # cvy1, cvy2 = self.current_y
-            # if cly1 < vp1:
-                # self.current_y = (cly1/ifh,0)
-            # elif cly2 > vp2:
-                # self.current_y = ((cly2/ifh)-(cvy2-cvy1), 0)
+            if cly1 < vp1:
+                self.current_y = (newvp1, newvp1+dif)
+            elif cly2 > vp2:
+                self.current_y = (newvp2-dif, newvp2)
         else:
             if cly1 < vp1:
-                self.canvas.yview_moveto(cly1/ifh)
+                self.canvas.yview_moveto(newvp1)
             elif cly2 > vp2:
-                self.canvas.yview_moveto((cly2/ifh)-(cvy2-cvy1))
+                self.canvas.yview_moveto(newvp2-dif)
         self.last_clicked = clicked.path.idx
         shift = event.state & 0x1
         ctrl = event.state & 0x4
@@ -535,6 +535,10 @@ class FilePicker():
         self.canvas.unbind("<Button>")
         self.canvas.bind("<Button-4>", lambda _:self.on_scroll_image(FakeEvent(big_image, num=4)))
         self.canvas.bind("<Button-5>", lambda _:self.on_scroll_image(FakeEvent(big_image, num=5)))
+        self.root.unbind('<Left>')
+        self.root.unbind('<Right>')
+        self.root.bind('<Left>', lambda _:self.on_scroll_image(FakeEvent(big_image, num=4)))
+        self.root.bind('<Right>', lambda _:self.on_scroll_image(FakeEvent(big_image, num=5)))
         x_pos = (self.canvas.winfo_width() - big_image.winfo_width()) // 2
         y_pos = (self.canvas.winfo_height() - big_image.winfo_height()) // 2
         self.canvas.create_window(x_pos, y_pos, window=big_image, anchor='center')
@@ -583,6 +587,10 @@ class FilePicker():
         self.canvas.bind("<Button>", self.mouse_nav)
         self.canvas.unbind("<Button-4>")
         self.canvas.unbind("<Button-5>")
+        self.root.unbind('<Left>')
+        self.root.unbind('<Right>')
+        self.root.bind('<Left>', self.on_key_press)
+        self.root.bind('<Right>', self.on_key_press)
 
     def load_newfile(self, path):
         path.idx = len(self.items)
