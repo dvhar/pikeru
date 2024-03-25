@@ -327,7 +327,7 @@ class FilePicker():
 
     def prepare_cached_thumbnail(self, path, imtype, ext):
         md5hash = hashlib.md5(path.encode()).hexdigest()
-        cache_path = os.path.join(cache_dir, f'{md5hash}{SCALE}{ext}')
+        cache_path = os.path.join(cache_dir, f'{md5hash}{self.THUMBNAIL_SIZE}{ext}')
         if os.path.isfile(cache_path):
             img = Image.open(cache_path)
             img = ImageTk.PhotoImage(img)
@@ -805,32 +805,33 @@ class FilePicker():
         self.write_config()
         config = CaseConfigParser()
         config.read(os.path.expanduser(config_file))
-        s1 = s2 = s3 = False
+        need_update = False
         try:
             self.bookmarks = config['Bookmarks']
-        except Exception as e:
-            s1 = True
+        except:
+            need_update = True
         try:
             self.commands = config['Commands']
-        except Exception as e:
-            s2 = True
+        except:
+            need_update = True
         try:
             global SCALE
             SCALE = float(config.get('Settings','dpi_scale'))
             window_size = config.get('Settings','window_size')
-            self.INIT_WIDTH, self.INIT_HEIGHT = window_size.split('x')
-            self.INIT_WIDTH, self.INIT_HEIGHT = int(self.INIT_WIDTH), int(self.INIT_HEIGHT)
-        except Exception as e:
-            s3 = True
-        if s1 or s2 or s3:
+            w, h = window_size.split('x')
+            self.INIT_WIDTH, self.INIT_HEIGHT = int(w), int(h)
+            self.THUMBNAIL_SIZE = int(config.get('Settings','thumbnail_size'))
+        except:
+            need_update = True
+        if need_update:
             print(f'Updating config file. Backing up to {config_file}.old', file=sys.stderr)
             os.rename(config_file, config_file+'.old')
             self.write_config(config)
             self.read_config()
             return
-        self.INIT_WIDTH *= int(SCALE)
-        self.INIT_HEIGHT *= int(SCALE)
-        self.THUMBNAIL_SIZE = int(140*SCALE)
+        self.INIT_WIDTH = int(self.INIT_WIDTH * SCALE)
+        self.INIT_HEIGHT = int(self.INIT_HEIGHT * SCALE)
+        self.THUMBNAIL_SIZE = int(self.THUMBNAIL_SIZE * SCALE)
 
     def write_config(self, oldvals = None):
         if os.path.isfile(config_file):
@@ -856,7 +857,8 @@ class FilePicker():
             cmds = {'resize':'convert -resize 1200 [path] [dir]/[part]_resized[ext]',
                     'convert webp':'convert [path] [dir]/[part].jpg'}
             sets = {'dpi_scale':'1',
-                    'window_size':'970x720'}
+                    'window_size':'970x720',
+                    'thumbnail_size':'140'}
             bkmk = {'Home':home_dir}
             bkmk.update({k:os.path.join(home_dir,k) for k in ["Documents", "Pictures", "Downloads"]})
             f.write(confcomment)
