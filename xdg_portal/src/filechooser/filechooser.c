@@ -45,7 +45,7 @@ static int exec_filechooser(void *data, bool writing, bool multiple, bool direct
     return -1;
   }
   if (!postproc_dir) {
-      postproc_dir = "/tmp";
+      postproc_dir = "/tmp/pk_postprocess";
   }
   static char* prev_path = NULL;
   if (prev_path == NULL) {

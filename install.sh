@@ -1,9 +1,9 @@
 #!/bin/bash
 
 cd xdg_portal
-homeconfig=~/.config/xdg-desktop-portal
-mkdir -p $homeconfig
-cp -u contrib/portals.conf $homeconfig
+homeconfig="$HOME/.config/xdg-desktop-portal"
+mkdir -p "$homeconfig"
+cp -u contrib/portals.conf "$homeconfig"
 
 meson setup \
   --prefix        /usr \

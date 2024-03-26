@@ -819,7 +819,7 @@ class FilePicker():
             SCALE = float(config.get('Settings','dpi_scale'))
             window_size = config.get('Settings','window_size')
             w, h = window_size.split('x')
-            self.INIT_WIDTH, self.INIT_HEIGHT = int(w), int(h)
+            self.INIT_WIDTH, self.INIT_HEIGHT = int(w.strip()), int(h.strip())
             self.THUMBNAIL_SIZE = int(config.get('Settings','thumbnail_size'))
         except:
             need_update = True
@@ -857,7 +857,7 @@ class FilePicker():
             cmds = {'resize':'convert -resize 1200 [path] [dir]/[part]_resized[ext]',
                     'convert webp':'convert [path] [dir]/[part].jpg'}
             sets = {'dpi_scale':'1',
-                    'window_size':'970x720',
+                    'window_size':'990x720',
                     'thumbnail_size':'140'}
             bkmk = {'Home':home_dir}
             bkmk.update({k:os.path.join(home_dir,k) for k in ["Documents", "Pictures", "Downloads"]})

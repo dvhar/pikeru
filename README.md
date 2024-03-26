@@ -28,21 +28,5 @@ Pikeru is a filepicker for linux that has working thumbnails and works on any de
 * Right click an image to view it. Scroll the image to view the next and previous images.
 * Select multiple directories with ctrl, shift, middle-click, or right-click. Click `Open` to view the contents of all selected directories at the same time.
 
-### Command Line Arguments
-Pikeru takes several command line args and returns the selected file(s) to stdout separated by newlines.
-
-- `-t title`: Sets the title displayed at the top of the Pikeru window.
-- `-m mode`: Determines the mode of file selection operation:
-  - `file`: Select a single file.
-  - `files`: Select multiple files.
-  - `dir`: Select a single directory.
-  - `save`: Save a file with the filename specified with -p
-- `-p path`: Specifies the initial directory or filename.
-- `-i mime_list`: Space-separated list of MIME types to display.
-- `-u`: Update python dependencies. Useful if you did a git pull and a new dep was added.
-
-Planned but not yet implemented:
-- `-e windowId`: Specifies the X11 window ID of the parent window if Pikeru should be transient to an existing window.
-
 ## License
 Pikeru is Public Domain.
