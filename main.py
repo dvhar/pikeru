@@ -272,10 +272,10 @@ class FilePicker():
             self.root.after(100, self.thumb_listener)
 
     def prep_file(self, label, path):
-        label.sel = False
-        label.path = path
         if path.idx >= len(self.items):
             return
+        label.sel = False
+        label.path = path
         self.items[path.idx] = label
         self.bind_listeners(label)
         if not self.select_dir:

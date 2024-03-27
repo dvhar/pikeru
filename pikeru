@@ -55,7 +55,7 @@ exit
 }
 
 [ $debug = 1 ] && echo "launcher args: $*" >> $logfile
-while getopts "e:t:m:p:i:uh" opt; do
+while getopts "e:t:m:p:i:uhx" opt; do
   case $opt in
     e)
       PARENT="$OPTARG"
