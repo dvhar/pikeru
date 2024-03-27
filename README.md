@@ -4,6 +4,12 @@ Pikeru is a filepicker for linux that has working thumbnails and works on any de
 
 ![Screenshot_20240321_072233_resized](https://github.com/dvhar/pikeru/assets/33729230/6257fa5e-e94e-4d3e-8dad-b4269e2d1ad3)
 
+## Special features other filepickers don't have
+* Right click an image to view it. Scroll the image to view the next and previous images.
+* Select multiple directories with ctrl, shift, middle-click, or right-click. Click `Open` to view the contents of all selected directories at the same time.
+* Putting `postprocess.sh` in this directory enables post-processing, such as automatically converting images before uploading them. Use the example script with `cp postprocess.example.sh postprocess.sh`.
+* `Cmd` menu shows commands specified in ~/.config/pikeru.conf. Click one to run it on the selected files.
+
 ## Installation and Usage
 
 ### Install the filepicker
@@ -21,12 +27,6 @@ Pikeru is a filepicker for linux that has working thumbnails and works on any de
 * To make firefox use the portal, set environment variable `GTK_USE_PORTAL=1`, and in `about:config`, set `widget.use-xdg-desktop-portal.file-picker` to `1`.
 * The xdg portal should work for both Firefox and Chromium based browsers.
 * The xdg portal is tested on arch and ubuntu. The kdialog hack should work anywhere.
-
-## Special features
-* Putting `postprocess.sh` in this directory enables post-processing, such as automatically converting images before uploading them. Use the example script with `cp postprocess.example.sh postprocess.sh`.
-* `Cmd` menu shows commands specified in ~/.config/pikeru.conf. Click one to run it on the selected files.
-* Right click an image to view it. Scroll the image to view the next and previous images.
-* Select multiple directories with ctrl, shift, middle-click, or right-click. Click `Open` to view the contents of all selected directories at the same time.
 
 ## License
 Pikeru is Public Domain.

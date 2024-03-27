@@ -307,7 +307,7 @@ class FilePicker():
             if os.path.isfile(path):
                 ext = os.path.splitext(base_path)[-1].lower()
                 match ext:
-                    case '.png'|'.jpg'|'.jpeg'|'.gif'|'.webp':
+                    case '.png'|'.jpg'|'.jpeg'|'.gif'|'.webp'|'.tiff'|'.bmp'|'.ppm':
                         img = self.prepare_cached_thumbnail(path, 'pic', ext)
                         self.out_queue.put((name, path, img, 1))
                     case '.mp4'|'.avi'|'.mkv'|'.webm':
