@@ -816,7 +816,7 @@ class FilePicker():
         except:
             need_update = True
         try:
-            global SCALE
+            global SCALE, butstyle
             SCALE = float(config.get('Settings','dpi_scale'))
             window_size = config.get('Settings','window_size')
             w, h = window_size.split('x')
@@ -826,6 +826,8 @@ class FilePicker():
             if theme not in ['dark','light','none']:
                 print('theme needs to be one of "dark", "light", or "none"', file=sys.stderr)
                 theme = 'none'
+            if theme == 'light':
+                butstyle = 'raised'
             self.THEME = theme
         except:
             need_update = True
