@@ -55,7 +55,8 @@ class FilePicker():
         self.root = TkinterDnD.Tk()
         self.root.geometry(f'{self.INIT_WIDTH}x{self.INIT_HEIGHT}')
         self.root.tk.call('tk','scaling',SCALE)
-        sv_ttk.set_theme('dark')
+        if self.THEME != 'none':
+            sv_ttk.set_theme(self.THEME)
         self.root.drop_target_register(DND_FILES, DND_TEXT)
         self.root.dnd_bind('<<Drop>>', self.drop_data)
         self.widgetfont = tkinter.font.Font(family="Helvetica", size=12)
@@ -821,6 +822,11 @@ class FilePicker():
             w, h = window_size.split('x')
             self.INIT_WIDTH, self.INIT_HEIGHT = int(w.strip()), int(h.strip())
             self.THUMBNAIL_SIZE = int(config.get('Settings','thumbnail_size'))
+            theme = config.get('Settings','theme')
+            if theme not in ['dark','light','none']:
+                print('theme needs to be one of "dark", "light", or "none"', file=sys.stderr)
+                theme = 'none'
+            self.THEME = theme
         except:
             need_update = True
         if need_update:
@@ -858,7 +864,8 @@ class FilePicker():
                     'convert webp':'convert [path] [dir]/[part].jpg'}
             sets = {'dpi_scale':'1',
                     'window_size':'990x720',
-                    'thumbnail_size':'140'}
+                    'thumbnail_size':'140',
+                    'theme':'dark'}
             bkmk = {'Home':home_dir}
             bkmk.update({k:os.path.join(home_dir,k) for k in ["Documents", "Pictures", "Downloads"]})
             f.write(confcomment)
