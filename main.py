@@ -171,7 +171,7 @@ class FilePicker():
 
     def withdraw_menus(self, event):
         if hasattr(self, 'view_menu') and self.view_menu.winfo_exists():
-            self.view_menu.unpost()
+            self.view_menu.destroy()
         if hasattr(self, 'cmd_menu') and self.cmd_menu.winfo_exists():
             self.cmd_menu.unpost()
 
@@ -551,8 +551,8 @@ class FilePicker():
 
     def on_scroll_image(self, event):
         step = -1 if event.num==4 else 1
-        ctrl_pressed = event.state & 0x4
-        if ctrl_pressed:
+        ctrl = event.state & 0x4
+        if ctrl:
             zoom_factor = 1.1 if step < 0 else 1/1.1
             self.resize_image(zoom_factor)
             return

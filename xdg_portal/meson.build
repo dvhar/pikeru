@@ -108,21 +108,12 @@ install_data(
     'pikeru.portal',
     install_dir: '/usr/share/xdg-desktop-portal/portals',
 )
-install_data(
-    'contrib/pikeru-portals.conf',
-    install_dir: join_paths(get_option('datadir'), 'xdg-desktop-portal'),
-)
 
 install_symlink(
     'pikeru-wrapper.sh',
     install_dir: join_paths(get_option('datadir'), 'xdg-desktop-portal-pikeru'),
     pointing_to: join_paths(meson.source_root(),'contrib/pikeru-wrapper.sh')
 )
-
-#install_data(
-    #'contrib/portals.conf',
-    #install_dir: join_paths(get_option('datadir'), 'xdg-desktop-portal'),
-#)
 
 scdoc = dependency('scdoc', required: get_option('man-pages'), version: '>= 1.9.7')
 if scdoc.found()
