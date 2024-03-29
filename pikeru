@@ -44,9 +44,7 @@ exit
 }
 
 portalconfig(){
-	mkdir -p "$xconfig"
-	cp -u xdg_portal/contrib/portals.conf "$xconfig"
-	systemctl --user restart xdg-desktop-portal
+bash ./xdg_portal/contrib/setconfig.sh
 cat << EOF
 xdg portal has been configured for $USER to use pikeru.
 If using firefox, make sure to set GTK_USE_PORTAL=1, and in 'about:config', set 'widget.use-xdg-desktop-portal.file-picker' to '1'.

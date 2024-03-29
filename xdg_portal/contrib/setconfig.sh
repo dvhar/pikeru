@@ -1,18 +1,5 @@
 #!/bin/bash
-
-cd xdg_portal
-meson setup \
-  --prefix        /usr \
-  --libexecdir    lib \
-  --sbindir       bin \
-  --buildtype     plain \
-  --auto-features enabled \
-  --wrap-mode     nodownload \
-  -D              b_pie=true \
-  -Dsd-bus-provider=libsystemd build
-ninja -C build
-ninja -C build install
-sudo ln -s `realpath ../pikeru` /usr/local/bin/pikeru
+# This is from install.sh and is just the part that configures your user to use pikeru.
 
 findconf(){
 	current_desktop=${XDG_CURRENT_DESKTOP,,}
@@ -55,9 +42,6 @@ EOF
 fi
 
 [[ "$origconf" =~ orig$ ]] && how="renaming $origconf to $(basename $portalfile)" || how='deleting it'
-echo -e "\nYour new xdg-desktop-portal config is $portalfile.\nYou can revert by ${how}"
+echo -e "\nYour new xdg-desktop-portal config is $portalfile. You can revert by ${how}"
 
-
-systemctl --user daemon-reload
-systemctl --user restart xdg-desktop-portal-pikeru.service
 systemctl --user restart xdg-desktop-portal.service
