@@ -18,4 +18,5 @@ exe=/usr/local/bin/pikeru
 
 systemctl --user daemon-reload
 systemctl --user restart xdg-desktop-portal-pikeru.service
+echo '-----------------------------'
 bash ./contrib/setconfig.sh

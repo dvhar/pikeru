@@ -1,28 +1,31 @@
 #!/bin/bash
-# This configures the xdg portal for your currnet user to use the pikeru
-# filepicker. It does it by finding the portal config you're currently using,
-# copying it to a higher-precedence location, and adding or changing a line for pikeru.
+# This configures the xdg portal for your currnet user to use pikeru.
+# It does it by finding the portal config you're currently using, copying it to
+# a higher-precedence location, and adding or changing a line for pikeru.
+
+xhome="${XDG_CONFIG_HOME:-$HOME/.config}"
 
 findconf(){
-	current_desktop=${XDG_CURRENT_DESKTOP,,}
 	dirs=(
-		"$HOME/.config"
-		"/etc/xdg"
-		"/etc"
-		"$HOME/.local/share"
-		"/usr/local/share"
-		"/usr/share"
+		${xhome}
+		${XDG_CONFIG_DIRS//:/ }
+		/etc/xdg
+		/etc
+		${XDG_DATA_HOME:-$HOME/.local/share}
+		${XDG_DATA_DIRS//:/ }
+		/usr/local/share
+		/usr/share
 	)
 	for dir in "${dirs[@]}"; do
 		a="${dir}/xdg-desktop-portal/portals.conf"
-		b="${dir}/xdg-desktop-portal/${current_desktop}-portals.conf"
+		b="${dir}/xdg-desktop-portal/${XDG_CURRENT_DESKTOP,,}-portals.conf"
 		[[ -f "$a" ]] && echo "$a" && return 0
 		[[ -f "$b" ]] && echo "$b" && return 0
 	done
 	return 1
 }
 
-xdir="$HOME/.config/xdg-desktop-portal"
+xdir="$xhome/xdg-desktop-portal"
 portalfile="$xdir/portals.conf"
 mkdir -p "$xdir"
 
@@ -30,7 +33,7 @@ if [[ -f "$portalfile" ]]; then
 	mv "$portalfile" "${portalfile}.orig"
 	origconf="${portalfile}.orig"
 else
-    origconf="$(findconf)"
+	origconf="$(findconf)"
 fi
 
 if [[ ! -z "$origconf" ]]; then
@@ -45,6 +48,6 @@ EOF
 fi
 
 [[ "$origconf" =~ orig$ ]] && how="renaming $origconf to $(basename $portalfile)" || how='deleting it'
-echo -e "\nYour new xdg-desktop-portal config is $portalfile.\nYou can revert by ${how}"
+echo -e "Your new xdg-desktop-portal config is $portalfile.\nYou can revert by ${how}"
 
 systemctl --user restart xdg-desktop-portal.service

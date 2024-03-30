@@ -661,7 +661,7 @@ class FilePicker():
         self.change_dir(new_dir)
 
     def final_selection(self, selection):
-        if self.select_save and selection.isfile:
+        if self.select_save and os.path.isfile(selection):
             msg = f'Overwrite file {os.path.basename(selection)}?'
             overwrite = askyesno(title='Confirm Overwrite', message=msg)
             if not overwrite:
@@ -883,7 +883,7 @@ class FilePicker():
                 f.write('\n')
             cmds = {'resize':'convert -resize 1200 [path] [dir]/[part]_resized[ext]',
                     'convert webp':'convert [path] [dir]/[part].jpg'}
-            sets = {'dpi_scale':'1',
+            settings = {'dpi_scale':'1',
                     'window_size':'990x720',
                     'thumbnail_size':'140',
                     'theme':'dark',
@@ -892,7 +892,7 @@ class FilePicker():
             bkmk.update({k:os.path.join(home_dir,k) for k in ["Documents", "Pictures", "Downloads"]})
             f.write(confcomment)
             write_section('Commands', cmds)
-            write_section('Settings', sets)
+            write_section('Settings', settings)
             write_section('Bookmarks', bkmk)
 
 

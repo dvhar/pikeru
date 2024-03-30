@@ -1,6 +1,6 @@
 #!/bin/bash
 # This script needs a venv in this direcotry. It will try to create one for you if you don't have one.
-# set debug=1 if you're having trouble getting it working. It logs to /tmp/pk.log
+# It logs to /tmp/pk.log if you set debug=1 below.
 
 debug=0
 
@@ -44,12 +44,11 @@ exit
 }
 
 portalconfig(){
-bash ./xdg_portal/contrib/setconfig.sh
-cat << EOF
-xdg portal has been configured for $USER to use pikeru.
-If using firefox, make sure to set GTK_USE_PORTAL=1, and in 'about:config', set 'widget.use-xdg-desktop-portal.file-picker' to '1'.
-EOF
-exit
+	bash ./xdg_portal/contrib/setconfig.sh
+	echo "XDG portal has been configured to use pikeru."
+	echo "If using firefox, make sure to set GTK_USE_PORTAL=1,"\
+		"and in 'about:config', set 'widget.use-xdg-desktop-portal.file-picker' to '1'."
+	exit
 }
 
 [ $debug = 1 ] && echo "launcher args: $*" >> $logfile
