@@ -1,6 +1,10 @@
 #!/bin/bash
 
 cd xdg_portal
+
+scmd="\$ s/\$/;$XDG_CURRENT_DESKTOP/"
+tail -n1 pikeru.portal|grep -q $XDG_CURRENT_DESKTOP||sed -i "$scmd" pikeru.portal
+
 meson setup \
   --prefix        /usr \
   --libexecdir    lib \
