@@ -719,7 +719,7 @@ class FilePicker():
                     ret.append(path)
             except:
                 pass
-        ret.sort(key=lambda p: (not p.isdir, p.lname))
+        ret.sort(key=self.get_sort_func(self.SORT, True), reverse=not self.SORT[1])
         return ret
 
     def load_dir(self, dirs = None):
@@ -759,13 +759,25 @@ class FilePicker():
         self.view_menu.post(self.view_button.winfo_rootx(),
                             self.view_button.winfo_rooty()+self.view_button.winfo_height())
 
+    def get_sort_func(self, order, justpath):
+        match order, justpath:
+            case ('name', True), True: return lambda p: (not p.isdir, p.lname)
+            case ('name', False),True: return lambda p: (p.isdir, p.lname)
+            case ('time', True), True: return lambda p: (not p.isdir, p.time)
+            case ('time', False),True: return lambda p: (p.isdir, p.time)
+            case ('name', True), False: return lambda w: (not w.path.isdir, w.path.lname)
+            case ('name', False),False: return lambda w: (w.path.isdir, w.path.lname)
+            case ('time', True), False: return lambda w: (not w.path.isdir, w.path.time)
+            case ('time', False),False: return lambda w: (w.path.isdir, w.path.time)
+            case _: 
+                print('sort_by must be one of [name_asc, name_desc, time_asc, time_desc]', file=sys.stderr)
+                return None
+
     def on_sort(self, by, asc):
-        match (by, asc):
-            case ('name', True): sort = lambda w: (not w.path.isdir, w.path.lname)
-            case ('name', False): sort = lambda w: (w.path.isdir, w.path.lname)
-            case ('time', True): sort = lambda w: (not w.path.isdir, w.path.time)
-            case ('time', False): sort = lambda w: (w.path.isdir, w.path.time)
-            case _: quit(1)
+        sort = self.get_sort_func((by, asc), False)
+        if not sort:
+            return
+        self.SORT = (by, asc)
         self.items.sort(key=sort, reverse=not asc)
         num_rows = len(self.items) // self.max_cols + (1 if len(self.items) % self.max_cols != 0 else 0)
         for row in range(num_rows):
@@ -834,6 +846,9 @@ class FilePicker():
             if theme == 'light':
                 butstyle = 'raised'
             self.THEME = theme
+            sortby = config.get('Settings','sort_by')
+            by, asc = sortby.split('_')
+            self.SORT = (by.lower(), asc == 'asc')
         except:
             need_update = True
         if need_update:
@@ -872,7 +887,8 @@ class FilePicker():
             sets = {'dpi_scale':'1',
                     'window_size':'990x720',
                     'thumbnail_size':'140',
-                    'theme':'dark'}
+                    'theme':'dark',
+                    'sort_by':'name_asc'}
             bkmk = {'Home':home_dir}
             bkmk.update({k:os.path.join(home_dir,k) for k in ["Documents", "Pictures", "Downloads"]})
             f.write(confcomment)
