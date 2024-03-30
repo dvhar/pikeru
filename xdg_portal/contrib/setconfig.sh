@@ -6,6 +6,8 @@
 xhome="${XDG_CONFIG_HOME:-$HOME/.config}"
 
 findconf(){
+	dt=${XDG_CURRENT_DESKTOP,,}
+	IFS=: read -r dt1 dt2 <<< "$dt"
 	dirs=(
 		${xhome}
 		${XDG_CONFIG_DIRS//:/ }
@@ -18,9 +20,11 @@ findconf(){
 	)
 	for dir in "${dirs[@]}"; do
 		a="${dir}/xdg-desktop-portal/portals.conf"
-		b="${dir}/xdg-desktop-portal/${XDG_CURRENT_DESKTOP,,}-portals.conf"
+		b="${dir}/xdg-desktop-portal/${dt1}-portals.conf"
+		c="${dir}/xdg-desktop-portal/${dt2}-portals.conf"
 		[[ -f "$a" ]] && echo "$a" && return 0
 		[[ -f "$b" ]] && echo "$b" && return 0
+		[[ -f "$c" ]] && echo "$c" && return 0
 	done
 	return 1
 }
