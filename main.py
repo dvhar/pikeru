@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import argparse, configparser
-import os, sys, time
+import os, sys, stat
 import tkinter as tk
 from PIL import Image, ImageTk
 from tkinter.messagebox import askyesno
@@ -305,7 +305,7 @@ class FilePicker():
         base_path = os.path.basename(path)
         name = base_path if len(base_path) < 20 else '...'+base_path[len(base_path)-17:]
         try:
-            if os.path.isfile(path):
+            if path.isfile:
                 ext = os.path.splitext(base_path)[-1].lower()
                 match ext:
                     case '.png'|'.jpg'|'.jpeg'|'.gif'|'.webp'|'.tiff'|'.bmp'|'.ppm':
@@ -329,7 +329,11 @@ class FilePicker():
     def prepare_cached_thumbnail(self, path, imtype, ext):
         md5hash = hashlib.md5(path.encode()).hexdigest()
         cache_path = os.path.join(cache_dir, f'{md5hash}{self.THUMBNAIL_SIZE}{ext}')
-        if os.path.isfile(cache_path):
+        try:
+            st = os.stat(cache_path)
+        except:
+            st = None
+        if st and stat.S_ISREG(st.st_mode) and st.st_mtime > path.time:
             img = Image.open(cache_path)
             img = ImageTk.PhotoImage(img)
             return img
@@ -384,6 +388,7 @@ class FilePicker():
                 idx = start + col
                 if idx < len(self.items) and self.items[idx]:
                     self.items[idx].grid(row=row, column=col)
+                    self.items[idx].path.idx = idx
 
     def on_key_press(self, event):
         if len(self.prev_sel) < 1:
@@ -495,7 +500,7 @@ class FilePicker():
             self.prev_sel.append(clicked)
             self.path_textfield.delete(0, 'end')
             self.path_textfield.insert(0, clicked.path)
-            if os.path.isfile(clicked.path):
+            if clicked.path.isfile:
                 self.size_label.configure(text=get_size(clicked.path))
         else:
             self.size_label.configure(text='')
@@ -656,7 +661,7 @@ class FilePicker():
         self.change_dir(new_dir)
 
     def final_selection(self, selection):
-        if self.select_save and os.path.isfile(selection):
+        if self.select_save and selection.isfile:
             msg = f'Overwrite file {os.path.basename(selection)}?'
             overwrite = askyesno(title='Confirm Overwrite', message=msg)
             if not overwrite:
@@ -783,7 +788,7 @@ class FilePicker():
             path = item.path
             base_name = os.path.basename(path)
             directory = os.path.dirname(path)
-            part, ext = os.path.splitext(base_name) if os.path.isfile(path) else (base_name,'')
+            part, ext = os.path.splitext(base_name) if path.isfile else (base_name,'')
             cmd = cmdtemplate
             cmd = cmd.replace('[path]', f'"{path}"')
             cmd = cmd.replace('[name]', f'"{base_name}"')
@@ -902,13 +907,15 @@ class FakeEvent:
 class PathInfo(str):
     def __new__(cls, path):
         obj = str.__new__(cls, path)
-        obj.time = os.path.getmtime(path)
+        st = os.stat(path)
+        obj.time = st.st_mtime
         obj.lname = os.path.basename(path).lower()
         obj.isdir = False
-        if os.path.isfile(path):
+        obj.isfile = stat.S_ISREG(st.st_mode)
+        if obj.isfile:
             obj.mime = mimetypes.guess_type(path)[0] or 'application/octet-stream'
         else:
-            obj.isdir = os.path.isdir(path)
+            obj.isdir = stat.S_ISDIR(st.st_mode)
         return obj
 
 class CaseConfigParser(configparser.RawConfigParser):
