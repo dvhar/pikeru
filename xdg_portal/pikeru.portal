@@ -1,4 +1,4 @@
 [portal]
 DBusName=org.freedesktop.impl.portal.desktop.pikeru
 Interfaces=org.freedesktop.impl.portal.FileChooser;
-UseIn=i3;wlroots;sway;Wayfire;river;mate;lxde;openbox;unity;pantheon;dwm;KDE;gnome;GNOME;ubuntu;ubuntu:GNOME
+UseIn=i3;wlroots;sway;Wayfire;river;mate;lxde;openbox;unity;pantheon;dwm;KDE;gnome;GNOME;ubuntu;ubuntu:GNOME;XFCE;MATE
