@@ -852,8 +852,7 @@ class FilePicker():
         except:
             need_update = True
         if need_update:
-            print(f'Updating config file. Backing up to {config_file}.old', file=sys.stderr)
-            os.rename(config_file, config_file+'.old')
+            os.unlink(config_file)
             self.write_config(config)
             self.read_config()
             return
@@ -865,7 +864,7 @@ class FilePicker():
         if os.path.isfile(config_file):
             return
         with open(config_file, 'w') as f:
-            print(f'writing config to {config_file}', file=sys.stderr)
+            print(f'Updating config file {config_file}', file=sys.stderr)
             confcomment = '''# Commands from the cmd menu will substitute the follwong values from the selected files before running, as seen in the convert examples. All paths and filenames are already quoted for you.
 # [path] is full file path
 # [name] is the filename without full path
