@@ -100,12 +100,20 @@ configure_file(
     install_dir: join_paths(get_option('datadir'), 'dbus-1', 'services'),
 )
 
-install_data(
-    'pikeru.portal',
-    install_dir: join_paths(get_option('datadir'), 'xdg-desktop-portal', 'portals'),
-)
-install_data(
-    'pikeru.portal',
+cmd = run_command('sh', '-c', 'echo $XDG_CURRENT_DESKTOP')
+xcd = cmd.stdout().strip()
+#configure_file(
+    #configuration : {'xcd' : xcd },
+    #input         : 'pikeru.portal.in',
+    #output        : 'pikeru.portal',
+    #install       : true,
+    #install_dir: join_paths(get_option('datadir'), 'xdg-desktop-portal', 'portals'),
+#)
+configure_file(
+    configuration : {'xcd' : xcd },
+    input         : 'pikeru.portal.in',
+    output        : 'pikeru.portal',
+    install       : true,
     install_dir: '/usr/share/xdg-desktop-portal/portals',
 )
 
