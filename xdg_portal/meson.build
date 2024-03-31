@@ -102,7 +102,7 @@ configure_file(
 
 xcd = get_option('desktop')
 if xcd == ''
-    cmd = run_command('sh', '-c', '[ -z "$XDG_CURRENT_DESKTOP" ] || echo ";$XDG_CURRENT_DESKTOP"')
+    cmd = run_command('sh', 'contrib/add_desktop.sh')
     xcd = cmd.stdout().strip()
 else
     xcd = ';' + xcd

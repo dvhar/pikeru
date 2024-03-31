@@ -28,10 +28,14 @@ First install the dependencies at the bottom of the readme
 ## Install Dependencies
 
 ### Ubuntu:
-`sudo apt install build-essential libsystemd-dev meson ninja-build scdoc python3-tk python3-venv libinih-dev`
+```
+sudo apt install build-essential libsystemd-dev meson ninja-build scdoc python3-tk python3-venv libinih-dev cmake pkg-config
+```
 
 ### Arch:
-`sudo pacman -S base-devel meson ninja scdoc libsystemd tk libinih xdg-desktop-portal`
+```
+sudo pacman -S base-devel meson ninja scdoc libsystemd tk libinih xdg-desktop-portal
+```
 
 ## License
 Pikeru is Public Domain.
