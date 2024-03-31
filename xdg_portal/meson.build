@@ -100,8 +100,13 @@ configure_file(
     install_dir: join_paths(get_option('datadir'), 'dbus-1', 'services'),
 )
 
-cmd = run_command('sh', '-c', 'echo $XDG_CURRENT_DESKTOP')
-xcd = cmd.stdout().strip()
+xcd = get_option('desktop')
+if xcd == ''
+    cmd = run_command('sh', '-c', '[ -z "$XDG_CURRENT_DESKTOP" ] || echo ";$XDG_CURRENT_DESKTOP"')
+    xcd = cmd.stdout().strip()
+else
+    xcd = ';' + xcd
+endif
 #configure_file(
     #configuration : {'xcd' : xcd },
     #input         : 'pikeru.portal.in',
