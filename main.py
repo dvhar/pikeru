@@ -373,6 +373,8 @@ class FilePicker():
                 return
         path = source.path
         basename = os.path.basename(path)
+        if self.bookmarks.__contains__(basename):
+            basename += '_'
         new_bookmark = tk.Button(self.bookmark_frame, text=basename, command=lambda: self.change_dir(path), font=self.widgetfont)
         new_bookmark.path = path
         new_bookmark.grid(row=len(bookmarks), column=0, sticky='news')
