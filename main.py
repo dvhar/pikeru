@@ -185,7 +185,7 @@ class FilePicker():
         return path.mime in self.allowed_mimes
 
     def drop_data(self, event):
-        url: str = event.data
+        url: str = event.data.strip()
         tries = 2
         while tries > 0:
             if url.startswith('http://') or url.startswith('https://'):
@@ -211,6 +211,23 @@ class FilePicker():
                 except:
                     url = url.split('?')[0]
                     tries -= 1
+            else:
+                if url.startswith('file://'):
+                    url = url[7:]
+                if os.path.isfile(url):
+                    dirname = os.path.dirname(url)
+                    if dirname != os.getcwd():
+                        self.dragged_file = url
+                        self.change_dir(dirname)
+                    else:
+                        for item in self.items:
+                            if item and item.path == url:
+                                self.on_click_file(FakeEvent(item))
+                                return
+                    return
+                if os.path.isdir(url):
+                    self.change_dir(url)
+                return
 
     def create_directory(self):
         new_dir_name = simpledialog.askstring("New Directory", "Enter the name of the new directory:")
@@ -285,6 +302,9 @@ class FilePicker():
             label.bind("<Double-Button-1>", self.on_double_click_file)
         if path.nav_id == self.nav_id:
             label.grid(row=path.idx//self.max_cols, column=path.idx%self.max_cols)
+        if hasattr(self, 'dragged_file') and path == self.dragged_file:
+            del self.dragged_file
+            self.on_click_file(FakeEvent(label))
 
     def prep_dir(self, label, path):
         if path.idx >= len(self.items):
