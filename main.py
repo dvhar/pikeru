@@ -451,6 +451,7 @@ class FilePicker():
             elif cly2 > vp2:
                 self.current_y = (newvp2-dif, newvp2)
         else:
+            # print(f'IDX:{clicked.path.idx}  clicked y-value:{cly1,cly2}  frame height:{ifh}', file=sys.stderr)
             if cly1 < vp1:
                 self.canvas.yview_moveto(newvp1)
             elif cly2 > vp2:
