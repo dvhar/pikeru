@@ -73,8 +73,7 @@ executable(
 )
 
 conf_data = configuration_data()
-conf_data.set('libexecdir',
-    join_paths(get_option('prefix'), get_option('libexecdir')))
+conf_data.set('libexecdir', get_option('prefix') / get_option('libexecdir'))
 conf_data.set('systemd_service', '')
 
 systemd = dependency('systemd', required: get_option('systemd'))
@@ -97,35 +96,35 @@ configure_file(
     configuration: conf_data,
     input: 'org.freedesktop.impl.portal.desktop.pikeru.service.in',
     output: '@BASENAME@',
-    install_dir: join_paths(get_option('datadir'), 'dbus-1', 'services'),
+    install_dir: get_option('datadir') / 'dbus-1' / 'services',
 )
 
-xcd = get_option('desktop')
-if xcd == ''
+cur_desktop = get_option('desktop')
+if cur_desktop == ''
     cmd = run_command('sh', 'contrib/add_desktop.sh')
-    xcd = cmd.stdout().strip()
+    cur_desktop = cmd.stdout().strip()
 else
-    xcd = ';' + xcd
+    cur_desktop = ';' + cur_desktop
 endif
-#configure_file(
-    #configuration : {'xcd' : xcd },
-    #input         : 'pikeru.portal.in',
-    #output        : 'pikeru.portal',
-    #install       : true,
-    #install_dir: join_paths(get_option('datadir'), 'xdg-desktop-portal', 'portals'),
-#)
-configure_file(
-    configuration : {'xcd' : xcd },
-    input         : 'pikeru.portal.in',
-    output        : 'pikeru.portal',
-    install       : true,
-    install_dir: '/usr/share/xdg-desktop-portal/portals',
-)
+portal_dirs = ['/usr/share/xdg-desktop-portal/portals']
+portal_dir2 =  get_option('datadir') / 'xdg-desktop-portal' / 'portals'
+if portal_dirs[0] != portal_dir2
+    portal_dirs += [portal_dir2]
+endif
+foreach dir : portal_dirs
+    configure_file(
+        configuration : {'cur_desktop' : cur_desktop },
+        input         : 'pikeru.portal.in',
+        output        : 'pikeru.portal',
+        install       : true,
+        install_dir: dir,
+    )
+endforeach
 
 install_symlink(
     'pikeru-wrapper.sh',
-    install_dir: join_paths(get_option('datadir'), 'xdg-desktop-portal-pikeru'),
-    pointing_to: join_paths(meson.source_root(),'contrib/pikeru-wrapper.sh')
+    install_dir: get_option('datadir') / 'xdg-desktop-portal-pikeru',
+    pointing_to: meson.source_root() / 'contrib/pikeru-wrapper.sh'
 )
 
 scdoc = dependency('scdoc', required: get_option('man-pages'), version: '>= 1.9.7')
@@ -144,7 +143,7 @@ if scdoc.found()
                 'sh', '-c', '@0@ < @INPUT@ > @1@'.format(scdoc.get_pkgconfig_variable('scdoc'), output)
             ],
             install: true,
-            install_dir: join_paths(get_option('mandir'), 'man' + section),
+            install_dir: get_option('mandir') / 'man' + section,
         )
     endforeach
 endif

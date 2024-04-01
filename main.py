@@ -852,7 +852,8 @@ class FilePicker():
         except:
             need_update = True
         if need_update:
-            os.unlink(config_file)
+            print(f'Backing up old config to {config_file}.old', file=sys.stderr)
+            os.rename(config_file, config_file+'.old')
             self.write_config(config)
             self.read_config()
             return
