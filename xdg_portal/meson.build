@@ -72,9 +72,18 @@ executable(
     install_dir: get_option('libexecdir'),
 )
 
+cur_desktop = get_option('desktop')
+if cur_desktop == ''
+    cmd = run_command('sh', 'contrib/add_desktop.sh')
+    cur_desktop = cmd.stdout().strip()
+else
+    cur_desktop = ';' + cur_desktop
+endif
+
 conf_data = configuration_data()
 conf_data.set('libexecdir', get_option('prefix') / get_option('libexecdir'))
 conf_data.set('systemd_service', '')
+conf_data.set('cur_desktop', cur_desktop)
 
 systemd = dependency('systemd', required: get_option('systemd'))
 
@@ -99,27 +108,13 @@ configure_file(
     install_dir: get_option('datadir') / 'dbus-1' / 'services',
 )
 
-cur_desktop = get_option('desktop')
-if cur_desktop == ''
-    cmd = run_command('sh', 'contrib/add_desktop.sh')
-    cur_desktop = cmd.stdout().strip()
-else
-    cur_desktop = ';' + cur_desktop
-endif
-portal_dirs = ['/usr/share/xdg-desktop-portal/portals']
-portal_dir2 =  get_option('datadir') / 'xdg-desktop-portal' / 'portals'
-if portal_dirs[0] != portal_dir2
-    portal_dirs += [portal_dir2]
-endif
-foreach dir : portal_dirs
-    configure_file(
-        configuration : {'cur_desktop' : cur_desktop },
-        input         : 'pikeru.portal.in',
-        output        : 'pikeru.portal',
-        install       : true,
-        install_dir: dir,
-    )
-endforeach
+configure_file(
+    configuration : conf_data,
+    input         : 'pikeru.portal.in',
+    output        : 'pikeru.portal',
+    install       : true,
+    install_dir   : get_option('datadir') / 'xdg-desktop-portal' / 'portals',
+)
 
 install_symlink(
     'pikeru-wrapper.sh',
