@@ -3,22 +3,18 @@ import argparse, configparser
 import os, sys, stat
 import tkinter as tk
 from PIL import Image, ImageTk
-from tkinter.messagebox import askyesno
-from tkinter import simpledialog, messagebox
-from tkinter import ttk
 import threading
 from multiprocessing import cpu_count
 import queue
-import hashlib
-import cv2
 from tkinterdnd2 import TkinterDnD, DND_FILES, DND_TEXT
-import requests
-import subprocess
 import mimetypes
 import inotify.adapters
 import inotify.constants
 import tkinter.font
 import sv_ttk
+import cv2
+import hashlib
+
 SCALE = 1
 
 # https://icon-icons.com
@@ -191,6 +187,7 @@ class FilePicker():
             if url.startswith('http://') or url.startswith('https://'):
                 try:
                     print('url:', url, file=sys.stderr)
+                    import requests
                     response = requests.get(url, allow_redirects=True, timeout=5)
                     print('status code:', response.status_code, file=sys.stderr)
                     filename = os.path.basename(url.split('?')[0])
@@ -230,6 +227,7 @@ class FilePicker():
                 return
 
     def create_directory(self):
+        from tkinter import simpledialog, messagebox
         new_dir_name = simpledialog.askstring("New Directory", "Enter the name of the new directory:")
         if new_dir_name:
             new_dir_path = os.path.join(os.getcwd(), new_dir_name)
@@ -348,7 +346,7 @@ class FilePicker():
 
     def prepare_cached_thumbnail(self, path, imtype, ext):
         md5hash = hashlib.md5(path.encode()).hexdigest()
-        cache_path = os.path.join(cache_dir, f'{md5hash}{self.THUMBNAIL_SIZE}{ext}')
+        cache_path = os.path.join(cache_dir, f'{md5hash}{self.THUMBNAIL_SIZE}.webp')
         try:
             st = os.stat(cache_path)
         except:
@@ -684,6 +682,7 @@ class FilePicker():
         self.change_dir(new_dir)
 
     def final_selection(self, selection):
+        from tkinter.messagebox import askyesno
         if self.select_save and os.path.isfile(selection):
             msg = f'Overwrite file {os.path.basename(selection)}?'
             overwrite = askyesno(title='Confirm Overwrite', message=msg)
@@ -819,6 +818,7 @@ class FilePicker():
             self.reorganize_items()
 
     def run_cmd(self, cmdtemplate: str):
+        import subprocess
         for item in self.prev_sel:
             path = item.path
             base_name = os.path.basename(path)
@@ -872,6 +872,8 @@ class FilePicker():
             sortby = config.get('Settings','sort_by')
             by, asc = sortby.split('_')
             self.SORT = (by.lower(), asc == 'asc')
+            global cache_dir
+            cache_dir = config.get('Settings','cache_dir')
         except:
             need_update = True
         if need_update:
@@ -883,6 +885,7 @@ class FilePicker():
         self.INIT_WIDTH = int(self.INIT_WIDTH * SCALE)
         self.INIT_HEIGHT = int(self.INIT_HEIGHT * SCALE)
         self.THUMBNAIL_SIZE = int(self.THUMBNAIL_SIZE * SCALE)
+        os.makedirs(cache_dir, exist_ok=True)
 
     def write_config(self, oldvals = None):
         if os.path.isfile(config_file):
@@ -911,7 +914,8 @@ class FilePicker():
                     'window_size':'990x720',
                     'thumbnail_size':'140',
                     'theme':'dark',
-                    'sort_by':'name_asc'}
+                    'sort_by':'name_asc',
+                    'cache_dir':cache_dir}
             bkmk = {'Home':home_dir}
             bkmk.update({k:os.path.join(home_dir,k) for k in ["Documents", "Pictures", "Downloads"]})
             f.write(confcomment)
@@ -971,7 +975,6 @@ def main():
     parser.add_argument("-p", "--path", default=os.getcwd(), help="path of initial directory")
     parser.add_argument("-i", "--mime_list", default=None, help="list of allowed mime types. Can be empty.")
     args = parser.parse_args()
-    os.makedirs(cache_dir, exist_ok=True)
     
     picker = FilePicker(args)
     picker.run()
