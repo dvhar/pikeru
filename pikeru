@@ -17,12 +17,12 @@ TITLE="File Picker"
 MODE="files"
 MIME_LIST=""
 update=0
-xconfig="$HOME/.config/xdg-desktop-portal"
+xconfig="${XDG_CONFIG_HOME:-$HOME/.config}/xdg-desktop-portal"
 
 usage(){
 cat << EOF
 $0 [ -t title -m mode -p path -i mimes -u -h -x ]
-  regular usage options:
+  usage options:
 	-t <title>
 		Set the title for the filepicker window
 	-m <mode>
@@ -38,21 +38,31 @@ $0 [ -t title -m mode -p path -i mimes -u -h -x ]
 		Update the python dependencies. Useful if deps were added after a git pull
 	-x
 		Configure xdg-desktop-portal to use pikeru. This installs portals.conf in ${xconfig}.
-		This is not necessary if installed with the install.sh script.
+		This can be reverted with '$(basename $0) -r'
+	-r
+		Revert xdg-portal to use your old filepicker. You can turn pikeru back on with '$(basename $0) -x'
 EOF
 exit
 }
 
 portalconfig(){
 	bash ./xdg_portal/contrib/setconfig.sh
-	echo "XDG portal has been configured to use pikeru."
-	echo "If using firefox, make sure to set GTK_USE_PORTAL=1,"\
-		"and in 'about:config', set 'widget.use-xdg-desktop-portal.file-picker' to '1'."
+	exit
+}
+
+remove(){
+	echo 'Pikeru filepicker disabled. Re-enable with -x'
+	if [ -r $xconfig/portals.conf.orig ]; then
+		mv $xconfig/portals.conf.orig $xconfig/portals.conf
+	else
+		rm $xconfig/portals.conf
+	fi
+	systemctl --user restart xdg-desktop-portal.service
 	exit
 }
 
 [ $debug = 1 ] && echo "launcher args: $*" >> $logfile
-while getopts "e:t:m:p:i:uhx" opt; do
+while getopts "e:t:m:p:i:uhxr" opt; do
   case $opt in
     e)
       PARENT="$OPTARG"
@@ -74,6 +84,9 @@ while getopts "e:t:m:p:i:uhx" opt; do
       ;;
     h)
       usage
+      ;;
+    r)
+      remove
       ;;
     x)
       portalconfig

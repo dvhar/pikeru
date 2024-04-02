@@ -1,13 +1,13 @@
 #!/bin/bash
-# This configures the xdg portal for your currnet user to use pikeru.
-# It does it by finding the portal config you're currently using, copying it to
-# a higher-precedence location, and adding or changing a line for pikeru.
+# This configures the xdg portal for your currnet user to use pikeru. It does
+# it by finding your previous portal config, copying it to a higher-precedence
+# location, and adding or changing a line for pikeru.
 
 xhome="${XDG_CONFIG_HOME:-$HOME/.config}"
 
 findconf(){
-	dt=${XDG_CURRENT_DESKTOP,,}
-	IFS=: read -r dt1 dt2 <<< "$dt"
+	xcd=${XDG_CURRENT_DESKTOP,,}
+	desktops=(${xcd//:/ })
 	dirs=(
 		${xhome}
 		${XDG_CONFIG_DIRS//:/ }
@@ -20,11 +20,11 @@ findconf(){
 	)
 	for dir in "${dirs[@]}"; do
 		a="${dir}/xdg-desktop-portal/portals.conf"
-		b="${dir}/xdg-desktop-portal/${dt1}-portals.conf"
-		c="${dir}/xdg-desktop-portal/${dt2}-portals.conf"
-		[[ -f "$a" ]] && echo "$a" && return 0
-		[[ -f "$b" ]] && echo "$b" && return 0
-		[[ -f "$c" ]] && echo "$c" && return 0
+		[ -f "$a" ] && ! grep -q pikeru "$a" && echo "$a" && return 0
+		for dt in "${desktops[@]}"; do
+			b="${dir}/xdg-desktop-portal/${dt}-portals.conf"
+			[ -f "$b" ] && ! grep -q pikeru "$b" && echo "$b" && return 0
+		done
 	done
 	return 1
 }
@@ -33,14 +33,14 @@ xdir="$xhome/xdg-desktop-portal"
 portalfile="$xdir/portals.conf"
 mkdir -p "$xdir"
 
-if [[ -f "$portalfile" ]]; then
+if [ -f "$portalfile" ] && ! grep -q pikeru "$portalfile" ; then
 	mv "$portalfile" "${portalfile}.orig"
 	origconf="${portalfile}.orig"
 else
 	origconf="$(findconf)"
 fi
 
-if [[ ! -z "$origconf" ]]; then
+if [ ! -z "$origconf" ]; then
 	sed '/FileChooser/d' "$origconf" > "$portalfile"
 	echo 'org.freedesktop.impl.portal.FileChooser=pikeru' >> "$portalfile"
 else
@@ -51,7 +51,5 @@ org.freedesktop.impl.portal.FileChooser=pikeru
 EOF
 fi
 
-[[ "$origconf" =~ orig$ ]] && how="renaming $origconf to $(basename $portalfile)" || how='deleting it'
-echo -e "Your new xdg-desktop-portal config is $portalfile.\nYou can revert by ${how}"
-
 systemctl --user restart xdg-desktop-portal.service
+echo -e "XDG portal has been configured to use pikeru. Config file is ${portalfile}.\nYou can revert it with 'pikeru -r'"

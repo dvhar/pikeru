@@ -10,14 +10,14 @@ meson setup \
   --auto-features enabled \
   --wrap-mode     nodownload \
   -D              b_pie=true \
-  -Dsd-bus-provider=libsystemd build
-ninja -C build
-ninja -C build install
+  -Dsd-bus-provider=libsystemd build || exit 1
+ninja -C build || exit 1
+ninja -C build install || exit 1
 
 exe=/usr/local/bin/pikeru
 [ -f "$exe" ] || sudo ln -s `realpath ../pikeru` $exe
 
 systemctl --user daemon-reload
-systemctl --user restart xdg-desktop-portal-pikeru.service
+systemctl --user restart xdg-desktop-portal-pikeru.service || exit 1
 echo '-----------------------------'
 bash ./contrib/setconfig.sh
