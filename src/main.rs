@@ -6,7 +6,9 @@ use iced::{
     Application, Command, Length, Element,
     widget::{
         image, image::Handle, Column, Row, text, responsive,
-        Scrollable, scrollable::{Direction,Properties}
+        Scrollable, scrollable::{Direction,Properties},
+        Button, TextInput,
+        column, row,
     },
     futures::{
         channel::mpsc,
@@ -35,7 +37,7 @@ struct FilePicker {
     items: Vec<Item>,
     thumb_sender: Option<mpsc::Sender<Item>>,
     nproc: usize,
-    dir: String,
+    dirs: Vec<String>,
     lastidx: usize,
 }
 
@@ -74,7 +76,9 @@ impl Application for FilePicker {
                 items: Default::default(),
                 thumb_sender: None,
                 nproc: num_cpus::get(),
-                dir: "/home/d/sync/docs/pics".to_string(),
+                dirs: vec![
+                    "/home/d/sync/docs/pics".into(),
+                ],
                 lastidx: 0,
             },
             Command::none(),
@@ -105,7 +109,7 @@ impl Application for FilePicker {
                 self.items[i] = doneitem;
             },
             Message::LoadDir => {
-                self.items = ls(self.dir.as_str());
+                self.items = ls(&self.dirs);
                 self.lastidx = self.nproc.min(self.items.len());
                 for i in 0..self.lastidx {
                     let item = mem::take(&mut self.items[i]);
@@ -151,10 +155,25 @@ impl Application for FilePicker {
                 }
                 rows = rows.push(row);
             }
-            Scrollable::new(rows)
+            let ctrlbar = column![
+                row![
+                    Button::new("Cmd").width(80),
+                    Button::new("View").width(80),
+                    Button::new("New Dir").width(80),
+                    Button::new("Up Dir").width(80),
+                    Button::new("Cancel").width(100),
+                    Button::new("Open").width(100)
+                ].spacing(2),
+                TextInput::new("directory or file path", self.dirs[0].as_str()),
+            ].align_items(iced::Alignment::End).width(Length::Fill);
+            let content = Scrollable::new(rows)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .direction(Direction::Vertical(Properties::new())).into()
+                .direction(Direction::Vertical(Properties::new()));
+            column![
+                ctrlbar,
+                content
+            ].into()
         }).into()
     }
 }
@@ -166,7 +185,15 @@ impl Item {
         if let Some(h) = &self.handle {
             c = c.push(image(h.clone()));
         }
-        c.push(text(self.path.as_str())).into()
+        let mut label = self.path.as_str();
+        if self.path.len() > 16 {
+            label = &label[(label.len().max(16)-16)..label.len()];
+            let mut shortened = ['.' as u8; 19];
+            shortened[3..3+label.len()].copy_from_slice(label.as_bytes());
+            c.push(text(unsafe{std::str::from_utf8_unchecked(&shortened)})).into()
+        } else {
+            c.push(text(label)).into()
+        }
     }
 
     fn new(pth: PathBuf, idx: usize) -> Self {
@@ -212,11 +239,16 @@ impl Item {
     }
 }
 
-fn ls(dir: &str) -> Vec<Item> {
-    let list = std::fs::read_dir(dir).unwrap();
-    let ret: Vec<_> = list.enumerate().map(|(i,f)| {
-        let path = f.unwrap().path();
-        Item::new(path, i)
-    }).collect();
+fn ls(dirs: &Vec<String>) -> Vec<Item> {
+    let mut ret = vec![];
+    for dir in dirs {
+        let list = std::fs::read_dir(dir.as_str()).unwrap();
+        list.for_each(|f| {
+            let path = f.unwrap().path();
+            let idx = ret.len();
+            ret.push(Item::new(path, idx));
+        });
+    }
+    eprintln!("Loading {} items", ret.len());
     ret
 }
