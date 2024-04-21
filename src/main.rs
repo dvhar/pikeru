@@ -1,10 +1,12 @@
 use img::load_from_memory;
 use num_cpus;
 use iced::{
+    alignment,
     executor,
     subscription,
     Application, Command, Length, Element,
     widget::{
+        mouse_area,
         image, image::Handle, Column, Row, text, responsive,
         Scrollable, scrollable::{Direction,Properties},
         Button, TextInput,
@@ -31,13 +33,16 @@ enum Message {
     LoadDir,
     Init(mpsc::Sender<Item>),
     NextItem(Item),
+    ItemClick(usize),
+    TxtInput(String),
 }
 
 struct FilePicker {
     items: Vec<Item>,
+    dirs: Vec<String>,
+    inputbar: String,
     thumb_sender: Option<mpsc::Sender<Item>>,
     nproc: usize,
-    dirs: Vec<String>,
     lastidx: usize,
 }
 
@@ -80,6 +85,7 @@ impl Application for FilePicker {
                     "/home/d/sync/docs/pics".into(),
                 ],
                 lastidx: 0,
+                inputbar: "/home/d/sync/docs/pics".into(),
             },
             Command::none(),
         )
@@ -116,6 +122,8 @@ impl Application for FilePicker {
                     tokio::task::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone()));
                 }
             },
+            Message::ItemClick(idx) => eprintln!("clicked {}", self.items[idx].path),
+            Message::TxtInput(txt) => self.inputbar = txt,
         }
         Command::none()
     }
@@ -157,14 +165,16 @@ impl Application for FilePicker {
             }
             let ctrlbar = column![
                 row![
-                    Button::new("Cmd").width(80),
-                    Button::new("View").width(80),
-                    Button::new("New Dir").width(80),
-                    Button::new("Up Dir").width(80),
-                    Button::new("Cancel").width(100),
-                    Button::new("Open").width(100)
+                    top_button("Cmd", 80.0),
+                    top_button("View", 80.0),
+                    top_button("New Dir", 80.0),
+                    top_button("Up Dir", 80.0),
+                    top_button("Cancel", 100.0),
+                    top_button("Open", 100.0)
                 ].spacing(2),
-                TextInput::new("directory or file path", self.dirs[0].as_str()),
+                TextInput::new("directory or file path", self.inputbar.as_str())
+                    .on_input(Message::TxtInput)
+                    .on_paste(Message::TxtInput),
             ].align_items(iced::Alignment::End).width(Length::Fill);
             let content = Scrollable::new(rows)
                 .width(Length::Fill)
@@ -178,22 +188,33 @@ impl Application for FilePicker {
     }
 }
 
+fn top_button(txt: &str, size: f32) -> Element<'static, Message> {
+    Button::new(text(txt).width(size).horizontal_alignment(alignment::Horizontal::Center)).into()
+}
+
 impl Item {
 
     fn display(&self) -> Element<'static, Message> {
-        let mut c = Column::new().align_items(iced::Alignment::Center).width(160);
+        let mut c = Column::new()
+            .align_items(iced::Alignment::Center)
+            .width(160);
         if let Some(h) = &self.handle {
             c = c.push(image(h.clone()));
         }
         let mut label = self.path.as_str();
-        if self.path.len() > 16 {
+        c = if self.path.len() > 16 {
             label = &label[(label.len().max(16)-16)..label.len()];
             let mut shortened = ['.' as u8; 19];
             shortened[3..3+label.len()].copy_from_slice(label.as_bytes());
             c.push(text(unsafe{std::str::from_utf8_unchecked(&shortened)})).into()
         } else {
             c.push(text(label)).into()
-        }
+        };
+        mouse_area(c)
+            .on_press(Message::ItemClick(self.idx))
+            .on_right_press(Message::ItemClick(self.idx))
+            .on_middle_press(Message::ItemClick(self.idx))
+            .into()
     }
 
     fn new(pth: PathBuf, idx: usize) -> Self {
