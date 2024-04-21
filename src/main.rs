@@ -1,12 +1,16 @@
 use img::load_from_memory;
 use num_cpus;
 use iced::{
+    color,
     alignment,
     executor,
     subscription,
     Application, Command, Length, Element,
+    Background,
+    theme::Container,
     widget::{
-        mouse_area,
+        container::{Appearance, StyleSheet},
+        mouse_area, container,
         image, image::Handle, Column, Row, text, responsive,
         Scrollable, scrollable::{Direction,Properties},
         Button, TextInput,
@@ -22,7 +26,9 @@ use tokio::{fs::File, io::AsyncReadExt};
 use std::{
     path::PathBuf,
     mem,
+    process,
 };
+
 
 fn main() -> iced::Result {
     FilePicker::run(iced::Settings::default())
@@ -31,6 +37,8 @@ fn main() -> iced::Result {
 #[derive(Debug, Clone)]
 enum Message {
     LoadDir,
+    Open,
+    Cancel,
     Init(mpsc::Sender<Item>),
     NextItem(Item),
     ItemClick(usize),
@@ -64,8 +72,9 @@ enum FType {
 struct Item {
     path: String,
     ftype: FType,
-    idx: usize,
     handle: Option<Handle>,
+    idx: usize,
+    sel: bool,
 }
 
 
@@ -85,7 +94,7 @@ impl Application for FilePicker {
                     "/home/d/sync/docs/pics".into(),
                 ],
                 lastidx: 0,
-                inputbar: "/home/d/sync/docs/pics".into(),
+                inputbar: Default::default(),
             },
             Command::none(),
         )
@@ -115,6 +124,7 @@ impl Application for FilePicker {
                 self.items[i] = doneitem;
             },
             Message::LoadDir => {
+                self.inputbar = self.dirs[0].clone();
                 self.items = ls(&self.dirs);
                 self.lastidx = self.nproc.min(self.items.len());
                 for i in 0..self.lastidx {
@@ -122,8 +132,15 @@ impl Application for FilePicker {
                     tokio::task::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone()));
                 }
             },
-            Message::ItemClick(idx) => eprintln!("clicked {}", self.items[idx].path),
+            Message::ItemClick(idx) => {
+                self.items[idx].sel = true;
+            },
             Message::TxtInput(txt) => self.inputbar = txt,
+            Message::Open => {
+                self.items.iter().filter(|item| item.sel ).for_each(|item| println!("{}", item.path));
+                process::exit(0);
+            },
+            Message::Cancel => process::exit(0),
         }
         Command::none()
     }
@@ -149,7 +166,7 @@ impl Application for FilePicker {
 
     fn view(&self) -> iced::Element<'_, Self::Message> {
         responsive(|size| {
-            let maxcols = (size.width / 160.0) as usize;
+            let maxcols = (size.width / 160.0).max(1.0) as usize;
             let num_rows = self.items.len() / maxcols + if self.items.len() % maxcols != 0 { 1 } else { 0 };
             let mut rows = Column::new();
             for i in 0..num_rows {
@@ -165,12 +182,12 @@ impl Application for FilePicker {
             }
             let ctrlbar = column![
                 row![
-                    top_button("Cmd", 80.0),
-                    top_button("View", 80.0),
-                    top_button("New Dir", 80.0),
-                    top_button("Up Dir", 80.0),
-                    top_button("Cancel", 100.0),
-                    top_button("Open", 100.0)
+                    top_button("Cmd", 80.0, Message::Cancel),
+                    top_button("View", 80.0, Message::Cancel),
+                    top_button("New Dir", 80.0, Message::Cancel),
+                    top_button("Up Dir", 80.0, Message::Cancel),
+                    top_button("Cancel", 100.0, Message::Cancel),
+                    top_button("Open", 100.0, Message::Open)
                 ].spacing(2),
                 TextInput::new("directory or file path", self.inputbar.as_str())
                     .on_input(Message::TxtInput)
@@ -188,30 +205,37 @@ impl Application for FilePicker {
     }
 }
 
-fn top_button(txt: &str, size: f32) -> Element<'static, Message> {
-    Button::new(text(txt).width(size).horizontal_alignment(alignment::Horizontal::Center)).into()
+fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
+    Button::new(text(txt)
+                .width(size)
+                .horizontal_alignment(alignment::Horizontal::Center))
+        .on_press(msg).into()
 }
 
 impl Item {
 
     fn display(&self) -> Element<'static, Message> {
-        let mut c = Column::new()
+        let mut col = Column::new()
             .align_items(iced::Alignment::Center)
             .width(160);
         if let Some(h) = &self.handle {
-            c = c.push(image(h.clone()));
+            col = col.push(image(h.clone()));
         }
-        let mut label = self.path.as_str();
-        c = if self.path.len() > 16 {
+        let mut label = self.path.rsplitn(2,'/').next().unwrap();
+        col = if self.path.len() > 16 {
             label = &label[(label.len().max(16)-16)..label.len()];
             let mut shortened = ['.' as u8; 19];
             shortened[3..3+label.len()].copy_from_slice(label.as_bytes());
-            c.push(text(unsafe{std::str::from_utf8_unchecked(&shortened)})).into()
+            col.push(text(unsafe{std::str::from_utf8_unchecked(&shortened)})).into()
         } else {
-            c.push(text(label)).into()
+            col.push(text(label)).into()
         };
-        mouse_area(c)
-            .on_press(Message::ItemClick(self.idx))
+        let clickable = if self.sel {
+            mouse_area(container(col).style(get_sel_theme()))
+        } else {
+            mouse_area(col)
+        };
+        clickable.on_press(Message::ItemClick(self.idx))
             .on_right_press(Message::ItemClick(self.idx))
             .on_middle_press(Message::ItemClick(self.idx))
             .into()
@@ -228,6 +252,7 @@ impl Item {
             ftype,
             idx,
             handle: None,
+            sel: false,
         }
     }
 
@@ -255,7 +280,6 @@ impl Item {
                 };
             }
         }
-        self.path = self.path.rsplitn(2,'/').next().unwrap().to_string();
         chan.send(self).await.unwrap();
     }
 }
@@ -270,6 +294,23 @@ fn ls(dirs: &Vec<String>) -> Vec<Item> {
             ret.push(Item::new(path, idx));
         });
     }
-    eprintln!("Loading {} items", ret.len());
     ret
 }
+
+pub struct SelectedTheme;
+impl StyleSheet for SelectedTheme {
+    type Style = iced::Theme;
+    fn appearance(&self, _style: &Self::Style) -> Appearance {
+        let mut appearance = Appearance {
+            ..Appearance::default()
+        };
+        appearance.background = Some(Background::Color(color!(0x990000)));
+        appearance
+    }
+}
+pub fn get_sel_theme() -> Container {
+    Container::Custom(
+        Box::new(SelectedTheme) as Box<dyn StyleSheet<Style = iced::Theme>>
+    )
+}
+
