@@ -27,8 +27,10 @@ use std::{
     path::PathBuf,
     mem,
     process,
+    sync::Arc,
 };
 
+const THUMBSIZE: f32 = 160.0;
 
 fn main() -> iced::Result {
     FilePicker::run(iced::Settings::default())
@@ -52,6 +54,7 @@ struct FilePicker {
     thumb_sender: Option<mpsc::Sender<Item>>,
     nproc: usize,
     lastidx: usize,
+    icons: Arc<Icons>,
 }
 
 enum SubState {
@@ -77,6 +80,12 @@ struct Item {
     sel: bool,
 }
 
+struct Icons {
+    folder: Handle,
+    doc: Handle,
+    unknown: Handle,
+    error: Handle,
+}
 
 impl Application for FilePicker {
     type Executor = executor::Default;
@@ -95,6 +104,7 @@ impl Application for FilePicker {
                 ],
                 lastidx: 0,
                 inputbar: Default::default(),
+                icons: Arc::new(Icons::new()),
             },
             Command::none(),
         )
@@ -118,7 +128,7 @@ impl Application for FilePicker {
                 self.lastidx += 1;
                 if self.lastidx < self.items.len() {
                     let nextitem = mem::take(&mut self.items[self.lastidx]);
-                    tokio::task::spawn(nextitem.load(self.thumb_sender.as_ref().unwrap().clone()));
+                    tokio::task::spawn(nextitem.load(self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone()));
                 }
                 let i = doneitem.idx;
                 self.items[i] = doneitem;
@@ -129,7 +139,7 @@ impl Application for FilePicker {
                 self.lastidx = self.nproc.min(self.items.len());
                 for i in 0..self.lastidx {
                     let item = mem::take(&mut self.items[i]);
-                    tokio::task::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone()));
+                    tokio::task::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone()));
                 }
             },
             Message::ItemClick(idx) => {
@@ -166,7 +176,7 @@ impl Application for FilePicker {
 
     fn view(&self) -> iced::Element<'_, Self::Message> {
         responsive(|size| {
-            let maxcols = (size.width / 160.0).max(1.0) as usize;
+            let maxcols = (size.width / THUMBSIZE).max(1.0) as usize;
             let num_rows = self.items.len() / maxcols + if self.items.len() % maxcols != 0 { 1 } else { 0 };
             let mut rows = Column::new();
             for i in 0..num_rows {
@@ -217,12 +227,12 @@ impl Item {
     fn display(&self) -> Element<'static, Message> {
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
-            .width(160);
+            .width(THUMBSIZE);
         if let Some(h) = &self.handle {
             col = col.push(image(h.clone()));
         }
         let mut label = self.path.rsplitn(2,'/').next().unwrap();
-        col = if self.path.len() > 16 {
+        col = if label.len() > 16 {
             label = &label[(label.len().max(16)-16)..label.len()];
             let mut shortened = ['.' as u8; 19];
             shortened[3..3+label.len()].copy_from_slice(label.as_bytes());
@@ -256,9 +266,11 @@ impl Item {
         }
     }
 
-    async fn load(mut self, mut chan: mpsc::Sender<Item>) {
+    async fn load(mut self, mut chan: mpsc::Sender<Item>, icons: Arc<Icons>) {
         match self.ftype {
-            FType::Dir => {},
+            FType::Dir => {
+                self.handle = Some(icons.folder.clone());
+            },
             _ => {
                 let ext = match self.path.rsplitn(2,'.').next() {
                     Some(s) => s,
@@ -266,21 +278,64 @@ impl Item {
                 };
                 self.ftype = match ext.to_lowercase().as_str() {
                     "png"|"jpg"|"jpeg"|"bmp"|"tiff"|"gif"|"webp" => {
-                        let mut file = File::open(self.path.as_str()).await.unwrap();
-                        let mut buffer = Vec::new();
-                        file.read_to_end(&mut buffer).await.unwrap();
-                        let img = load_from_memory(buffer.as_ref()).unwrap();
-                        let thumb = img.thumbnail(160, 160);
-                        let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
-                        let pixels = rgba.as_raw();
-                        self.handle = Some(Handle::from_pixels(w, h, pixels.clone()));
-                        FType::Image
+                        let file = File::open(self.path.as_str()).await;
+                        match file {
+                            Ok(mut file) => {
+                                let mut buffer = Vec::new();
+                                file.read_to_end(&mut buffer).await.unwrap_or(0);
+                                let img = load_from_memory(buffer.as_ref());
+                                match img {
+                                    Ok(img) => {
+                                        let thumb = img.thumbnail(THUMBSIZE as u32, THUMBSIZE as u32);
+                                        let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
+                                        let pixels = rgba.as_raw();
+                                        self.handle = Some(Handle::from_pixels(w, h, pixels.clone()));
+                                        FType::Image
+                                    },
+                                    Err(e) => {
+                                        eprintln!("Error loading image {}: {}", self.path, e);
+                                        self.handle = Some(icons.error.clone());
+                                        FType::File
+                                    },
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("Error reading {}: {}", self.path, e);
+                                self.handle = Some(icons.error.clone());
+                                FType::File
+                            },
+                        }
                     },
-                    _ => FType::File
+                    "txt"|"pdf"|"doc"|"docx"|"xls"|"xlsx" => {
+                        self.handle = Some(icons.doc.clone());
+                        FType::File
+                    },
+                    _ => {
+                        self.handle = Some(icons.unknown.clone());
+                        FType::File
+                    },
                 };
             }
         }
         chan.send(self).await.unwrap();
+    }
+}
+
+impl Icons {
+    fn new() -> Self {
+        Self {
+            folder: Self::init(include_bytes!("../assets/folder.png")),
+            unknown:  Self::init(include_bytes!("../assets/unknown.png")),
+            doc:  Self::init(include_bytes!("../assets/document.png")),
+            error:  Self::init(include_bytes!("../assets/error.png")),
+        }
+    }
+    fn init(img_bytes: &[u8]) -> Handle {
+        let img = load_from_memory(img_bytes).unwrap();
+        let thumb = img.thumbnail((THUMBSIZE * 0.9) as u32, (THUMBSIZE * 0.9) as u32);
+        let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
+        let pixels = rgba.as_raw();
+        Handle::from_pixels(w, h, pixels.clone())
     }
 }
 
