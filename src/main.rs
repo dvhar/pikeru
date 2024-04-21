@@ -22,12 +22,15 @@ use iced::{
         StreamExt,
     }
 };
-use tokio::{fs::File, io::AsyncReadExt};
+use tokio::{
+    fs::File, io::AsyncReadExt,
+};
 use std::{
     path::PathBuf,
     mem,
     process,
     sync::Arc,
+    time::{Instant,Duration},
 };
 
 const THUMBSIZE: f32 = 160.0;
@@ -55,6 +58,7 @@ struct FilePicker {
     nproc: usize,
     lastidx: usize,
     icons: Arc<Icons>,
+    clicktimer: ClickTimer,
 }
 
 enum SubState {
@@ -105,6 +109,7 @@ impl Application for FilePicker {
                 lastidx: 0,
                 inputbar: Default::default(),
                 icons: Arc::new(Icons::new()),
+                clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
             },
             Command::none(),
         )
@@ -142,10 +147,13 @@ impl Application for FilePicker {
                     tokio::task::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone()));
                 }
             },
-            Message::ItemClick(idx) => {
-                self.items[idx].sel = true;
-            },
             Message::TxtInput(txt) => self.inputbar = txt,
+            Message::ItemClick(idx) => {
+                match self.clicktimer.click(idx) {
+                    ClickType::Single => self.items[idx].sel = true,
+                    ClickType::Double => return self.update(Message::Open),
+                }
+            },
             Message::Open => {
                 self.items.iter().filter(|item| item.sel ).for_each(|item| println!("{}", item.path));
                 process::exit(0);
@@ -350,6 +358,28 @@ fn ls(dirs: &Vec<String>) -> Vec<Item> {
         });
     }
     ret
+}
+
+enum ClickType {
+    Single,
+    Double,
+}
+struct ClickTimer {
+    idx: usize,
+    time: Instant,
+}
+impl ClickTimer {
+    fn click(self: &mut Self, idx: usize) -> ClickType {
+        let time = Instant::now();
+        if idx != self.idx || time - self.time > Duration::from_millis(300) {
+            self.idx = idx;
+            self.time = time;
+            return ClickType::Single;
+        }
+        self.idx = idx;
+        self.time = time;
+        return ClickType::Double;
+    }
 }
 
 pub struct SelectedTheme;
