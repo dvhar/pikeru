@@ -1,20 +1,15 @@
 use img::load_from_memory;
 use num_cpus;
+use itertools::Itertools;
 use iced::{
-    color,
-    alignment,
-    executor,
-    subscription,
-    Application, Command, Length, Element,
-    Background,
-    theme::Container,
+    color, Background, alignment, executor, subscription,
+    Application, Command, Length, Element, theme::Container,
     widget::{
         container::{Appearance, StyleSheet},
-        mouse_area, container,
         image, image::Handle, Column, Row, text, responsive,
         Scrollable, scrollable::{Direction,Properties},
         Button, TextInput,
-        column, row,
+        column, row, mouse_area, container,
     },
     futures::{
         channel::mpsc,
@@ -26,7 +21,7 @@ use tokio::{
     fs::File, io::AsyncReadExt,
 };
 use std::{
-    path::PathBuf,
+    path::{PathBuf,Path},
     mem,
     process,
     sync::Arc,
@@ -44,6 +39,7 @@ enum Message {
     LoadDir,
     Open,
     Cancel,
+    UpDir,
     Init(mpsc::Sender<Item>),
     NextItem(Item),
     ItemClick(usize),
@@ -147,6 +143,11 @@ impl Application for FilePicker {
                     tokio::task::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone()));
                 }
             },
+            Message::UpDir => {
+                self.dirs = self.dirs.iter().map(|dir| Path::new(dir.as_str()).parent().unwrap()
+                                                 .to_string_lossy().into_owned()).unique_by(|s|s.to_owned()).collect();
+                return self.update(Message::LoadDir);
+            },
             Message::TxtInput(txt) => self.inputbar = txt,
             Message::ItemClick(idx) => {
                 match self.clicktimer.click(idx) {
@@ -155,8 +156,20 @@ impl Application for FilePicker {
                 }
             },
             Message::Open => {
-                self.items.iter().filter(|item| item.sel ).for_each(|item| println!("{}", item.path));
-                process::exit(0);
+                let sels: Vec<&Item> = self.items.iter().filter(|item| item.sel ).collect();
+                if sels.len() != 0 {
+                    match sels[0].ftype {
+                        FType::Dir => {
+                            self.dirs = sels.iter().filter_map(|item| match item.ftype {
+                                FType::Dir => Some(item.path.clone()), _ => None}).collect();
+                            return self.update(Message::LoadDir);
+                        },
+                        _ => {
+                            sels.iter().for_each(|item| println!("{}", item.path));
+                            process::exit(0);
+                        }
+                    }
+                }
             },
             Message::Cancel => process::exit(0),
         }
@@ -203,7 +216,7 @@ impl Application for FilePicker {
                     top_button("Cmd", 80.0, Message::Cancel),
                     top_button("View", 80.0, Message::Cancel),
                     top_button("New Dir", 80.0, Message::Cancel),
-                    top_button("Up Dir", 80.0, Message::Cancel),
+                    top_button("Up Dir", 80.0, Message::UpDir),
                     top_button("Cancel", 100.0, Message::Cancel),
                     top_button("Open", 100.0, Message::Open)
                 ].spacing(2),
@@ -350,11 +363,11 @@ impl Icons {
 fn ls(dirs: &Vec<String>) -> Vec<Item> {
     let mut ret = vec![];
     for dir in dirs {
-        let list = std::fs::read_dir(dir.as_str()).unwrap();
-        list.for_each(|f| {
-            let path = f.unwrap().path();
+        let mut entries: Vec<_> = std::fs::read_dir(dir.as_str()).unwrap().map(|f| f.unwrap().path()).collect();
+        entries.sort_unstable();
+        entries.iter().for_each(|path| {
             let idx = ret.len();
-            ret.push(Item::new(path, idx));
+            ret.push(Item::new(path.into(), idx));
         });
     }
     ret
