@@ -4,6 +4,11 @@ use itertools::Itertools;
 use iced::{
     color, Background, alignment, executor, subscription,
     Application, Command, Length, Element, theme::Container,
+    mouse::Event::ButtonPressed,
+    mouse::Button::{Back,Forward},
+    keyboard::Event::{KeyPressed,KeyReleased},
+    keyboard::Key,
+    keyboard::key::Named::{Shift,Control},
     widget::{
         container::{Appearance, StyleSheet},
         image, image::Handle, Column, Row, text, responsive,
@@ -15,7 +20,9 @@ use iced::{
         channel::mpsc,
         sink::SinkExt,
         StreamExt,
-    }
+    },
+    event::{self, Event::{Mouse,Keyboard}},
+
 };
 use tokio::{
     fs::File, io::AsyncReadExt,
@@ -44,6 +51,8 @@ enum Message {
     NextItem(Item),
     ItemClick(usize),
     TxtInput(String),
+    Shift(bool),
+    Ctrl(bool),
 }
 
 struct FilePicker {
@@ -55,6 +64,8 @@ struct FilePicker {
     lastidx: usize,
     icons: Arc<Icons>,
     clicktimer: ClickTimer,
+    ctrl_pressed: bool,
+    shift_pressed: bool,
 }
 
 enum SubState {
@@ -106,6 +117,8 @@ impl Application for FilePicker {
                 inputbar: Default::default(),
                 icons: Arc::new(Icons::new()),
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
+                ctrl_pressed: false,
+                shift_pressed: true,
             },
             Command::none(),
         )
@@ -125,6 +138,9 @@ impl Application for FilePicker {
                 self.thumb_sender = Some(chan);
                 return self.update(Message::LoadDir);
             },
+            Message::TxtInput(txt) => self.inputbar = txt,
+            Message::Ctrl(pressed) => self.ctrl_pressed = pressed,
+            Message::Shift(pressed) => self.shift_pressed = pressed,
             Message::NextItem(doneitem) => {
                 self.lastidx += 1;
                 if self.lastidx < self.items.len() {
@@ -148,7 +164,6 @@ impl Application for FilePicker {
                                                  .to_string_lossy().into_owned()).unique_by(|s|s.to_owned()).collect();
                 return self.update(Message::LoadDir);
             },
-            Message::TxtInput(txt) => self.inputbar = txt,
             Message::ItemClick(idx) => {
                 match self.clicktimer.click(idx) {
                     ClickType::Single => self.items[idx].sel = true,
@@ -178,7 +193,7 @@ impl Application for FilePicker {
 
     fn subscription(&self) -> iced::Subscription<Self::Message> {
         let mut state = SubState::Starting;
-        subscription::channel("", 100, |mut messager| async move {
+        let items = subscription::channel("", 100, |mut messager| async move {
             loop {
                 match &mut state {
                     SubState::Starting => {
@@ -192,7 +207,19 @@ impl Application for FilePicker {
                     },
                 }
             }
-        })
+        });
+        let events = event::listen_with(|evt, _| {
+            match evt {
+                Mouse(ButtonPressed(Back)) => Some(Message::UpDir),
+                Mouse(ButtonPressed(Forward)) => None,
+                Keyboard(KeyPressed{ key: Key::Named(Shift), .. }) => Some(Message::Shift(true)),
+                Keyboard(KeyReleased{ key: Key::Named(Shift), .. }) => Some(Message::Shift(false)),
+                Keyboard(KeyPressed{ key: Key::Named(Control), .. }) => Some(Message::Ctrl(true)),
+                Keyboard(KeyReleased{ key: Key::Named(Control), .. }) => Some(Message::Ctrl(false)),
+                _ => None,
+            }
+        });
+        subscription::Subscription::batch(vec![items, events])
     }
 
     fn view(&self) -> iced::Element<'_, Self::Message> {
