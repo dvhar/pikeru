@@ -12,7 +12,7 @@ use iced::{
     widget::{
         container::{Appearance, StyleSheet},
         image, image::Handle, Column, Row, text, responsive,
-        Scrollable, scrollable::{Direction,Properties},
+        Scrollable, scrollable, scrollable::{Direction,Properties},
         Button, TextInput,
         column, row, mouse_area, container,
     },
@@ -56,6 +56,7 @@ enum Message {
 }
 
 struct FilePicker {
+    scroll_id: scrollable::Id,
     items: Vec<Item>,
     dirs: Vec<String>,
     inputbar: String,
@@ -66,6 +67,7 @@ struct FilePicker {
     clicktimer: ClickTimer,
     ctrl_pressed: bool,
     shift_pressed: bool,
+    nav_id: u8,
 }
 
 enum SubState {
@@ -89,6 +91,7 @@ struct Item {
     handle: Option<Handle>,
     idx: usize,
     sel: bool,
+    nav_id: u8,
 }
 
 struct Icons {
@@ -119,6 +122,8 @@ impl Application for FilePicker {
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
                 ctrl_pressed: false,
                 shift_pressed: true,
+                scroll_id: scrollable::Id::unique(),
+                nav_id: 0,
             },
             Command::none(),
         )
@@ -142,22 +147,25 @@ impl Application for FilePicker {
             Message::Ctrl(pressed) => self.ctrl_pressed = pressed,
             Message::Shift(pressed) => self.shift_pressed = pressed,
             Message::NextItem(doneitem) => {
-                self.lastidx += 1;
-                if self.lastidx < self.items.len() {
-                    let nextitem = mem::take(&mut self.items[self.lastidx]);
-                    tokio::task::spawn(nextitem.load(self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone()));
+                if doneitem.nav_id == self.nav_id {
+                    self.lastidx += 1;
+                    if self.lastidx < self.items.len() {
+                        let nextitem = mem::take(&mut self.items[self.lastidx]);
+                        tokio::task::spawn(nextitem.load(self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone()));
+                    }
+                    let i = doneitem.idx;
+                    self.items[i] = doneitem;
                 }
-                let i = doneitem.idx;
-                self.items[i] = doneitem;
             },
             Message::LoadDir => {
                 self.inputbar = self.dirs[0].clone();
-                self.items = ls(&self.dirs);
+                self.load_dir();
                 self.lastidx = self.nproc.min(self.items.len());
                 for i in 0..self.lastidx {
                     let item = mem::take(&mut self.items[i]);
                     tokio::task::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone()));
                 }
+                return scrollable::snap_to(self.scroll_id.clone(), scrollable::RelativeOffset::START);
             },
             Message::UpDir => {
                 self.dirs = self.dirs.iter().map(|dir| Path::new(dir.as_str()).parent().unwrap()
@@ -254,7 +262,8 @@ impl Application for FilePicker {
             let content = Scrollable::new(rows)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .direction(Direction::Vertical(Properties::new()));
+                .direction(Direction::Vertical(Properties::new()))
+                .id(self.scroll_id.clone());
             column![
                 ctrlbar,
                 content
@@ -262,6 +271,23 @@ impl Application for FilePicker {
         }).into()
     }
 }
+
+impl FilePicker {
+    fn load_dir(self: &mut Self) {
+        let mut ret = vec![];
+        self.nav_id = self.nav_id.wrapping_add(1);
+        for dir in self.dirs.iter() {
+            let mut entries: Vec<_> = std::fs::read_dir(dir.as_str()).unwrap().map(|f| f.unwrap().path()).collect();
+            entries.sort_unstable();
+            entries.iter().for_each(|path| {
+                let idx = ret.len();
+                ret.push(Item::new(path.into(), idx, self.nav_id));
+            });
+        }
+        self.items = ret
+    }
+}
+
 
 fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
     Button::new(text(txt)
@@ -299,7 +325,7 @@ impl Item {
             .into()
     }
 
-    fn new(pth: PathBuf, idx: usize) -> Self {
+    fn new(pth: PathBuf, idx: usize, nav_id: u8) -> Self {
         let ftype = if pth.is_dir() {
             FType::Dir
         } else {
@@ -311,6 +337,7 @@ impl Item {
             idx,
             handle: None,
             sel: false,
+            nav_id,
         }
     }
 
@@ -385,19 +412,6 @@ impl Icons {
         let pixels = rgba.as_raw();
         Handle::from_pixels(w, h, pixels.clone())
     }
-}
-
-fn ls(dirs: &Vec<String>) -> Vec<Item> {
-    let mut ret = vec![];
-    for dir in dirs {
-        let mut entries: Vec<_> = std::fs::read_dir(dir.as_str()).unwrap().map(|f| f.unwrap().path()).collect();
-        entries.sort_unstable();
-        entries.iter().for_each(|path| {
-            let idx = ret.len();
-            ret.push(Item::new(path.into(), idx));
-        });
-    }
-    ret
 }
 
 enum ClickType {
