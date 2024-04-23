@@ -44,6 +44,7 @@ fn main() -> iced::Result {
 #[derive(Debug, Clone)]
 enum Message {
     LoadDir,
+    LoadBookmark(usize),
     Open,
     Cancel,
     UpDir,
@@ -53,21 +54,6 @@ enum Message {
     TxtInput(String),
     Shift(bool),
     Ctrl(bool),
-}
-
-struct FilePicker {
-    scroll_id: scrollable::Id,
-    items: Vec<Item>,
-    dirs: Vec<String>,
-    inputbar: String,
-    thumb_sender: Option<mpsc::Sender<Item>>,
-    nproc: usize,
-    lastidx: usize,
-    icons: Arc<Icons>,
-    clicktimer: ClickTimer,
-    ctrl_pressed: bool,
-    shift_pressed: bool,
-    nav_id: u8,
 }
 
 enum SubState {
@@ -101,6 +87,22 @@ struct Icons {
     error: Handle,
 }
 
+struct FilePicker {
+    scroll_id: scrollable::Id,
+    items: Vec<Item>,
+    dirs: Vec<String>,
+    bookmarks: Vec<(String, String)>,
+    inputbar: String,
+    thumb_sender: Option<mpsc::Sender<Item>>,
+    nproc: usize,
+    lastidx: usize,
+    icons: Arc<Icons>,
+    clicktimer: ClickTimer,
+    ctrl_pressed: bool,
+    shift_pressed: bool,
+    nav_id: u8,
+}
+
 impl Application for FilePicker {
     type Executor = executor::Default;
     type Message = Message;
@@ -115,6 +117,11 @@ impl Application for FilePicker {
                 nproc: num_cpus::get(),
                 dirs: vec![
                     "/home/d/sync/docs/pics".into(),
+                ],
+                bookmarks: vec![
+                    ("Home".into(), "/home/d".into()),
+                    ("Pictures".into(), "/home/d/Pictures".into()),
+                    ("Documents".into(), "/home/d/Documents".into()),
                 ],
                 lastidx: 0,
                 inputbar: Default::default(),
@@ -156,6 +163,10 @@ impl Application for FilePicker {
                     let i = doneitem.idx;
                     self.items[i] = doneitem;
                 }
+            },
+            Message::LoadBookmark(idx) => {
+                self.dirs = vec![self.bookmarks[idx].1.clone()];
+                return self.update(Message::LoadDir);
             },
             Message::LoadDir => {
                 self.inputbar = self.dirs[0].clone();
@@ -232,12 +243,12 @@ impl Application for FilePicker {
 
     fn view(&self) -> iced::Element<'_, Self::Message> {
         responsive(|size| {
-            let maxcols = (size.width / THUMBSIZE).max(1.0) as usize;
+            let maxcols = ((size.width-130.0) / THUMBSIZE).max(1.0) as usize;
             let num_rows = self.items.len() / maxcols + if self.items.len() % maxcols != 0 { 1 } else { 0 };
             let mut rows = Column::new();
             for i in 0..num_rows {
                 let start = i * maxcols;
-                let mut row = Row::new();
+                let mut row = Row::new().width(Length::Fill);
                 for j in 0..maxcols {
                     let idx = start + j;
                     if idx < self.items.len() {
@@ -259,6 +270,12 @@ impl Application for FilePicker {
                     .on_input(Message::TxtInput)
                     .on_paste(Message::TxtInput),
             ].align_items(iced::Alignment::End).width(Length::Fill);
+            let bookmarks = self.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
+                col.push(Button::new(container(text(bm.0.as_str())
+                                     .horizontal_alignment(alignment::Horizontal::Center)
+                                     .width(Length::Fill)))
+                         .on_press(Message::LoadBookmark(i)))
+            }).width(Length::Fixed(120.0));
             let content = Scrollable::new(rows)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -266,28 +283,11 @@ impl Application for FilePicker {
                 .id(self.scroll_id.clone());
             column![
                 ctrlbar,
-                content
+                row![bookmarks, content],
             ].into()
         }).into()
     }
 }
-
-impl FilePicker {
-    fn load_dir(self: &mut Self) {
-        let mut ret = vec![];
-        self.nav_id = self.nav_id.wrapping_add(1);
-        for dir in self.dirs.iter() {
-            let mut entries: Vec<_> = std::fs::read_dir(dir.as_str()).unwrap().map(|f| f.unwrap().path()).collect();
-            entries.sort_unstable();
-            entries.iter().for_each(|path| {
-                let idx = ret.len();
-                ret.push(Item::new(path.into(), idx, self.nav_id));
-            });
-        }
-        self.items = ret
-    }
-}
-
 
 fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
     Button::new(text(txt)
@@ -319,7 +319,7 @@ impl Item {
         } else {
             mouse_area(col)
         };
-        clickable.on_press(Message::ItemClick(self.idx))
+        clickable.on_release(Message::ItemClick(self.idx))
             .on_right_press(Message::ItemClick(self.idx))
             .on_middle_press(Message::ItemClick(self.idx))
             .into()
@@ -393,6 +393,22 @@ impl Item {
             }
         }
         chan.send(self).await.unwrap();
+    }
+}
+
+impl FilePicker {
+    fn load_dir(self: &mut Self) {
+        let mut ret = vec![];
+        self.nav_id = self.nav_id.wrapping_add(1);
+        for dir in self.dirs.iter() {
+            let mut entries: Vec<_> = std::fs::read_dir(dir.as_str()).unwrap().map(|f| f.unwrap().path()).collect();
+            entries.sort_unstable();
+            entries.iter().for_each(|path| {
+                let idx = ret.len();
+                ret.push(Item::new(path.into(), idx, self.nav_id));
+            });
+        }
+        self.items = ret
     }
 }
 
