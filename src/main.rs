@@ -1,6 +1,7 @@
 use img::load_from_memory;
 use num_cpus;
 use itertools::Itertools;
+mod iced_drop;
 use iced::{
     color, Background, alignment, executor, subscription,
     Application, Command, Length, Element, theme::Container,
@@ -10,7 +11,8 @@ use iced::{
     keyboard::Key,
     keyboard::key::Named::{Shift,Control},
     widget::{
-        container::{Appearance, StyleSheet},
+        vertical_space,
+        container::{Appearance, StyleSheet,Id},
         image, image::Handle, Column, Row, text, responsive,
         Scrollable, scrollable, scrollable::{Direction,Properties},
         Button, TextInput,
@@ -22,7 +24,7 @@ use iced::{
         StreamExt,
     },
     event::{self, Event::{Mouse,Keyboard}},
-
+    Point,
 };
 use tokio::{
     fs::File, io::AsyncReadExt,
@@ -54,6 +56,8 @@ enum Message {
     TxtInput(String),
     Shift(bool),
     Ctrl(bool),
+    Drop(Point, iced::Rectangle),
+    HandleZones(Vec<(iced::advanced::widget::Id, iced::Rectangle)>),
 }
 
 enum SubState {
@@ -61,7 +65,7 @@ enum SubState {
     Ready(mpsc::Receiver<Item>),
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 enum FType {
     File,
     Image,
@@ -87,11 +91,17 @@ struct Icons {
     error: Handle,
 }
 
+struct Bookmark {
+    label: String,
+    path: String,
+    id: Id,
+}
+
 struct FilePicker {
     scroll_id: scrollable::Id,
     items: Vec<Item>,
     dirs: Vec<String>,
-    bookmarks: Vec<(String, String)>,
+    bookmarks: Vec<Bookmark>,
     inputbar: String,
     thumb_sender: Option<mpsc::Sender<Item>>,
     nproc: usize,
@@ -119,9 +129,9 @@ impl Application for FilePicker {
                     "/home/d/sync/docs/pics".into(),
                 ],
                 bookmarks: vec![
-                    ("Home".into(), "/home/d".into()),
-                    ("Pictures".into(), "/home/d/Pictures".into()),
-                    ("Documents".into(), "/home/d/Documents".into()),
+                    Bookmark::new("Home", "/home/d"),
+                    Bookmark::new("Pictures", "/home/d/Pictures"),
+                    Bookmark::new("Documents", "/home/d/Documents"),
                 ],
                 lastidx: 0,
                 inputbar: Default::default(),
@@ -146,6 +156,21 @@ impl Application for FilePicker {
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
+            Message::Drop(cursor_pos, r) => {
+                eprintln!("Drop: {:?} {:?}", cursor_pos, r);
+                return iced_drop::zones_on_point(
+                    move |zones| Message::HandleZones(zones),
+                    cursor_pos,
+                    None,
+                    None,
+                );
+            }
+            Message::HandleZones(zones) => {
+                //self.bookmarks.iter().filter(|bm| bm.id == zones[0].0);
+                if zones.len() > 0 {
+                    println!("{:?}", zones[0].0)
+                }
+            }
             Message::Init(chan) => {
                 self.thumb_sender = Some(chan);
                 return self.update(Message::LoadDir);
@@ -165,7 +190,7 @@ impl Application for FilePicker {
                 }
             },
             Message::LoadBookmark(idx) => {
-                self.dirs = vec![self.bookmarks[idx].1.clone()];
+                self.dirs = vec![self.bookmarks[idx].path.clone()];
                 return self.update(Message::LoadDir);
             },
             Message::LoadDir => {
@@ -271,11 +296,14 @@ impl Application for FilePicker {
                     .on_paste(Message::TxtInput),
             ].align_items(iced::Alignment::End).width(Length::Fill);
             let bookmarks = self.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
-                col.push(Button::new(container(text(bm.0.as_str())
-                                     .horizontal_alignment(alignment::Horizontal::Center)
-                                     .width(Length::Fill)))
-                         .on_press(Message::LoadBookmark(i)))
-            }).width(Length::Fixed(120.0));
+                        col.push(Button::new(
+                                    container(
+                                        text(bm.label.as_str())
+                                           .horizontal_alignment(alignment::Horizontal::Center)
+                                           .width(Length::Fill)).id(bm.id.clone()))
+                                     .on_press(Message::LoadBookmark(i)))
+                    }).push(container(vertical_space()).height(Length::Fill).width(Length::Fill)
+                            .id(Id::new("bookmarks"))).width(Length::Fixed(120.0));
             let content = Scrollable::new(rows)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -307,22 +335,30 @@ impl Item {
         }
         let mut label = self.path.rsplitn(2,'/').next().unwrap();
         col = if label.len() > 16 {
-            label = &label[(label.len().max(16)-16)..label.len()];
+            label = &label[(label.len()-16)..label.len()];
             let mut shortened = ['.' as u8; 19];
             shortened[3..3+label.len()].copy_from_slice(label.as_bytes());
             col.push(text(unsafe{std::str::from_utf8_unchecked(&shortened)})).into()
         } else {
             col.push(text(label)).into()
         };
-        let clickable = if self.sel {
-            mouse_area(container(col).style(get_sel_theme()))
+        let clickable = if FType::Dir == self.ftype {
+            let dr = iced_drop::droppable(col).on_drop(Message::Drop);
+            if self.sel {
+                mouse_area(container(dr).style(get_sel_theme()))
+            } else {
+                mouse_area(dr)
+            }
         } else {
-            mouse_area(col)
-        };
-        clickable.on_release(Message::ItemClick(self.idx))
+            if self.sel {
+                mouse_area(container(col).style(get_sel_theme()))
+            } else {
+                mouse_area(col)
+            }
+        }.on_release(Message::ItemClick(self.idx))
             .on_right_press(Message::ItemClick(self.idx))
-            .on_middle_press(Message::ItemClick(self.idx))
-            .into()
+            .on_middle_press(Message::ItemClick(self.idx));
+        clickable.into()
     }
 
     fn new(pth: PathBuf, idx: usize, nav_id: u8) -> Self {
@@ -427,6 +463,19 @@ impl Icons {
         let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
         let pixels = rgba.as_raw();
         Handle::from_pixels(w, h, pixels.clone())
+    }
+}
+
+impl Bookmark {
+    fn new(label: &str, path: &str) -> Self {
+        Bookmark {
+            label: label.into(),
+            path: path.into(),
+            id: Id::new(label.to_string()),
+        }
+    }
+    fn eq(self: &Self, id: &Id) -> bool {
+        *id == self.id
     }
 }
 
