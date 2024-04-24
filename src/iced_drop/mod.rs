@@ -36,6 +36,7 @@ where
     .map(move |id| msg(id))
 }
 
+#[allow(dead_code)]
 pub fn find_zones<Message, MF, F>(
     msg: MF,
     filter: F,

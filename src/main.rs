@@ -3,6 +3,7 @@ use num_cpus;
 use itertools::Itertools;
 mod iced_drop;
 use iced::{
+    advanced::widget::Id,
     color, Background, alignment, executor, subscription,
     Application, Command, Length, Element, theme::Container,
     mouse::Event::ButtonPressed,
@@ -12,7 +13,7 @@ use iced::{
     keyboard::key::Named::{Shift,Control},
     widget::{
         vertical_space,
-        container::{Appearance, StyleSheet,Id},
+        container::{Appearance, StyleSheet,Id as CId},
         image, image::Handle, Column, Row, text, responsive,
         Scrollable, scrollable, scrollable::{Direction,Properties},
         Button, TextInput,
@@ -56,8 +57,8 @@ enum Message {
     TxtInput(String),
     Shift(bool),
     Ctrl(bool),
-    Drop(Point, iced::Rectangle),
-    HandleZones(Vec<(iced::advanced::widget::Id, iced::Rectangle)>),
+    Drop(usize, Point),
+    HandleZones(usize, Vec<(Id, iced::Rectangle)>),
 }
 
 enum SubState {
@@ -94,7 +95,7 @@ struct Icons {
 struct Bookmark {
     label: String,
     path: String,
-    id: Id,
+    id: CId,
 }
 
 struct FilePicker {
@@ -156,19 +157,25 @@ impl Application for FilePicker {
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
-            Message::Drop(cursor_pos, r) => {
-                eprintln!("Drop: {:?} {:?}", cursor_pos, r);
+            Message::Drop(idx, cursor_pos) => {
                 return iced_drop::zones_on_point(
-                    move |zones| Message::HandleZones(zones),
-                    cursor_pos,
-                    None,
-                    None,
+                    move |zones| Message::HandleZones(idx, zones),
+                    cursor_pos, None, None,
                 );
             }
-            Message::HandleZones(zones) => {
-                //self.bookmarks.iter().filter(|bm| bm.id == zones[0].0);
+            Message::HandleZones(idx, zones) => {
                 if zones.len() > 0 {
-                    println!("{:?}", zones[0].0)
+                    let targets: Vec<_> = self.bookmarks.iter().enumerate().filter_map(|(i, bm)| {
+                        if zones[0].0 == bm.id.clone().into() {
+                            Some(i)
+                        } else {None}
+                    }).collect();
+                    let target = if targets.len() > 0 {
+                        Some(targets[0] as i32)
+                    } else if zones[0].0 == Id::new("bookmarks") {
+                        Some(-1)
+                    } else { None };
+                    self.add_bookmark(idx, target);
                 }
             }
             Message::Init(chan) => {
@@ -303,7 +310,7 @@ impl Application for FilePicker {
                                            .width(Length::Fill)).id(bm.id.clone()))
                                      .on_press(Message::LoadBookmark(i)))
                     }).push(container(vertical_space()).height(Length::Fill).width(Length::Fill)
-                            .id(Id::new("bookmarks"))).width(Length::Fixed(120.0));
+                            .id(CId::new("bookmarks"))).width(Length::Fixed(120.0));
             let content = Scrollable::new(rows)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -343,7 +350,8 @@ impl Item {
             col.push(text(label)).into()
         };
         let clickable = if FType::Dir == self.ftype {
-            let dr = iced_drop::droppable(col).on_drop(Message::Drop);
+            let idx = self.idx;
+            let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::Drop(idx, point));
             if self.sel {
                 mouse_area(container(dr).style(get_sel_theme()))
             } else {
@@ -446,6 +454,21 @@ impl FilePicker {
         }
         self.items = ret
     }
+
+    fn add_bookmark(self: &mut Self, dragged: usize, target: Option<i32>) {
+        let item = &self.items[dragged];
+        let label = item.path.rsplitn(2,'/').next().unwrap();
+        match target {
+            Some(i) if i >= 0 => {
+                // TODO: multi-dir bookmark?
+                self.bookmarks.push(Bookmark::new(label, item.path.as_str()));
+            },
+            Some(_) => {
+                self.bookmarks.push(Bookmark::new(label, item.path.as_str()));
+            },
+            None => {},
+        }
+    }
 }
 
 impl Icons {
@@ -471,11 +494,8 @@ impl Bookmark {
         Bookmark {
             label: label.into(),
             path: path.into(),
-            id: Id::new(label.to_string()),
+            id: CId::new(label.to_string()),
         }
-    }
-    fn eq(self: &Self, id: &Id) -> bool {
-        *id == self.id
     }
 }
 
