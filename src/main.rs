@@ -83,6 +83,7 @@ struct Item {
     idx: usize,
     sel: bool,
     nav_id: u8,
+    mtime: f32,
 }
 
 struct Icons {
@@ -112,6 +113,7 @@ struct FilePicker {
     ctrl_pressed: bool,
     shift_pressed: bool,
     nav_id: u8,
+    show_hidden: bool,
 }
 
 impl Application for FilePicker {
@@ -142,6 +144,7 @@ impl Application for FilePicker {
                 shift_pressed: true,
                 scroll_id: scrollable::Id::unique(),
                 nav_id: 0,
+                show_hidden: false,
             },
             Command::none(),
         )
@@ -369,19 +372,22 @@ impl Item {
         clickable.into()
     }
 
-    fn new(pth: PathBuf, idx: usize, nav_id: u8) -> Self {
-        let ftype = if pth.is_dir() {
+    fn new(pth: PathBuf, nav_id: u8) -> Self {
+        let md = pth.metadata().unwrap();
+        let ftype = if md.is_dir() {
             FType::Dir
         } else {
             FType::Unknown
         };
+        let mtime = md.modified().unwrap();
         Item {
             path: pth.to_string_lossy().to_string(),
             ftype,
-            idx,
+            idx: 0,
             handle: None,
             sel: false,
             nav_id,
+            mtime: mtime.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32(),
         }
     }
 
@@ -445,13 +451,19 @@ impl FilePicker {
         let mut ret = vec![];
         self.nav_id = self.nav_id.wrapping_add(1);
         for dir in self.dirs.iter() {
-            let mut entries: Vec<_> = std::fs::read_dir(dir.as_str()).unwrap().map(|f| f.unwrap().path()).collect();
-            entries.sort_unstable();
-            entries.iter().for_each(|path| {
-                let idx = ret.len();
-                ret.push(Item::new(path.into(), idx, self.nav_id));
+            let entries: Vec<_> = std::fs::read_dir(dir.as_str()).unwrap().map(|f| f.unwrap().path()).collect();
+            entries.iter().filter(|path|{ self.show_hidden ||
+                !path.as_os_str().to_str().map(|s|s.rsplitn(2,'/').next().unwrap().starts_with('.')).unwrap_or(false)
+            }).for_each(|path| {
+                ret.push(Item::new(path.into(), self.nav_id));
             });
         }
+        ret.sort_unstable_by(|a,b| {
+            let adir = a.ftype==FType::Dir;
+            let bdir = b.ftype==FType::Dir;
+            bdir.cmp(&adir).then_with(||a.path.cmp(&b.path))
+        });
+        ret.iter_mut().enumerate().for_each(|(i, item)| item.idx = i);
         self.items = ret
     }
 
