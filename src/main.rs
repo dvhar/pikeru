@@ -6,12 +6,14 @@ use iced::{
     advanced::widget::Id,
     color, Background, alignment, executor, subscription,
     Application, Command, Length, Element, theme::Container,
-    mouse::Event::ButtonPressed,
+    mouse::Event::{ButtonPressed, WheelScrolled},
     mouse::Button::{Back,Forward},
+    mouse::ScrollDelta,
     keyboard::Event::{KeyPressed,KeyReleased},
     keyboard::Key,
     keyboard::key::Named::{Shift,Control},
     widget::{
+        //image::viewer,
         vertical_space,
         container::{Appearance, StyleSheet,Id as CId},
         image, image::Handle, Column, Row, text, responsive,
@@ -54,11 +56,13 @@ enum Message {
     Init(mpsc::Sender<Item>),
     NextItem(Item),
     ItemClick(usize),
+    RightClick(i64),
     TxtInput(String),
     Shift(bool),
     Ctrl(bool),
     Drop(usize, Point),
     HandleZones(usize, Vec<(Id, iced::Rectangle)>),
+    NextImage(i64),
 }
 
 enum SubState {
@@ -114,6 +118,7 @@ struct FilePicker {
     shift_pressed: bool,
     nav_id: u8,
     show_hidden: bool,
+    view_image: i64,
 }
 
 impl Application for FilePicker {
@@ -145,6 +150,7 @@ impl Application for FilePicker {
                 scroll_id: scrollable::Id::unique(),
                 nav_id: 0,
                 show_hidden: false,
+                view_image: -1,
             },
             Command::none(),
         )
@@ -215,7 +221,8 @@ impl Application for FilePicker {
             },
             Message::UpDir => {
                 self.dirs = self.dirs.iter().map(|dir| Path::new(dir.as_str()).parent().unwrap()
-                                                 .to_string_lossy().into_owned()).unique_by(|s|s.to_owned()).collect();
+                                                 .as_os_str().to_str().unwrap().to_string())
+                    .unique_by(|s|s.to_owned()).collect();
                 return self.update(Message::LoadDir);
             },
             Message::ItemClick(idx) => {
@@ -224,6 +231,26 @@ impl Application for FilePicker {
                     ClickType::Double => return self.update(Message::Open),
                 }
             },
+            Message::RightClick(idx) => {
+                if idx > 0 {
+                    let item = &self.items[idx as usize];
+                    if item.ftype == FType::Image {
+                        self.view_image = idx
+                    }
+                } else {
+                    self.view_image = -1;
+                }
+            },
+            Message::NextImage(y) => {
+                let mut i = self.view_image;
+                while (y<0 && i>0) || (y>0 && i<self.items.len() as i64-1) {
+                    i += y;
+                    if self.items[i as usize].ftype == FType::Image {
+                        self.view_image = i;
+                        break 
+                    }
+                }
+            }
             Message::Open => {
                 let sels: Vec<&Item> = self.items.iter().filter(|item| item.sel ).collect();
                 if sels.len() != 0 {
@@ -266,6 +293,7 @@ impl Application for FilePicker {
             match evt {
                 Mouse(ButtonPressed(Back)) => Some(Message::UpDir),
                 Mouse(ButtonPressed(Forward)) => None,
+                Mouse(WheelScrolled{ delta: ScrollDelta::Lines{ y, ..}}) => Some(Message::NextImage(if y<0.0 {1} else {-1})),
                 Keyboard(KeyPressed{ key: Key::Named(Shift), .. }) => Some(Message::Shift(true)),
                 Keyboard(KeyReleased{ key: Key::Named(Shift), .. }) => Some(Message::Shift(false)),
                 Keyboard(KeyPressed{ key: Key::Named(Control), .. }) => Some(Message::Ctrl(true)),
@@ -273,25 +301,11 @@ impl Application for FilePicker {
                 _ => None,
             }
         });
-        subscription::Subscription::batch(vec![items, events])
+        subscription::Subscription::batch(vec![items, events/*, native*/])
     }
 
     fn view(&self) -> iced::Element<'_, Self::Message> {
         responsive(|size| {
-            let maxcols = ((size.width-130.0) / THUMBSIZE).max(1.0) as usize;
-            let num_rows = self.items.len() / maxcols + if self.items.len() % maxcols != 0 { 1 } else { 0 };
-            let mut rows = Column::new();
-            for i in 0..num_rows {
-                let start = i * maxcols;
-                let mut row = Row::new().width(Length::Fill);
-                for j in 0..maxcols {
-                    let idx = start + j;
-                    if idx < self.items.len() {
-                        row = row.push(unsafe{self.items.get_unchecked(idx)}.display());
-                    }
-                }
-                rows = rows.push(row);
-            }
             let ctrlbar = column![
                 row![
                     top_button("Cmd", 80.0, Message::Cancel),
@@ -314,11 +328,34 @@ impl Application for FilePicker {
                                      .on_press(Message::LoadBookmark(i)))
                     }).push(container(vertical_space()).height(Length::Fill).width(Length::Fill)
                             .id(CId::new("bookmarks"))).width(Length::Fixed(120.0));
-            let content = Scrollable::new(rows)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .direction(Direction::Vertical(Properties::new()))
-                .id(self.scroll_id.clone());
+
+            let content: iced::Element<'_, Self::Message> = if self.view_image < 0 {
+                let maxcols = ((size.width-130.0) / THUMBSIZE).max(1.0) as usize;
+                let num_rows = self.items.len() / maxcols + if self.items.len() % maxcols != 0 { 1 } else { 0 };
+                let mut rows = Column::new();
+                for i in 0..num_rows {
+                    let start = i * maxcols;
+                    let mut row = Row::new().width(Length::Fill);
+                    for j in 0..maxcols {
+                        let idx = start + j;
+                        if idx < self.items.len() {
+                            row = row.push(unsafe{self.items.get_unchecked(idx)}.display());
+                        }
+                    }
+                    rows = rows.push(row);
+                }
+                Scrollable::new(rows)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .direction(Direction::Vertical(Properties::new()))
+                    .id(self.scroll_id.clone()).into()
+            } else {
+                mouse_area(container(image(self.items[self.view_image as usize].path.as_str()))
+                           .align_x(alignment::Horizontal::Center).align_y(alignment::Vertical::Center)
+                           .width(Length::Fill).height(Length::Fill)
+                    ).on_right_press(Message::RightClick(-1))
+                    .into()
+            };
             column![
                 ctrlbar,
                 row![bookmarks, content],
@@ -367,7 +404,7 @@ impl Item {
                 mouse_area(col)
             }
         }.on_release(Message::ItemClick(self.idx))
-            .on_right_press(Message::ItemClick(self.idx))
+            .on_right_press(Message::RightClick(self.idx as i64))
             .on_middle_press(Message::ItemClick(self.idx));
         clickable.into()
     }
@@ -413,8 +450,7 @@ impl Item {
                                     Ok(img) => {
                                         let thumb = img.thumbnail(THUMBSIZE as u32, THUMBSIZE as u32);
                                         let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
-                                        let pixels = rgba.as_raw();
-                                        self.handle = Some(Handle::from_pixels(w, h, pixels.clone()));
+                                        self.handle = Some(Handle::from_pixels(w, h, rgba.as_raw().clone()));
                                         FType::Image
                                     },
                                     Err(e) => {
@@ -496,8 +532,7 @@ impl Icons {
         let img = load_from_memory(img_bytes).unwrap();
         let thumb = img.thumbnail((THUMBSIZE * 0.9) as u32, (THUMBSIZE * 0.9) as u32);
         let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
-        let pixels = rgba.as_raw();
-        Handle::from_pixels(w, h, pixels.clone())
+        Handle::from_pixels(w, h, rgba.as_raw().clone())
     }
 }
 
@@ -549,4 +584,3 @@ pub fn get_sel_theme() -> Container {
         Box::new(SelectedTheme) as Box<dyn StyleSheet<Style = iced::Theme>>
     )
 }
-
