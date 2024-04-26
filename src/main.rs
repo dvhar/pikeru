@@ -1,9 +1,11 @@
 use img::load_from_memory;
 use num_cpus;
 use itertools::Itertools;
+mod wrapper;
 mod iced_drop;
 use iced::{
     advanced::widget::Id,
+    Rectangle,
     color, Background, alignment, executor, subscription,
     Application, Command, Length, Element, theme::Container,
     mouse::Event::{ButtonPressed, WheelScrolled},
@@ -54,7 +56,8 @@ enum Message {
     UpDir,
     Init(mpsc::Sender<Item>),
     NextItem(Item),
-    ItemClick(usize),
+    LeftClick(usize),
+    MiddleClick(usize),
     RightClick(i64),
     TxtInput(String),
     Shift(bool),
@@ -63,6 +66,7 @@ enum Message {
     HandleZones(usize, Vec<(Id, iced::Rectangle)>),
     NextImage(i64),
     Scrolled(scrollable::Viewport),
+    PositionInfo(Point, Rectangle),
 }
 
 enum SubState {
@@ -111,7 +115,8 @@ struct FilePicker {
     inputbar: String,
     thumb_sender: Option<mpsc::Sender<Item>>,
     nproc: usize,
-    lastidx: usize,
+    last_loaded: usize,
+    last_clicked: Option<usize>,
     icons: Arc<Icons>,
     clicktimer: ClickTimer,
     ctrl_pressed: bool,
@@ -142,12 +147,13 @@ impl Application for FilePicker {
                     Bookmark::new("Pictures", "/home/d/Pictures"),
                     Bookmark::new("Documents", "/home/d/Documents"),
                 ],
-                lastidx: 0,
+                last_loaded: 0,
+                last_clicked: None,
                 inputbar: Default::default(),
                 icons: Arc::new(Icons::new()),
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
                 ctrl_pressed: false,
-                shift_pressed: true,
+                shift_pressed: false,
                 scroll_id: scrollable::Id::unique(),
                 nav_id: 0,
                 show_hidden: false,
@@ -168,6 +174,9 @@ impl Application for FilePicker {
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
+            Message::PositionInfo(p, r) => {
+                eprintln!("{:?} {:?}", p, r);
+            },
             Message::Drop(idx, cursor_pos) => {
                 return iced_drop::zones_on_point(
                     move |zones| Message::HandleZones(idx, zones),
@@ -199,9 +208,9 @@ impl Application for FilePicker {
             Message::Shift(pressed) => self.shift_pressed = pressed,
             Message::NextItem(doneitem) => {
                 if doneitem.nav_id == self.nav_id {
-                    self.lastidx += 1;
-                    if self.lastidx < self.items.len() {
-                        let nextitem = mem::take(&mut self.items[self.lastidx]);
+                    self.last_loaded += 1;
+                    if self.last_loaded < self.items.len() {
+                        let nextitem = mem::take(&mut self.items[self.last_loaded]);
                         tokio::task::spawn(nextitem.load(self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone()));
                     }
                     let i = doneitem.idx;
@@ -215,8 +224,8 @@ impl Application for FilePicker {
             Message::LoadDir => {
                 self.inputbar = self.dirs[0].clone();
                 self.load_dir();
-                self.lastidx = self.nproc.min(self.items.len());
-                for i in 0..self.lastidx {
+                self.last_loaded = self.nproc.min(self.items.len());
+                for i in 0..self.last_loaded {
                     let item = mem::take(&mut self.items[i]);
                     tokio::task::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone()));
                 }
@@ -228,9 +237,10 @@ impl Application for FilePicker {
                     .unique_by(|s|s.to_owned()).collect();
                 return self.update(Message::LoadDir);
             },
-            Message::ItemClick(idx) => {
+            Message::MiddleClick(idx) => self.click_item(idx, false, true),
+            Message::LeftClick(idx) => {
                 match self.clicktimer.click(idx) {
-                    ClickType::Single => self.items[idx].sel = true,
+                    ClickType::Single => self.click_item(idx, self.shift_pressed, self.ctrl_pressed),
                     ClickType::Double => return self.update(Message::Open),
                 }
             },
@@ -239,6 +249,8 @@ impl Application for FilePicker {
                     let item = &self.items[idx as usize];
                     if item.ftype == FType::Image {
                         self.view_image = (idx as usize, Some(Handle::from_path(item.path.as_str())));
+                    } else {
+                        self.click_item(idx as usize, true, false);
                     }
                 } else {
                     self.view_image = (0, None);
@@ -252,7 +264,7 @@ impl Application for FilePicker {
                         i = ((i as i64) + y) as usize;
                         if self.items[i as usize].ftype == FType::Image {
                             self.view_image = (i as usize, Some(Handle::from_path(self.items[i].path.as_str())));
-                            return self.update(Message::ItemClick(i as usize));
+                            return self.update(Message::LeftClick(i as usize));
                         }
                     }
                 }
@@ -399,7 +411,7 @@ impl Item {
         } else {
             col.push(text(label)).into()
         };
-        let clickable = if FType::Dir == self.ftype {
+        let clickable = if self.isdir() {
             let idx = self.idx;
             let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::Drop(idx, point));
             if self.sel {
@@ -413,10 +425,14 @@ impl Item {
             } else {
                 mouse_area(col)
             }
-        }.on_release(Message::ItemClick(self.idx))
+        }.on_release(Message::LeftClick(self.idx))
             .on_right_press(Message::RightClick(self.idx as i64))
-            .on_middle_press(Message::ItemClick(self.idx));
+            .on_middle_press(Message::MiddleClick(self.idx));
         clickable.into()
+    }
+
+    fn isdir(self: &Self) -> bool {
+        return self.ftype == FType::Dir;
     }
 
     fn new(pth: PathBuf, nav_id: u8) -> Self {
@@ -493,6 +509,41 @@ impl Item {
 }
 
 impl FilePicker {
+    fn click_item(self: &mut Self, i: usize, shift: bool, ctrl: bool) {
+        self.last_clicked = Some(i);
+        let isdir = self.items[i].isdir();
+        let prevsel = self.items.iter().filter_map(|item| if item.sel { Some(item.idx) } else { None }).collect::<Vec<usize>>();
+        while shift && prevsel.len() > 0 {
+            let prevdir = self.items[prevsel[0]].isdir();
+            if prevdir != isdir {
+                break;
+            }
+            let mut lo = self.items[i].idx;
+            let mut hi = lo;
+            prevsel.iter().for_each(|j| {
+                lo = lo.min(self.items[*j].idx);
+                hi = hi.max(self.items[*j].idx);
+            });
+            for j in lo..=hi {
+                self.items[j].sel = self.items[j].isdir() == isdir;
+            }
+            return;
+        }
+        if !self.items[i].sel {
+            self.items[i].sel = true;
+        } else if prevsel.len() == 1 || ctrl {
+            self.items[i].sel = false;
+        }
+        prevsel.iter().for_each(|j| {
+            if !ctrl || self.items[*j].isdir() != isdir { self.items[*j].sel = false; }
+        });
+        if self.items[i].sel {
+            self.inputbar = self.items[i].path.clone();
+        } else {
+            self.inputbar = self.dirs[0].clone();
+        }
+    }
+
     fn load_dir(self: &mut Self) {
         let mut ret = vec![];
         self.nav_id = self.nav_id.wrapping_add(1);
@@ -505,9 +556,7 @@ impl FilePicker {
             });
         }
         ret.sort_unstable_by(|a,b| {
-            let adir = a.ftype==FType::Dir;
-            let bdir = b.ftype==FType::Dir;
-            bdir.cmp(&adir).then_with(||a.path.cmp(&b.path))
+            b.isdir().cmp(&a.isdir()).then_with(||a.path.cmp(&b.path))
         });
         ret.iter_mut().enumerate().for_each(|(i, item)| item.idx = i);
         self.items = ret
