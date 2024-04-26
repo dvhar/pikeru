@@ -13,8 +13,7 @@ where
 {
     content: Element<'a, Message, Theme, Renderer>,
     id: Option<iced::advanced::widget::Id>,
-    //on_info: Option<Message>,
-    on_info: Option<Box<dyn Fn(Point, Rectangle) -> Message + 'a>>,
+    on_info: Option<Box<dyn Fn(Rectangle, Rectangle) -> Message + 'a>>,
 }
 
 impl<'a, Message, Theme, Renderer> Wrapper<'a, Message, Theme, Renderer>
@@ -40,7 +39,7 @@ where
     /// Sets the message that will be produced when the [`Wrapper`] is clicked.
     pub fn on_info<F>(mut self, message: F) -> Self
     where
-        F: Fn(Point, Rectangle) -> Message + 'a,
+        F: Fn(Rectangle, Rectangle) -> Message + 'a,
     {
         self.on_info = Some(Box::new(message));
         self
@@ -101,7 +100,7 @@ where
             return status;
         };
         if let Some(on_info) = self.on_info.as_deref() {
-            let message = (on_info)(layout.position(), *_viewport);
+            let message = (on_info)(layout.bounds(), *_viewport);
             shell.publish(message);
         }
         status
@@ -274,7 +273,7 @@ where
 // use like this to get position info about a widget:
 // wrapper::wrapper(some_widget).on_info(Message::PositionInfo)
 // where the message is PositionInfo(Point, Rectangle),
-pub fn wrapper<'a, Message, Theme, Renderer>(
+pub fn locator<'a, Message, Theme, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
 ) -> Wrapper<'a, Message, Theme, Renderer>
 where

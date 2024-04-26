@@ -66,7 +66,7 @@ enum Message {
     HandleZones(usize, Vec<(Id, iced::Rectangle)>),
     NextImage(i64),
     Scrolled(scrollable::Viewport),
-    PositionInfo(Point, Rectangle),
+    PositionInfo(Rectangle, Rectangle),
 }
 
 enum SubState {
@@ -124,7 +124,8 @@ struct FilePicker {
     nav_id: u8,
     show_hidden: bool,
     view_image: (usize, Option<Handle>),
-    scroll_offset: scrollable::RelativeOffset,
+    scroll_offset: scrollable::AbsoluteOffset,
+    sel_pos: Option<(Rectangle, Rectangle)>,
 }
 
 impl Application for FilePicker {
@@ -158,7 +159,8 @@ impl Application for FilePicker {
                 nav_id: 0,
                 show_hidden: false,
                 view_image: (0, None),
-                scroll_offset: scrollable::RelativeOffset::START,
+                scroll_offset: scrollable::AbsoluteOffset{x: 0.0, y: 0.0},
+                sel_pos: None,
             },
             Command::none(),
         )
@@ -174,8 +176,12 @@ impl Application for FilePicker {
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
-            Message::PositionInfo(p, r) => {
-                eprintln!("{:?} {:?}", p, r);
+            Message::PositionInfo(widget, viewport) => {
+                self.sel_pos = Some((widget, viewport));
+                if let Some(_) = self.last_clicked {
+                    self.last_clicked = None;
+                    return self.keep_in_view();
+                }
             },
             Message::Drop(idx, cursor_pos) => {
                 return iced_drop::zones_on_point(
@@ -202,7 +208,7 @@ impl Application for FilePicker {
                 self.thumb_sender = Some(chan);
                 return self.update(Message::LoadDir);
             },
-            Message::Scrolled(viewport) => self.scroll_offset = viewport.relative_offset(),
+            Message::Scrolled(viewport) => self.scroll_offset = viewport.absolute_offset(),
             Message::TxtInput(txt) => self.inputbar = txt,
             Message::Ctrl(pressed) => self.ctrl_pressed = pressed,
             Message::Shift(pressed) => self.shift_pressed = pressed,
@@ -254,7 +260,7 @@ impl Application for FilePicker {
                     }
                 } else {
                     self.view_image = (0, None);
-                    return scrollable::snap_to(self.scroll_id.clone(), self.scroll_offset);
+                    return scrollable::scroll_to(self.scroll_id.clone(), self.scroll_offset);
                 }
             },
             Message::NextImage(y) => {
@@ -366,7 +372,7 @@ impl Application for FilePicker {
                     for j in 0..maxcols {
                         let idx = start + j;
                         if idx < self.items.len() {
-                            row = row.push(unsafe{self.items.get_unchecked(idx)}.display());
+                            row = row.push(unsafe{self.items.get_unchecked(idx)}.display(self.last_clicked));
                         }
                     }
                     rows = rows.push(row);
@@ -395,7 +401,7 @@ fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
 
 impl Item {
 
-    fn display(&self) -> Element<'static, Message> {
+    fn display(&self, last_clicked: Option<usize>) -> Element<'static, Message> {
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
             .width(THUMBSIZE);
@@ -411,24 +417,34 @@ impl Item {
         } else {
             col.push(text(label)).into()
         };
-        let clickable = if self.isdir() {
-            let idx = self.idx;
-            let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::Drop(idx, point));
-            if self.sel {
+
+        let idx = self.idx;
+        let clickable = match (self.isdir(), self.sel) {
+            (true, true) => {
+                let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::Drop(idx, point));
                 mouse_area(container(dr).style(get_sel_theme()))
-            } else {
+            },
+            (true, false) => {
+                let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::Drop(idx, point));
                 mouse_area(dr)
-            }
-        } else {
-            if self.sel {
+            },
+            (false, true) => {
                 mouse_area(container(col).style(get_sel_theme()))
-            } else {
+            },
+            (false, false) => {
                 mouse_area(col)
-            }
+            },
         }.on_release(Message::LeftClick(self.idx))
             .on_right_press(Message::RightClick(self.idx as i64))
             .on_middle_press(Message::MiddleClick(self.idx));
-        clickable.into()
+        match last_clicked {
+            Some(i) if i == idx => {
+                wrapper::locator(clickable).on_info(Message::PositionInfo).into()
+            },
+            _ => {
+                clickable.into()
+            },
+        }
     }
 
     fn isdir(self: &Self) -> bool {
@@ -509,7 +525,28 @@ impl Item {
 }
 
 impl FilePicker {
+
+    fn keep_in_view(self: &mut Self) -> Command<Message> {
+        if let Some((w,v)) = self.sel_pos {
+            let wtop = w.y;
+            let wbot = wtop + w.height;
+            let vtop = v.y;
+            let vbot = vtop + v.height;
+            let abspos = if wtop < vtop {
+                wtop
+            } else if wbot > vbot {
+               wbot - v.height
+            } else { -1.0 };
+            if abspos >= 0.0 {
+                let offset = scrollable::AbsoluteOffset{x:0.0, y:abspos - 61.6}; //TODO: calculate top position
+                return scrollable::scroll_to(self.scroll_id.clone(), offset);
+            }
+        }
+        Command::none()
+    }
+
     fn click_item(self: &mut Self, i: usize, shift: bool, ctrl: bool) {
+
         self.last_clicked = Some(i);
         let isdir = self.items[i].isdir();
         let prevsel = self.items.iter().filter_map(|item| if item.sel { Some(item.idx) } else { None }).collect::<Vec<usize>>();
@@ -616,14 +653,14 @@ struct ClickTimer {
 impl ClickTimer {
     fn click(self: &mut Self, idx: usize) -> ClickType {
         let time = Instant::now();
-        if idx != self.idx || time - self.time > Duration::from_millis(300) {
-            self.idx = idx;
-            self.time = time;
-            return ClickType::Single;
-        }
+        let ret = if idx != self.idx || time - self.time > Duration::from_millis(300) {
+            ClickType::Single
+        } else {
+            ClickType::Double
+        };
         self.idx = idx;
         self.time = time;
-        return ClickType::Double;
+        ret
     }
 }
 
