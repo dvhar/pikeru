@@ -13,7 +13,6 @@ use iced::{
     keyboard::Key,
     keyboard::key::Named::{Shift,Control},
     widget::{
-        //image::viewer,
         vertical_space,
         container::{Appearance, StyleSheet,Id as CId},
         image, image::Handle, Column, Row, text, responsive,
@@ -63,6 +62,7 @@ enum Message {
     Drop(usize, Point),
     HandleZones(usize, Vec<(Id, iced::Rectangle)>),
     NextImage(i64),
+    Scrolled(scrollable::Viewport),
 }
 
 enum SubState {
@@ -118,7 +118,8 @@ struct FilePicker {
     shift_pressed: bool,
     nav_id: u8,
     show_hidden: bool,
-    view_image: i64,
+    view_image: (usize, Option<Handle>),
+    scroll_offset: scrollable::RelativeOffset,
 }
 
 impl Application for FilePicker {
@@ -150,7 +151,8 @@ impl Application for FilePicker {
                 scroll_id: scrollable::Id::unique(),
                 nav_id: 0,
                 show_hidden: false,
-                view_image: -1,
+                view_image: (0, None),
+                scroll_offset: scrollable::RelativeOffset::START,
             },
             Command::none(),
         )
@@ -191,6 +193,7 @@ impl Application for FilePicker {
                 self.thumb_sender = Some(chan);
                 return self.update(Message::LoadDir);
             },
+            Message::Scrolled(viewport) => self.scroll_offset = viewport.relative_offset(),
             Message::TxtInput(txt) => self.inputbar = txt,
             Message::Ctrl(pressed) => self.ctrl_pressed = pressed,
             Message::Shift(pressed) => self.shift_pressed = pressed,
@@ -232,22 +235,25 @@ impl Application for FilePicker {
                 }
             },
             Message::RightClick(idx) => {
-                if idx > 0 {
+                if idx >= 0 {
                     let item = &self.items[idx as usize];
                     if item.ftype == FType::Image {
-                        self.view_image = idx
+                        self.view_image = (idx as usize, Some(Handle::from_path(item.path.as_str())));
                     }
                 } else {
-                    self.view_image = -1;
+                    self.view_image = (0, None);
+                    return scrollable::snap_to(self.scroll_id.clone(), self.scroll_offset);
                 }
             },
             Message::NextImage(y) => {
-                let mut i = self.view_image;
-                while (y<0 && i>0) || (y>0 && i<self.items.len() as i64-1) {
-                    i += y;
-                    if self.items[i as usize].ftype == FType::Image {
-                        self.view_image = i;
-                        break 
+                if self.view_image.1 != None {
+                    let mut i = self.view_image.0;
+                    while (y<0 && i>0) || (y>0 && i<self.items.len()-1) {
+                        i = ((i as i64) + y) as usize;
+                        if self.items[i as usize].ftype == FType::Image {
+                            self.view_image = (i as usize, Some(Handle::from_path(self.items[i].path.as_str())));
+                            return self.update(Message::ItemClick(i as usize));
+                        }
                     }
                 }
             }
@@ -329,7 +335,16 @@ impl Application for FilePicker {
                     }).push(container(vertical_space()).height(Length::Fill).width(Length::Fill)
                             .id(CId::new("bookmarks"))).width(Length::Fixed(120.0));
 
-            let content: iced::Element<'_, Self::Message> = if self.view_image < 0 {
+            let content: iced::Element<'_, Self::Message> = if let Some(handle) = &self.view_image.1 {
+                mouse_area(container(image(handle.clone())
+                                    .width(Length::Fill)
+                                    .height(Length::Fill))
+                               .align_x(alignment::Horizontal::Center)
+                               .align_y(alignment::Vertical::Center)
+                               .width(Length::Fill).height(Length::Fill)
+                    ).on_right_press(Message::RightClick(-1))
+                    .into()
+            } else {
                 let maxcols = ((size.width-130.0) / THUMBSIZE).max(1.0) as usize;
                 let num_rows = self.items.len() / maxcols + if self.items.len() % maxcols != 0 { 1 } else { 0 };
                 let mut rows = Column::new();
@@ -347,14 +362,9 @@ impl Application for FilePicker {
                 Scrollable::new(rows)
                     .width(Length::Fill)
                     .height(Length::Fill)
+                    .on_scroll(Message::Scrolled)
                     .direction(Direction::Vertical(Properties::new()))
                     .id(self.scroll_id.clone()).into()
-            } else {
-                mouse_area(container(image(self.items[self.view_image as usize].path.as_str()))
-                           .align_x(alignment::Horizontal::Center).align_y(alignment::Vertical::Center)
-                           .width(Length::Fill).height(Length::Fill)
-                    ).on_right_press(Message::RightClick(-1))
-                    .into()
             };
             column![
                 ctrlbar,
