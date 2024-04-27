@@ -14,3 +14,4 @@ itertools = "0.12.1"
 video-rs = { version = "0.7.3", features = ["ndarray"] }
 ndarray = "0.15.6"
 getopts = "0.2.21"
+configparser = "3.0.4"

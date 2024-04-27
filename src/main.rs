@@ -1,3 +1,5 @@
+use configparser::ini::Ini;
+use configparser::ini::IniDefault;
 use img::load_from_memory;
 use num_cpus;
 use itertools::Itertools;
@@ -54,18 +56,19 @@ macro_rules! die {
 const THUMBSIZE: f32 = 160.0;
 
 fn main() -> iced::Result {
-    let opts = Opts::new();
+    let opts = Config::new();
     video_rs::init().unwrap();
     FilePicker::run(iced::Settings::with_flags(opts))
 }
 
-struct Opts {
+struct Config {
     title: String,
     path: String,
     mode: Mode,
+    bookmarks: Vec<Bookmark>,
 }
 
-impl Opts {
+impl Config {
     fn new() -> Self {
         let args: Vec<String> = std::env::args().skip(1).collect();
         let mut opts = Options::new();
@@ -77,10 +80,28 @@ impl Opts {
             Ok(m) => { m },
             Err(e) => die!("bad args:{}", e),
         };
-        Opts {
+
+        let home = std::env::var("HOME").unwrap();
+        let confpath = home + "/.config/pikeru.conf";
+        let mut ini = Ini::new();
+        let mut iniconf = IniDefault::default();
+        iniconf.case_sensitive = true;
+        ini.load_defaults(iniconf.clone());
+        let conf = ini.load(confpath).unwrap();
+
+        //let commands = mapmap.get("Commands").unwrap();
+        //let settings = mapmap.get("Settings").unwrap();
+        let bookmarks = conf.get("Bookmarks").unwrap();
+
+        Config {
             mode: Mode::from(matches.opt_str("m")),
             path: matches.opt_str("p").unwrap_or(pwd),
             title: "File Picker".to_string(),
+            bookmarks: bookmarks.into_iter().map(|bm| {
+                let k = bm.0.as_str();
+                let v = bm.1.clone();
+                Bookmark::new(k, v.unwrap().as_str())
+            }).collect(),
         }
     }
 }
@@ -170,11 +191,10 @@ struct Bookmark {
 }
 
 struct FilePicker {
-    opts: Opts,
+    conf: Config,
     scroll_id: scrollable::Id,
     items: Vec<Item>,
     dirs: Vec<String>,
-    bookmarks: Vec<Bookmark>,
     inputbar: String,
     thumb_sender: Option<mpsc::Sender<Item>>,
     nproc: usize,
@@ -194,23 +214,17 @@ impl Application for FilePicker {
     type Executor = executor::Default;
     type Message = Message;
     type Theme = iced::Theme;
-    type Flags = Opts;
+    type Flags = Config;
 
-    fn new(opts: Self::Flags) -> (Self, iced::Command<Self::Message>) {
-        let path = opts.path.clone();
+    fn new(conf: Self::Flags) -> (Self, iced::Command<Self::Message>) {
+        let path = conf.path.clone();
         (
             Self {
-                opts,
+                conf,
                 items: Default::default(),
                 thumb_sender: None,
                 nproc: num_cpus::get(),
                 dirs: vec![path],
-                bookmarks: vec![
-                    Bookmark::new("Home", "/home/d"),
-                    Bookmark::new("Pictures", "/home/d/Pictures"),
-                    Bookmark::new("Documents", "/home/d/Documents"),
-                    Bookmark::new("ram", "/home/d/ram"),
-                ],
                 last_loaded: 0,
                 last_clicked: None,
                 inputbar: Default::default(),
@@ -233,7 +247,7 @@ impl Application for FilePicker {
     }
 
     fn title(&self) -> String {
-        self.opts.title.clone()
+        self.conf.title.clone()
     }
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
@@ -252,7 +266,7 @@ impl Application for FilePicker {
             }
             Message::HandleZones(idx, zones) => {
                 if zones.len() > 0 {
-                    let targets: Vec<_> = self.bookmarks.iter().enumerate().filter_map(|(i, bm)| {
+                    let targets: Vec<_> = self.conf.bookmarks.iter().enumerate().filter_map(|(i, bm)| {
                         if zones[0].0 == bm.id.clone().into() {
                             Some(i)
                         } else {None}
@@ -285,7 +299,7 @@ impl Application for FilePicker {
                 }
             },
             Message::LoadBookmark(idx) => {
-                self.dirs = vec![self.bookmarks[idx].path.clone()];
+                self.dirs = vec![self.conf.bookmarks[idx].path.clone()];
                 return self.update(Message::LoadDir);
             },
             Message::LoadDir => {
@@ -405,7 +419,7 @@ impl Application for FilePicker {
                     .on_input(Message::TxtInput)
                     .on_paste(Message::TxtInput),
             ].align_items(iced::Alignment::End).width(Length::Fill);
-            let bookmarks = self.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
+            let bookmarks = self.conf.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
                         col.push(Button::new(
                                     container(
                                         text(bm.label.as_str())
@@ -666,7 +680,7 @@ impl FilePicker {
         for dir in self.dirs.iter() {
             let entries: Vec<_> = std::fs::read_dir(dir.as_str()).unwrap().map(|f| f.unwrap().path()).collect();
             entries.iter().filter(|path|{ self.show_hidden ||
-                !path.as_os_str().to_str().map(|s|s.rsplitn(2,'/').next().unwrap().starts_with('.')).unwrap_or(false)
+                !path.as_os_str().to_str().map(|s|s.rsplitn(2,'/').next().unwrap_or("").starts_with('.')).unwrap_or(false)
             }).for_each(|path| {
                 ret.push(Item::new(path.into(), self.nav_id));
             });
@@ -684,10 +698,10 @@ impl FilePicker {
         match target {
             Some(i) if i >= 0 => {
                 // TODO: multi-dir bookmark?
-                self.bookmarks.push(Bookmark::new(label, item.path.as_str()));
+                self.conf.bookmarks.push(Bookmark::new(label, item.path.as_str()));
             },
             Some(_) => {
-                self.bookmarks.push(Bookmark::new(label, item.path.as_str()));
+                self.conf.bookmarks.push(Bookmark::new(label, item.path.as_str()));
             },
             None => {},
         }
