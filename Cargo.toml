@@ -11,3 +11,5 @@ num_cpus = "1.16.0"
 tokio = { version = "1.37.0", features = ["full"] }
 img = { package = "image", version = "0.25.1" }
 itertools = "0.12.1"
+video-rs = { version = "0.7.3", features = ["ndarray"] }
+ndarray = "0.15.6"

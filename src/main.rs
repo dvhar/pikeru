@@ -40,10 +40,13 @@ use std::{
     sync::Arc,
     time::{Instant,Duration},
 };
+use video_rs::{Decoder, Location, DecoderBuilder, Resize};
+use ndarray;
 
 const THUMBSIZE: f32 = 160.0;
 
 fn main() -> iced::Result {
+    video_rs::init().unwrap();
     FilePicker::run(iced::Settings::default())
 }
 
@@ -92,6 +95,7 @@ struct Item {
     sel: bool,
     nav_id: u8,
     mtime: f32,
+    vid: bool,
 }
 
 struct Icons {
@@ -146,6 +150,7 @@ impl Application for FilePicker {
                     Bookmark::new("Home", "/home/d"),
                     Bookmark::new("Pictures", "/home/d/Pictures"),
                     Bookmark::new("Documents", "/home/d/Documents"),
+                    Bookmark::new("ram", "/home/d/ram"),
                 ],
                 last_loaded: 0,
                 last_clicked: None,
@@ -251,7 +256,7 @@ impl Application for FilePicker {
                 if idx >= 0 {
                     let item = &self.items[idx as usize];
                     if item.ftype == FType::Image {
-                        self.view_image = (idx as usize, Some(Handle::from_path(item.path.as_str())));
+                        self.view_image = (item.idx, item.preview());
                         self.click_item(idx as usize, false, false);
                     } else {
                         self.click_item(idx as usize, true, false);
@@ -267,7 +272,7 @@ impl Application for FilePicker {
                     while (y<0 && i>0) || (y>0 && i<self.items.len()-1) {
                         i = ((i as i64) + y) as usize;
                         if self.items[i as usize].ftype == FType::Image {
-                            self.view_image = (i as usize, Some(Handle::from_path(self.items[i].path.as_str())));
+                            self.view_image = (i as usize, self.items[i].preview());
                             return self.update(Message::LeftClick(i as usize));
                         }
                     }
@@ -449,6 +454,18 @@ impl Item {
         }
     }
 
+    fn preview(self: &Self) -> Option<Handle> {
+        match (&self.ftype, self.vid) {
+            (FType::Image, false) => {
+               Some(Handle::from_path(self.path.as_str()))
+            },
+            (FType::Image, true) => {
+               vid_frame(self.path.as_str(), false)
+            },
+            _ => None,
+        }
+    }
+
     fn isdir(self: &Self) -> bool {
         return self.ftype == FType::Dir;
     }
@@ -469,6 +486,7 @@ impl Item {
             sel: false,
             nav_id,
             mtime: mtime.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32(),
+            vid: false,
         }
     }
 
@@ -510,6 +528,11 @@ impl Item {
                                 FType::File
                             },
                         }
+                    },
+                    "webm"|"mkv"|"mp4"|"av1" => {
+                        self.handle = vid_frame(self.path.as_str(), true);
+                        self.vid = true;
+                        FType::Image
                     },
                     "txt"|"pdf"|"doc"|"docx"|"xls"|"xlsx" => {
                         self.handle = Some(icons.doc.clone());
@@ -661,7 +684,7 @@ impl ClickTimer {
     }
 }
 
-pub struct SelectedTheme;
+struct SelectedTheme;
 impl StyleSheet for SelectedTheme {
     type Style = iced::Theme;
     fn appearance(&self, _style: &Self::Style) -> Appearance {
@@ -672,8 +695,38 @@ impl StyleSheet for SelectedTheme {
         appearance
     }
 }
-pub fn get_sel_theme() -> Container {
+fn get_sel_theme() -> Container {
     Container::Custom(
         Box::new(SelectedTheme) as Box<dyn StyleSheet<Style = iced::Theme>>
     )
+}
+
+fn vid_frame(src: &str, thumbnail: bool) -> Option<Handle> {
+    let mut decoder = if thumbnail {
+        DecoderBuilder::new(Location::File(src.into()))
+            .with_resize(Resize::Fit(THUMBSIZE as u32, THUMBSIZE as u32)).build().ok()?
+    } else {
+        Decoder::new(Location::File(src.into())).ok()?
+    };
+    let (w, h) = decoder.size_out();
+    let decoded = decoder.decode_iter().next()?;
+    match decoded {
+        Ok(frame) => {
+            let rgb = frame.1.slice(ndarray::s![.., .., ..]).to_slice()?;
+            let mut rgba = vec![0; rgb.len() * 4 / 3];
+            for i in 0..rgb.len() / 3 { unsafe {
+                let i3 = i * 3;
+                let i4 = i * 4;
+                *rgba.get_unchecked_mut(i4) = *rgb.get_unchecked(i3);
+                *rgba.get_unchecked_mut(i4+1) = *rgb.get_unchecked(i3+1);
+                *rgba.get_unchecked_mut(i4+2) = *rgb.get_unchecked(i3+2);
+                *rgba.get_unchecked_mut(i4+3) = 255;
+            }}
+            Some(Handle::from_pixels(w, h, rgba))
+        },
+        Err(e) => {
+            eprintln!("Error decoding {}: {}", src, e);
+            None
+        }
+    }
 }
