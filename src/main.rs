@@ -42,12 +42,70 @@ use std::{
 };
 use video_rs::{Decoder, Location, DecoderBuilder, Resize};
 use ndarray;
+use getopts::Options;
+
+macro_rules! die {
+    ($($arg:tt)*) => {{
+        eprintln!($($arg)*);
+        std::process::exit(1);
+    }};
+}
 
 const THUMBSIZE: f32 = 160.0;
 
 fn main() -> iced::Result {
+    let opts = Opts::new();
     video_rs::init().unwrap();
-    FilePicker::run(iced::Settings::default())
+    FilePicker::run(iced::Settings::with_flags(opts))
+}
+
+struct Opts {
+    title: String,
+    path: String,
+    mode: Mode,
+}
+
+impl Opts {
+    fn new() -> Self {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let mut opts = Options::new();
+        let pwd = std::env::var("PWD").unwrap();
+        opts.optopt("t", "title", "Title of the filepicker window", "NAME");
+        opts.optopt("m", "mode", "Mode of file selection. Default is files", "[file, files, save, dir]");
+        opts.optopt("p", "path", "Initial path", "PATH");
+        let matches = match opts.parse(args) {
+            Ok(m) => { m },
+            Err(e) => die!("bad args:{}", e),
+        };
+        Opts {
+            mode: Mode::from(matches.opt_str("m")),
+            path: matches.opt_str("p").unwrap_or(pwd),
+            title: "File Picker".to_string(),
+        }
+    }
+}
+
+enum Mode {
+    File,
+    Files,
+    Save,
+    Dir,
+}
+impl Mode {
+   fn from(opt: Option<String>) -> Self {
+       match opt {
+           None => Self::Files,
+           Some(s) => {
+               match s.as_str() {
+                   "file" => Self::File,
+                   "files" => Self::Files,
+                   "save" => Self::Save,
+                   "dir" => Self::Dir,
+                   _ => Self::Files,
+               }
+           }
+       }
+   }
 }
 
 #[derive(Debug, Clone)]
@@ -65,7 +123,7 @@ enum Message {
     TxtInput(String),
     Shift(bool),
     Ctrl(bool),
-    Drop(usize, Point),
+    DropBookmark(usize, Point),
     HandleZones(usize, Vec<(Id, iced::Rectangle)>),
     NextImage(i64),
     Scrolled(scrollable::Viewport),
@@ -112,6 +170,7 @@ struct Bookmark {
 }
 
 struct FilePicker {
+    opts: Opts,
     scroll_id: scrollable::Id,
     items: Vec<Item>,
     dirs: Vec<String>,
@@ -135,17 +194,17 @@ impl Application for FilePicker {
     type Executor = executor::Default;
     type Message = Message;
     type Theme = iced::Theme;
-    type Flags = ();
+    type Flags = Opts;
 
-    fn new(_flags: Self::Flags) -> (Self, iced::Command<Self::Message>) {
+    fn new(opts: Self::Flags) -> (Self, iced::Command<Self::Message>) {
+        let path = opts.path.clone();
         (
             Self {
+                opts,
                 items: Default::default(),
                 thumb_sender: None,
                 nproc: num_cpus::get(),
-                dirs: vec![
-                    "/home/d/sync/docs/pics".into(),
-                ],
+                dirs: vec![path],
                 bookmarks: vec![
                     Bookmark::new("Home", "/home/d"),
                     Bookmark::new("Pictures", "/home/d/Pictures"),
@@ -174,7 +233,7 @@ impl Application for FilePicker {
     }
 
     fn title(&self) -> String {
-        String::from("File Picker")
+        self.opts.title.clone()
     }
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
@@ -185,7 +244,7 @@ impl Application for FilePicker {
                     return self.keep_in_view(widget, viewport);
                 }
             },
-            Message::Drop(idx, cursor_pos) => {
+            Message::DropBookmark(idx, cursor_pos) => {
                 return iced_drop::zones_on_point(
                     move |zones| Message::HandleZones(idx, zones),
                     cursor_pos, None, None,
@@ -428,11 +487,11 @@ impl Item {
         let idx = self.idx;
         let clickable = match (self.isdir(), self.sel) {
             (true, true) => {
-                let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::Drop(idx, point));
+                let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::DropBookmark(idx, point));
                 mouse_area(container(dr).style(get_sel_theme()))
             },
             (true, false) => {
-                let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::Drop(idx, point));
+                let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::DropBookmark(idx, point));
                 mouse_area(dr)
             },
             (false, true) => {
