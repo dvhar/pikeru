@@ -125,7 +125,6 @@ struct FilePicker {
     show_hidden: bool,
     view_image: (usize, Option<Handle>),
     scroll_offset: scrollable::AbsoluteOffset,
-    sel_pos: Option<(Rectangle, Rectangle)>,
 }
 
 impl Application for FilePicker {
@@ -160,7 +159,6 @@ impl Application for FilePicker {
                 show_hidden: false,
                 view_image: (0, None),
                 scroll_offset: scrollable::AbsoluteOffset{x: 0.0, y: 0.0},
-                sel_pos: None,
             },
             Command::none(),
         )
@@ -177,10 +175,9 @@ impl Application for FilePicker {
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
             Message::PositionInfo(widget, viewport) => {
-                self.sel_pos = Some((widget, viewport));
                 if let Some(_) = self.last_clicked {
                     self.last_clicked = None;
-                    return self.keep_in_view();
+                    return self.keep_in_view(widget, viewport);
                 }
             },
             Message::Drop(idx, cursor_pos) => {
@@ -255,6 +252,7 @@ impl Application for FilePicker {
                     let item = &self.items[idx as usize];
                     if item.ftype == FType::Image {
                         self.view_image = (idx as usize, Some(Handle::from_path(item.path.as_str())));
+                        self.click_item(idx as usize, false, false);
                     } else {
                         self.click_item(idx as usize, true, false);
                     }
@@ -408,16 +406,20 @@ impl Item {
         if let Some(h) = &self.handle {
             col = col.push(image(h.clone()));
         }
-        let mut label = self.path.rsplitn(2,'/').next().unwrap();
-        col = if label.len() > 16 {
-            label = &label[(label.len()-16)..label.len()];
-            let mut shortened = ['.' as u8; 19];
-            shortened[3..3+label.len()].copy_from_slice(label.as_bytes());
-            col.push(text(unsafe{std::str::from_utf8_unchecked(&shortened)})).into()
+        let label = self.path.rsplitn(2,'/').next().unwrap();
+        col = if label.len() > 20 {
+            let mut shortened = ['.' as u8; 40];
+            let splitpoint = label.len()-20;
+            let maxlen = 36.min(label.len());
+            //TODO: watch out for unicode runes
+            shortened[19] = b'\n';
+            shortened[20..].copy_from_slice(&label.as_bytes()[splitpoint..]);
+            shortened[39-maxlen..19].copy_from_slice(&label.as_bytes()[label.len()-maxlen..splitpoint]);
+            let start = 40 - maxlen - if label.len() > maxlen { 3 } else { 1 };
+            col.push(text(unsafe{std::str::from_utf8_unchecked(&shortened[start..])}).size(13)).into()
         } else {
-            col.push(text(label)).into()
+            col.push(text(label).size(13)).into()
         };
-
         let idx = self.idx;
         let clickable = match (self.isdir(), self.sel) {
             (true, true) => {
@@ -526,21 +528,16 @@ impl Item {
 
 impl FilePicker {
 
-    fn keep_in_view(self: &mut Self) -> Command<Message> {
-        if let Some((w,v)) = self.sel_pos {
-            let wtop = w.y;
-            let wbot = wtop + w.height;
-            let vtop = v.y;
-            let vbot = vtop + v.height;
-            let abspos = if wtop < vtop {
-                wtop
-            } else if wbot > vbot {
-               wbot - v.height
-            } else { -1.0 };
-            if abspos >= 0.0 {
-                let offset = scrollable::AbsoluteOffset{x:0.0, y:abspos - 61.6}; //TODO: calculate top position
-                return scrollable::scroll_to(self.scroll_id.clone(), offset);
-            }
+    fn keep_in_view(self: &mut Self, w: Rectangle, v: Rectangle) -> Command<Message> {
+        let wbot = w.y + w.height;
+        let abspos = if w.y < v.y {
+            w.y
+        } else if wbot > v.y + v.height {
+           wbot - v.height
+        } else { -1.0 };
+        if abspos >= 0.0 {
+            let offset = scrollable::AbsoluteOffset{x:0.0, y:abspos - 61.6}; //TODO: calculate top position
+            return scrollable::scroll_to(self.scroll_id.clone(), offset);
         }
         Command::none()
     }
@@ -571,8 +568,8 @@ impl FilePicker {
         } else if prevsel.len() == 1 || ctrl {
             self.items[i].sel = false;
         }
-        prevsel.iter().for_each(|j| {
-            if !ctrl || self.items[*j].isdir() != isdir { self.items[*j].sel = false; }
+        prevsel.into_iter().for_each(|j| {
+            if !ctrl || self.items[j].isdir() != isdir { self.items[j].sel = false; }
         });
         if self.items[i].sel {
             self.inputbar = self.items[i].path.clone();
