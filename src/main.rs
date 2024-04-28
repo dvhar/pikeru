@@ -1,5 +1,3 @@
-use configparser::ini::Ini;
-use configparser::ini::IniDefault;
 use img::load_from_memory;
 use num_cpus;
 use itertools::Itertools;
@@ -36,6 +34,7 @@ use tokio::{
     fs::File, io::AsyncReadExt,
 };
 use std::{
+    str,
     path::{PathBuf,Path},
     mem,
     process,
@@ -45,6 +44,8 @@ use std::{
 use video_rs::{Decoder, Location, DecoderBuilder, Resize};
 use ndarray;
 use getopts::Options;
+use iced_aw::{menu_bar, menu_items};
+use iced_aw::menu::{Item, Menu};
 
 macro_rules! die {
     ($($arg:tt)*) => {{
@@ -83,25 +84,32 @@ impl Config {
 
         let home = std::env::var("HOME").unwrap();
         let confpath = home + "/.config/pikeru.conf";
-        let mut ini = Ini::new();
-        let mut iniconf = IniDefault::default();
-        iniconf.case_sensitive = true;
-        ini.load_defaults(iniconf.clone());
-        let conf = ini.load(confpath).unwrap();
-
-        //let commands = mapmap.get("Commands").unwrap();
-        //let settings = mapmap.get("Settings").unwrap();
-        let bookmarks = conf.get("Bookmarks").unwrap();
+        let txt = std::fs::read_to_string(confpath).unwrap();
+        let mut bookmarks = vec![];
+        enum S { Commands, Settings, Bookmarks }
+        let mut section = S::Commands;
+        for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
+            match line {
+                "[Commands]" => section = S::Commands,
+                "[Settings]" => section = S::Settings,
+                "[Bookmarks]" => section = S::Bookmarks,
+                _ => {
+                    let (k, v) = str::split_once(line, '=').unwrap();
+                    let (k, v) = (k.trim(), v.trim());
+                    match section {
+                        S::Bookmarks => bookmarks.push(Bookmark::new(k,v)),
+                        S::Settings => {},
+                        S::Commands => {},
+                    }
+                },
+            }
+        }
 
         Config {
             mode: Mode::from(matches.opt_str("m")),
             path: matches.opt_str("p").unwrap_or(pwd),
             title: "File Picker".to_string(),
-            bookmarks: bookmarks.into_iter().map(|bm| {
-                let k = bm.0.as_str();
-                let v = bm.1.clone();
-                Bookmark::new(k, v.unwrap().as_str())
-            }).collect(),
+            bookmarks,
         }
     }
 }
@@ -136,8 +144,8 @@ enum Message {
     Open,
     Cancel,
     UpDir,
-    Init(mpsc::Sender<Item>),
-    NextItem(Item),
+    Init(mpsc::Sender<FileItem>),
+    NextItem(FileItem),
     LeftClick(usize),
     MiddleClick(usize),
     RightClick(i64),
@@ -149,11 +157,12 @@ enum Message {
     NextImage(i64),
     Scrolled(scrollable::Viewport),
     PositionInfo(Rectangle, Rectangle),
+    View(i64),
 }
 
 enum SubState {
     Starting,
-    Ready(mpsc::Receiver<Item>),
+    Ready(mpsc::Receiver<FileItem>),
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -166,7 +175,7 @@ enum FType {
 }
 
 #[derive(Debug, Clone, Default)]
-struct Item {
+struct FileItem {
     path: String,
     ftype: FType,
     handle: Option<Handle>,
@@ -193,10 +202,10 @@ struct Bookmark {
 struct FilePicker {
     conf: Config,
     scroll_id: scrollable::Id,
-    items: Vec<Item>,
+    items: Vec<FileItem>,
     dirs: Vec<String>,
     inputbar: String,
-    thumb_sender: Option<mpsc::Sender<Item>>,
+    thumb_sender: Option<mpsc::Sender<FileItem>>,
     nproc: usize,
     last_loaded: usize,
     last_clicked: Option<usize>,
@@ -223,7 +232,7 @@ impl Application for FilePicker {
                 conf,
                 items: Default::default(),
                 thumb_sender: None,
-                nproc: num_cpus::get(),
+                nproc: num_cpus::get() * 5,
                 dirs: vec![path],
                 last_loaded: 0,
                 last_clicked: None,
@@ -252,6 +261,8 @@ impl Application for FilePicker {
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
+            Message::View(_) => {
+            },
             Message::PositionInfo(widget, viewport) => {
                 if let Some(_) = self.last_clicked {
                     self.last_clicked = None;
@@ -303,6 +314,7 @@ impl Application for FilePicker {
                 return self.update(Message::LoadDir);
             },
             Message::LoadDir => {
+                self.view_image = (0, None);
                 self.inputbar = self.dirs[0].clone();
                 self.load_dir();
                 self.last_loaded = self.nproc.min(self.items.len());
@@ -352,7 +364,7 @@ impl Application for FilePicker {
                 }
             }
             Message::Open => {
-                let sels: Vec<&Item> = self.items.iter().filter(|item| item.sel ).collect();
+                let sels: Vec<&FileItem> = self.items.iter().filter(|item| item.sel ).collect();
                 if sels.len() != 0 {
                     match sels[0].ftype {
                         FType::Dir => {
@@ -370,6 +382,10 @@ impl Application for FilePicker {
             Message::Cancel => process::exit(0),
         }
         Command::none()
+    }
+
+    fn scale_factor(self: &Self) -> f64 {
+        1.0
     }
 
     fn subscription(&self) -> iced::Subscription<Self::Message> {
@@ -406,10 +422,22 @@ impl Application for FilePicker {
 
     fn view(&self) -> iced::Element<'_, Self::Message> {
         responsive(|size| {
+            let view_menu = |items| Menu::new(items).max_width(180.0).offset(15.0).spacing(5.0);
             let ctrlbar = column![
                 row![
-                    top_button("Cmd", 80.0, Message::Cancel),
-                    top_button("View", 80.0, Message::Cancel),
+                    menu_bar![
+                        (top_button("Cmd", 80.0, Message::View(0)),
+                            view_menu(menu_items!(
+                                    (menu_button("test 1",Message::View(1)))
+                                    )))
+                        (top_button("View", 80.0, Message::View(0)),
+                            view_menu(menu_items!(
+                                    (menu_button("test 1",Message::View(1)))
+                                    (menu_button("test 2",Message::View(1)))
+                                    (menu_button("test 3",Message::View(1)))
+                                    (menu_button("test 4",Message::View(1)))
+                                    )))
+                    ].spacing(2.0),
                     top_button("New Dir", 80.0, Message::Cancel),
                     top_button("Up Dir", 80.0, Message::UpDir),
                     top_button("Cancel", 100.0, Message::Cancel),
@@ -468,6 +496,12 @@ impl Application for FilePicker {
     }
 }
 
+fn menu_button(txt: &str, msg: Message) -> Element<'static, Message> {
+    Button::new(container(text(txt)
+                .width(Length::Fill)
+                .horizontal_alignment(alignment::Horizontal::Center)))
+        .on_press(msg).into()
+}
 fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
     Button::new(text(txt)
                 .width(size)
@@ -475,7 +509,7 @@ fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
         .on_press(msg).into()
 }
 
-impl Item {
+impl FileItem {
 
     fn display(&self, last_clicked: Option<usize>) -> Element<'static, Message> {
         let mut col = Column::new()
@@ -551,7 +585,7 @@ impl Item {
             FType::Unknown
         };
         let mtime = md.modified().unwrap();
-        Item {
+        FileItem {
             path: pth.to_string_lossy().to_string(),
             ftype,
             idx: 0,
@@ -563,7 +597,7 @@ impl Item {
         }
     }
 
-    async fn load(mut self, mut chan: mpsc::Sender<Item>, icons: Arc<Icons>) {
+    async fn load(mut self, mut chan: mpsc::Sender<FileItem>, icons: Arc<Icons>) {
         match self.ftype {
             FType::Dir => {
                 self.handle = Some(icons.folder.clone());
@@ -682,7 +716,7 @@ impl FilePicker {
             entries.iter().filter(|path|{ self.show_hidden ||
                 !path.as_os_str().to_str().map(|s|s.rsplitn(2,'/').next().unwrap_or("").starts_with('.')).unwrap_or(false)
             }).for_each(|path| {
-                ret.push(Item::new(path.into(), self.nav_id));
+                ret.push(FileItem::new(path.into(), self.nav_id));
             });
         }
         ret.sort_unstable_by(|a,b| {
@@ -786,14 +820,13 @@ fn vid_frame(src: &str, thumbnail: bool) -> Option<Handle> {
     match decoded {
         Ok(frame) => {
             let rgb = frame.1.slice(ndarray::s![.., .., ..]).to_slice()?;
-            let mut rgba = vec![0; rgb.len() * 4 / 3];
+            let mut rgba = vec![255; rgb.len() * 4 / 3];
             for i in 0..rgb.len() / 3 { unsafe {
                 let i3 = i * 3;
                 let i4 = i * 4;
                 *rgba.get_unchecked_mut(i4) = *rgb.get_unchecked(i3);
                 *rgba.get_unchecked_mut(i4+1) = *rgb.get_unchecked(i3+1);
                 *rgba.get_unchecked_mut(i4+2) = *rgb.get_unchecked(i3+2);
-                *rgba.get_unchecked_mut(i4+3) = 255;
             }}
             Some(Handle::from_pixels(w, h, rgba))
         },
