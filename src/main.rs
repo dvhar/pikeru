@@ -38,6 +38,7 @@ use std::{
     path::{PathBuf,Path},
     mem,
     process,
+    process::Command as OsCmd,
     sync::Arc,
     time::{Instant,Duration},
 };
@@ -285,9 +286,7 @@ impl Application for FilePicker {
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
-            Message::RunCmd(i) => {
-                eprintln!("CMD:{}", self.conf.cmds[i].cmd);
-            },
+            Message::RunCmd(i) => self.run_command(i),
             Message::View(i) => {
                 match i {
                     1 => self.items.sort_unstable_by(|a,b|b.isdir().cmp(&a.isdir()).then_with(||a.path.cmp(&b.path))),
@@ -699,6 +698,31 @@ impl FileItem {
 }
 
 impl FilePicker {
+
+    fn run_command(self: &Self, icmd: usize) {
+        let cmd = self.conf.cmds[icmd].cmd.as_str();
+        self.items.iter().filter(|item| item.sel).for_each(|item| {
+            let path = Path::new(item.path.as_str());
+            let fname = path.file_name().unwrap().to_string_lossy();
+            let part = match fname.splitn(2, '.').next() {
+                Some(s) => s,
+                None => &fname,
+            };
+            let filecmd = cmd.replace("[path]", item.path.as_str())
+                .replace("[dir]", &path.parent().unwrap().to_string_lossy())
+                .replace("[ext]", format!(".{}", &path.extension().unwrap().to_string_lossy()).as_str())
+                .replace("[name]", &fname)
+                .replace("[part]", &part);
+            tokio::task::spawn_blocking(|| {
+                match OsCmd::new("bash").arg("-c").arg(filecmd).output() {
+                    Ok(output) => eprintln!("{}{}",
+                                            unsafe{std::str::from_utf8_unchecked(&output.stdout)},
+                                            unsafe{std::str::from_utf8_unchecked(&output.stderr)}),
+                    Err(e) => eprintln!("Error running command: {}", e)
+                };
+            });
+        });
+    }
 
     fn keep_in_view(self: &mut Self, w: Rectangle, v: Rectangle) -> Command<Message> {
         let wbot = w.y + w.height;
