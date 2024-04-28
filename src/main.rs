@@ -157,7 +157,7 @@ enum Message {
     NextImage(i64),
     Scrolled(scrollable::Viewport),
     PositionInfo(Rectangle, Rectangle),
-    View(i64),
+    View(i32),
 }
 
 enum SubState {
@@ -177,6 +177,7 @@ enum FType {
 #[derive(Debug, Clone, Default)]
 struct FileItem {
     path: String,
+    label: String,
     ftype: FType,
     handle: Option<Handle>,
     idx: usize,
@@ -217,6 +218,7 @@ struct FilePicker {
     show_hidden: bool,
     view_image: (usize, Option<Handle>),
     scroll_offset: scrollable::AbsoluteOffset,
+    sort_by: i32,
 }
 
 impl Application for FilePicker {
@@ -246,6 +248,7 @@ impl Application for FilePicker {
                 show_hidden: false,
                 view_image: (0, None),
                 scroll_offset: scrollable::AbsoluteOffset{x: 0.0, y: 0.0},
+                sort_by: 1,
             },
             Command::none(),
         )
@@ -261,7 +264,15 @@ impl Application for FilePicker {
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
-            Message::View(_) => {
+            Message::View(i) => {
+                match i {
+                    1 => self.items.sort_unstable_by(|a,b|b.isdir().cmp(&a.isdir()).then_with(||a.path.cmp(&b.path))),
+                    2 => self.items.sort_unstable_by(|a,b|b.isdir().cmp(&a.isdir()).then_with(||b.path.cmp(&a.path))),
+                    3 => self.items.sort_unstable_by(|a,b|b.isdir().cmp(&a.isdir()).then_with(||b.mtime.partial_cmp(&a.mtime).unwrap())),
+                    4 => self.items.sort_unstable_by(|a,b|b.isdir().cmp(&a.isdir()).then_with(||a.mtime.partial_cmp(&b.mtime).unwrap())),
+                    _ => {},
+                }
+                self.items.iter_mut().enumerate().for_each(|(i,item)|item.idx = i);
             },
             Message::PositionInfo(widget, viewport) => {
                 if let Some(_) = self.last_clicked {
@@ -317,6 +328,7 @@ impl Application for FilePicker {
                 self.view_image = (0, None);
                 self.inputbar = self.dirs[0].clone();
                 self.load_dir();
+                let _ = self.update(Message::View(1));
                 self.last_loaded = self.nproc.min(self.items.len());
                 for i in 0..self.last_loaded {
                     let item = mem::take(&mut self.items[i]);
@@ -428,14 +440,14 @@ impl Application for FilePicker {
                     menu_bar![
                         (top_button("Cmd", 80.0, Message::View(0)),
                             view_menu(menu_items!(
-                                    (menu_button("test 1",Message::View(1)))
+                                    (menu_button("test 1",Message::View(0)))
                                     )))
                         (top_button("View", 80.0, Message::View(0)),
                             view_menu(menu_items!(
-                                    (menu_button("test 1",Message::View(1)))
-                                    (menu_button("test 2",Message::View(1)))
-                                    (menu_button("test 3",Message::View(1)))
-                                    (menu_button("test 4",Message::View(1)))
+                                    (menu_button("Sort A-Z",Message::View(1)))
+                                    (menu_button("Sort Z-A",Message::View(2)))
+                                    (menu_button("Sort Newest first",Message::View(3)))
+                                    (menu_button("Sort Oldest first",Message::View(4)))
                                     )))
                     ].spacing(2.0),
                     top_button("New Dir", 80.0, Message::Cancel),
@@ -518,20 +530,7 @@ impl FileItem {
         if let Some(h) = &self.handle {
             col = col.push(image(h.clone()));
         }
-        let label = self.path.rsplitn(2,'/').next().unwrap();
-        col = if label.len() > 20 {
-            let mut shortened = ['.' as u8; 40];
-            let splitpoint = label.len()-20;
-            let maxlen = 36.min(label.len());
-            //TODO: watch out for unicode runes
-            shortened[19] = b'\n';
-            shortened[20..].copy_from_slice(&label.as_bytes()[splitpoint..]);
-            shortened[39-maxlen..19].copy_from_slice(&label.as_bytes()[label.len()-maxlen..splitpoint]);
-            let start = 40 - maxlen - if label.len() > maxlen { 3 } else { 1 };
-            col.push(text(unsafe{std::str::from_utf8_unchecked(&shortened[start..])}).size(13)).into()
-        } else {
-            col.push(text(label).size(13)).into()
-        };
+        col = col.push(text(self.label.as_str()).size(13));
         let idx = self.idx;
         let clickable = match (self.isdir(), self.sel) {
             (true, true) => {
@@ -585,8 +584,22 @@ impl FileItem {
             FType::Unknown
         };
         let mtime = md.modified().unwrap();
+        let path = pth.to_string_lossy();
+        let mut label = path.rsplitn(2,'/').next().unwrap().to_string();
+        if label.len() > 20 {
+            let mut shortened = ['.' as u8; 40];
+            let splitpoint = label.len()-20;
+            let maxlen = 36.min(label.len());
+            //TODO: watch out for unicode runes
+            shortened[19] = b'\n';
+            shortened[20..].copy_from_slice(&label.as_bytes()[splitpoint..]);
+            shortened[39-maxlen..19].copy_from_slice(&label.as_bytes()[label.len()-maxlen..splitpoint]);
+            let start = 40 - maxlen - if label.len() > maxlen { 3 } else { 1 };
+            label = String::from(unsafe{std::str::from_utf8_unchecked(&shortened[start..])})
+        }
         FileItem {
-            path: pth.to_string_lossy().to_string(),
+            path: path.to_string(),
+            label,
             ftype,
             idx: 0,
             handle: None,
@@ -719,10 +732,6 @@ impl FilePicker {
                 ret.push(FileItem::new(path.into(), self.nav_id));
             });
         }
-        ret.sort_unstable_by(|a,b| {
-            b.isdir().cmp(&a.isdir()).then_with(||a.path.cmp(&b.path))
-        });
-        ret.iter_mut().enumerate().for_each(|(i, item)| item.idx = i);
         self.items = ret
     }
 
