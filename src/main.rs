@@ -54,8 +54,6 @@ macro_rules! die {
     }};
 }
 
-const THUMBSIZE: f32 = 160.0;
-
 fn main() -> iced::Result {
     let opts = Config::new();
     video_rs::init().unwrap();
@@ -66,7 +64,10 @@ struct Config {
     title: String,
     path: String,
     mode: Mode,
+    sort_by: i32,
     bookmarks: Vec<Bookmark>,
+    cmds: Vec<Cmd>,
+    thumb_size: f32,
 }
 
 impl Config {
@@ -85,9 +86,12 @@ impl Config {
         let home = std::env::var("HOME").unwrap();
         let confpath = home + "/.config/pikeru.conf";
         let txt = std::fs::read_to_string(confpath).unwrap();
-        let mut bookmarks = vec![];
         enum S { Commands, Settings, Bookmarks }
         let mut section = S::Commands;
+        let mut bookmarks = vec![];
+        let mut cmds = vec![];
+        let mut sort_by = 1;
+        let mut thumb_size = 160.0;
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
             match line {
                 "[Commands]" => section = S::Commands,
@@ -97,9 +101,18 @@ impl Config {
                     let (k, v) = str::split_once(line, '=').unwrap();
                     let (k, v) = (k.trim(), v.trim());
                     match section {
+                        S::Commands => cmds.push(Cmd::new(k, v)),
                         S::Bookmarks => bookmarks.push(Bookmark::new(k,v)),
-                        S::Settings => {},
-                        S::Commands => {},
+                        S::Settings => match k {
+                            "thumbnail_size" => thumb_size = v.parse().unwrap(),
+                            "sort_by" => sort_by = match v {
+                                "name_desc" => 2,
+                                "time_asc" => 3,
+                                "time_desc" => 4,
+                                _ => 1,
+                            },
+                            _ => {},
+                        },
                     }
                 },
             }
@@ -109,7 +122,10 @@ impl Config {
             mode: Mode::from(matches.opt_str("m")),
             path: matches.opt_str("p").unwrap_or(pwd),
             title: "File Picker".to_string(),
+            cmds,
             bookmarks,
+            sort_by,
+            thumb_size,
         }
     }
 }
@@ -158,6 +174,7 @@ enum Message {
     Scrolled(scrollable::Viewport),
     PositionInfo(Rectangle, Rectangle),
     View(i32),
+    RunCmd(usize),
 }
 
 enum SubState {
@@ -199,6 +216,11 @@ struct Bookmark {
     path: String,
     id: CId,
 }
+#[derive(Debug)]
+struct Cmd {
+    label: String,
+    cmd: String,
+}
 
 struct FilePicker {
     conf: Config,
@@ -218,7 +240,6 @@ struct FilePicker {
     show_hidden: bool,
     view_image: (usize, Option<Handle>),
     scroll_offset: scrollable::AbsoluteOffset,
-    sort_by: i32,
 }
 
 impl Application for FilePicker {
@@ -229,6 +250,7 @@ impl Application for FilePicker {
 
     fn new(conf: Self::Flags) -> (Self, iced::Command<Self::Message>) {
         let path = conf.path.clone();
+        let ts = conf.thumb_size;
         (
             Self {
                 conf,
@@ -239,7 +261,7 @@ impl Application for FilePicker {
                 last_loaded: 0,
                 last_clicked: None,
                 inputbar: Default::default(),
-                icons: Arc::new(Icons::new()),
+                icons: Arc::new(Icons::new(ts)),
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
                 ctrl_pressed: false,
                 shift_pressed: false,
@@ -248,7 +270,6 @@ impl Application for FilePicker {
                 show_hidden: false,
                 view_image: (0, None),
                 scroll_offset: scrollable::AbsoluteOffset{x: 0.0, y: 0.0},
-                sort_by: 1,
             },
             Command::none(),
         )
@@ -264,6 +285,9 @@ impl Application for FilePicker {
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
+            Message::RunCmd(i) => {
+                eprintln!("CMD:{}", self.conf.cmds[i].cmd);
+            },
             Message::View(i) => {
                 match i {
                     1 => self.items.sort_unstable_by(|a,b|b.isdir().cmp(&a.isdir()).then_with(||a.path.cmp(&b.path))),
@@ -272,7 +296,10 @@ impl Application for FilePicker {
                     4 => self.items.sort_unstable_by(|a,b|b.isdir().cmp(&a.isdir()).then_with(||a.mtime.partial_cmp(&b.mtime).unwrap())),
                     _ => {},
                 }
-                self.items.iter_mut().enumerate().for_each(|(i,item)|item.idx = i);
+                if i > 0 && i < 5 {
+                    self.items.iter_mut().enumerate().for_each(|(i,item)|item.idx = i);
+                    self.conf.sort_by = i;
+                }
             },
             Message::PositionInfo(widget, viewport) => {
                 if let Some(_) = self.last_clicked {
@@ -314,7 +341,8 @@ impl Application for FilePicker {
                     self.last_loaded += 1;
                     if self.last_loaded < self.items.len() {
                         let nextitem = mem::take(&mut self.items[self.last_loaded]);
-                        tokio::task::spawn(nextitem.load(self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone()));
+                        tokio::task::spawn(nextitem.load(
+                                self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
                     }
                     let i = doneitem.idx;
                     self.items[i] = doneitem;
@@ -328,11 +356,12 @@ impl Application for FilePicker {
                 self.view_image = (0, None);
                 self.inputbar = self.dirs[0].clone();
                 self.load_dir();
-                let _ = self.update(Message::View(1));
+                let _ = self.update(Message::View(self.conf.sort_by));
                 self.last_loaded = self.nproc.min(self.items.len());
                 for i in 0..self.last_loaded {
                     let item = mem::take(&mut self.items[i]);
-                    tokio::task::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone()));
+                    tokio::task::spawn(item.load(
+                                self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
                 }
                 return scrollable::snap_to(self.scroll_id.clone(), scrollable::RelativeOffset::START);
             },
@@ -435,13 +464,13 @@ impl Application for FilePicker {
     fn view(&self) -> iced::Element<'_, Self::Message> {
         responsive(|size| {
             let view_menu = |items| Menu::new(items).max_width(180.0).offset(15.0).spacing(5.0);
+            let cmd_list = self.conf.cmds.iter().enumerate().map(
+                |(i,cmd)|Item::new(menu_button(cmd.label.as_str(), Message::RunCmd(i)))).collect();
             let ctrlbar = column![
                 row![
                     menu_bar![
-                        (top_button("Cmd", 80.0, Message::View(0)),
-                            view_menu(menu_items!(
-                                    (menu_button("test 1",Message::View(0)))
-                                    )))
+                        (top_button("Cmd", 80.0, Message::View(0)), 
+                            view_menu(cmd_list))
                         (top_button("View", 80.0, Message::View(0)),
                             view_menu(menu_items!(
                                     (menu_button("Sort A-Z",Message::View(1)))
@@ -479,7 +508,7 @@ impl Application for FilePicker {
                     ).on_right_press(Message::RightClick(-1))
                     .into()
             } else {
-                let maxcols = ((size.width-130.0) / THUMBSIZE).max(1.0) as usize;
+                let maxcols = ((size.width-130.0) / self.conf.thumb_size).max(1.0) as usize;
                 let num_rows = self.items.len() / maxcols + if self.items.len() % maxcols != 0 { 1 } else { 0 };
                 let mut rows = Column::new();
                 for i in 0..num_rows {
@@ -488,7 +517,7 @@ impl Application for FilePicker {
                     for j in 0..maxcols {
                         let idx = start + j;
                         if idx < self.items.len() {
-                            row = row.push(unsafe{self.items.get_unchecked(idx)}.display(self.last_clicked));
+                            row = row.push(unsafe{self.items.get_unchecked(idx)}.display(self.last_clicked, self.conf.thumb_size));
                         }
                     }
                     rows = rows.push(row);
@@ -523,10 +552,10 @@ fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
 
 impl FileItem {
 
-    fn display(&self, last_clicked: Option<usize>) -> Element<'static, Message> {
+    fn display(&self, last_clicked: Option<usize>, thumbsize: f32) -> Element<'static, Message> {
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
-            .width(THUMBSIZE);
+            .width(Length::Fixed(thumbsize));
         if let Some(h) = &self.handle {
             col = col.push(image(h.clone()));
         }
@@ -566,7 +595,7 @@ impl FileItem {
                Some(Handle::from_path(self.path.as_str()))
             },
             (FType::Image, true) => {
-               vid_frame(self.path.as_str(), false)
+               vid_frame(self.path.as_str(), None)
             },
             _ => None,
         }
@@ -610,7 +639,7 @@ impl FileItem {
         }
     }
 
-    async fn load(mut self, mut chan: mpsc::Sender<FileItem>, icons: Arc<Icons>) {
+    async fn load(mut self, mut chan: mpsc::Sender<FileItem>, icons: Arc<Icons>, thumbsize: u32) {
         match self.ftype {
             FType::Dir => {
                 self.handle = Some(icons.folder.clone());
@@ -630,7 +659,7 @@ impl FileItem {
                                 let img = load_from_memory(buffer.as_ref());
                                 match img {
                                     Ok(img) => {
-                                        let thumb = img.thumbnail(THUMBSIZE as u32, THUMBSIZE as u32);
+                                        let thumb = img.thumbnail(thumbsize, thumbsize);
                                         let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
                                         self.handle = Some(Handle::from_pixels(w, h, rgba.as_raw().clone()));
                                         FType::Image
@@ -650,7 +679,7 @@ impl FileItem {
                         }
                     },
                     "webm"|"mkv"|"mp4"|"av1" => {
-                        self.handle = vid_frame(self.path.as_str(), true);
+                        self.handle = vid_frame(self.path.as_str(), Some(thumbsize));
                         self.vid = true;
                         FType::Image
                     },
@@ -752,17 +781,17 @@ impl FilePicker {
 }
 
 impl Icons {
-    fn new() -> Self {
+    fn new(thumbsize: f32) -> Self {
         Self {
-            folder: Self::init(include_bytes!("../assets/folder.png")),
-            unknown:  Self::init(include_bytes!("../assets/unknown.png")),
-            doc:  Self::init(include_bytes!("../assets/document.png")),
-            error:  Self::init(include_bytes!("../assets/error.png")),
+            folder: Self::init(include_bytes!("../assets/folder.png"), thumbsize),
+            unknown:  Self::init(include_bytes!("../assets/unknown.png"), thumbsize),
+            doc:  Self::init(include_bytes!("../assets/document.png"), thumbsize),
+            error:  Self::init(include_bytes!("../assets/error.png"), thumbsize),
         }
     }
-    fn init(img_bytes: &[u8]) -> Handle {
+    fn init(img_bytes: &[u8], thumbsize: f32) -> Handle {
         let img = load_from_memory(img_bytes).unwrap();
-        let thumb = img.thumbnail((THUMBSIZE * 0.9) as u32, (THUMBSIZE * 0.9) as u32);
+        let thumb = img.thumbnail((thumbsize * 0.9) as u32, (thumbsize * 0.9) as u32);
         let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
         Handle::from_pixels(w, h, rgba.as_raw().clone())
     }
@@ -774,6 +803,15 @@ impl Bookmark {
             label: label.into(),
             path: path.into(),
             id: CId::new(label.to_string()),
+        }
+    }
+}
+
+impl Cmd {
+    fn new(label: &str, cmd: &str) -> Self {
+        Cmd {
+            label: label.into(),
+            cmd: cmd.into(),
         }
     }
 }
@@ -817,10 +855,10 @@ fn get_sel_theme() -> Container {
     )
 }
 
-fn vid_frame(src: &str, thumbnail: bool) -> Option<Handle> {
-    let mut decoder = if thumbnail {
+fn vid_frame(src: &str, thumbnail: Option<u32>) -> Option<Handle> {
+    let mut decoder = if let Some(thumbsize) = thumbnail {
         DecoderBuilder::new(Location::File(src.into()))
-            .with_resize(Resize::Fit(THUMBSIZE as u32, THUMBSIZE as u32)).build().ok()?
+            .with_resize(Resize::Fit(thumbsize, thumbsize)).build().ok()?
     } else {
         Decoder::new(Location::File(src.into())).ok()?
     };
