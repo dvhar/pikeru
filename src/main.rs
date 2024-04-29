@@ -39,6 +39,7 @@ use tokio::{
     }
 };
 use std::{
+    collections::HashMap,
     str,
     path::{PathBuf,Path},
     mem,
@@ -249,7 +250,7 @@ struct FilePicker {
     show_hidden: bool,
     view_image: (usize, Option<Handle>),
     scroll_offset: scrollable::AbsoluteOffset,
-    inoctl: Option<UnboundedSender<Inochan>>,
+    ino_updater: Option<UnboundedSender<Inochan>>,
 }
 
 impl Application for FilePicker {
@@ -280,7 +281,7 @@ impl Application for FilePicker {
                 show_hidden: false,
                 view_image: (0, None),
                 scroll_offset: scrollable::AbsoluteOffset{x: 0.0, y: 0.0},
-                inoctl: None,
+                ino_updater: None,
             },
             Command::none(),
         )
@@ -296,8 +297,19 @@ impl Application for FilePicker {
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
-            Message::InoCreate(file) => eprintln!("created {}", file),
-            Message::InoDelete(file) => eprintln!("deleted {}", file),
+            Message::InoCreate(file) => {
+                let len = self.items.len();
+                self.items.push(FileItem::new(file.as_str().into(), self.nav_id));
+                let mut item = mem::take(&mut self.items[len]);
+                item.idx = len;
+                tokio::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
+            },
+            Message::InoDelete(file) => {
+                if let Some(i) = self.items.iter().position(|x|x.path == file) {
+                    self.items.remove(i);
+                }
+                self.items.iter_mut().enumerate().for_each(|(i,item)|item.idx = i);
+            },
             Message::RunCmd(i) => self.run_command(i),
             Message::View(i) => {
                 match i {
@@ -342,7 +354,7 @@ impl Application for FilePicker {
             Message::Init((fichan, inochan)) => {
                 let (txctl, rxctl) = unbounded_channel::<Inochan>();
                 tokio::spawn(watch_inotify(rxctl, inochan));
-                self.inoctl = Some(txctl);
+                self.ino_updater = Some(txctl);
                 self.thumb_sender = Some(fichan);
                 return self.update(Message::LoadDir);
             },
@@ -353,7 +365,7 @@ impl Application for FilePicker {
             Message::NextItem(doneitem) => {
                 if doneitem.nav_id == self.nav_id {
                     self.last_loaded += 1;
-                    if self.last_loaded < self.items.len() {
+                    if self.last_loaded < self.items.len() &&  self.items[self.last_loaded].handle == None {
                         let nextitem = mem::take(&mut self.items[self.last_loaded]);
                         tokio::task::spawn(nextitem.load(
                                 self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
@@ -730,7 +742,7 @@ async fn watch_inotify(mut rx: UnboundedReceiver<Inochan>, tx: UnboundedSender<I
     let ino = Inotify::init().expect("Error initializing inotify instance");
     let evbuf = [0; 1024];
     let mut estream = ino.into_event_stream(evbuf).unwrap();
-    let mut watches = Vec::<WatchDescriptor>::new();
+    let mut watches = HashMap::<WatchDescriptor,String>::new();
     loop {
         tokio::select! {
             eopt = estream.next() => {
@@ -739,13 +751,20 @@ async fn watch_inotify(mut rx: UnboundedReceiver<Inochan>, tx: UnboundedSender<I
                         let ev = eres.unwrap();
                         let created = ev.mask == inotify::EventMask::CREATE;
                         let deleted = ev.mask == inotify::EventMask::DELETE;
-                        if let Some(name) = ev.name {
-                            let fname = name.to_string_lossy().to_string();
-                            if created {
-                                tx.send(Inochan::Create(fname)).unwrap();
-                            } else if deleted {
-                                tx.send(Inochan::Delete(fname)).unwrap();
-                            }
+                        match(ev.name, watches.get(&ev.wd)) {
+                            (Some(name),Some(dir)) => {
+                                let path = Path::new(dir).join(name).to_string_lossy().to_string();
+                                    if created {
+                                        let atx = tx.clone();
+                                        tokio::spawn(async move {
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                                            atx.send(Inochan::Create(path)).unwrap();
+                                        });
+                                    } else if deleted {
+                                        tx.send(Inochan::Delete(path)).unwrap();
+                                    }
+                            },
+                            _ => {},
                         }
                     },
                     None => {},
@@ -754,10 +773,10 @@ async fn watch_inotify(mut rx: UnboundedReceiver<Inochan>, tx: UnboundedSender<I
             dirs = rx.recv() => {
                 match dirs {
                     Some(Inochan::NewDirs(ls)) => {
-                        watches.iter().for_each(|wd| estream.watches().remove(wd.clone()).unwrap());
+                        watches.iter().for_each(|(wd,_)| estream.watches().remove(wd.clone()).unwrap());
                         watches.clear();
                         ls.iter().for_each(|dir|{
-                            watches.push(estream.watches().add(dir, WatchMask::CREATE|WatchMask::DELETE).unwrap());
+                            watches.insert(estream.watches().add(dir, WatchMask::CREATE|WatchMask::DELETE).unwrap(), dir.to_string());
                         });
                     },
                     _ => {},
@@ -778,16 +797,18 @@ impl FilePicker {
                 Some(s) => s,
                 None => &fname,
             };
+            let dir = path.parent().unwrap();
             let filecmd = cmd.replace("[path]", item.path.as_str())
-                .replace("[dir]", &path.parent().unwrap().to_string_lossy())
+                .replace("[dir]", &dir.to_string_lossy())
                 .replace("[ext]", format!(".{}", &match path.extension() {
                     Some(s)=>s.to_string_lossy(),
                     None=> std::borrow::Cow::Borrowed(""),
                 }).as_str())
                 .replace("[name]", &fname)
                 .replace("[part]", &part);
-            tokio::task::spawn_blocking(|| {
-                match OsCmd::new("bash").arg("-c").arg(filecmd).output() {
+            let cwd = dir.to_owned();
+            tokio::task::spawn_blocking(move || {
+                match OsCmd::new("bash").arg("-c").arg(filecmd).current_dir(cwd).output() {
                     Ok(output) => eprintln!("{}{}",
                                             unsafe{std::str::from_utf8_unchecked(&output.stdout)},
                                             unsafe{std::str::from_utf8_unchecked(&output.stderr)}),
@@ -858,7 +879,7 @@ impl FilePicker {
                 ret.push(FileItem::new(path.into(), self.nav_id));
             });
         }
-        self.inoctl.as_ref().unwrap().send(Inochan::NewDirs(self.dirs.clone())).unwrap();
+        self.ino_updater.as_ref().unwrap().send(Inochan::NewDirs(self.dirs.clone())).unwrap();
         self.items = ret;
     }
 
