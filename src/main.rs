@@ -32,6 +32,11 @@ use iced::{
 };
 use tokio::{
     fs::File, io::AsyncReadExt,
+    sync::mpsc::{
+        UnboundedReceiver,
+        UnboundedSender,
+        unbounded_channel,
+    }
 };
 use std::{
     str,
@@ -45,6 +50,7 @@ use std::{
 use video_rs::{Decoder, Location, DecoderBuilder, Resize};
 use ndarray;
 use getopts::Options;
+use inotify::{Inotify, WatchMask, WatchDescriptor};
 use iced_aw::{menu_bar, menu_items};
 use iced_aw::menu::{Item, Menu};
 
@@ -161,7 +167,7 @@ enum Message {
     Open,
     Cancel,
     UpDir,
-    Init(mpsc::Sender<FileItem>),
+    Init((mpsc::Sender<FileItem>, UnboundedSender<Inochan>)),
     NextItem(FileItem),
     LeftClick(usize),
     MiddleClick(usize),
@@ -176,11 +182,13 @@ enum Message {
     PositionInfo(Rectangle, Rectangle),
     View(i32),
     RunCmd(usize),
+    InoDelete(String),
+    InoCreate(String),
 }
 
 enum SubState {
     Starting,
-    Ready(mpsc::Receiver<FileItem>),
+    Ready((mpsc::Receiver<FileItem>,UnboundedReceiver<Inochan>)),
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -241,6 +249,7 @@ struct FilePicker {
     show_hidden: bool,
     view_image: (usize, Option<Handle>),
     scroll_offset: scrollable::AbsoluteOffset,
+    inoctl: Option<UnboundedSender<Inochan>>,
 }
 
 impl Application for FilePicker {
@@ -271,6 +280,7 @@ impl Application for FilePicker {
                 show_hidden: false,
                 view_image: (0, None),
                 scroll_offset: scrollable::AbsoluteOffset{x: 0.0, y: 0.0},
+                inoctl: None,
             },
             Command::none(),
         )
@@ -286,6 +296,8 @@ impl Application for FilePicker {
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
+            Message::InoCreate(file) => eprintln!("created {}", file),
+            Message::InoDelete(file) => eprintln!("deleted {}", file),
             Message::RunCmd(i) => self.run_command(i),
             Message::View(i) => {
                 match i {
@@ -327,8 +339,11 @@ impl Application for FilePicker {
                     self.add_bookmark(idx, target);
                 }
             }
-            Message::Init(chan) => {
-                self.thumb_sender = Some(chan);
+            Message::Init((fichan, inochan)) => {
+                let (txctl, rxctl) = unbounded_channel::<Inochan>();
+                tokio::spawn(watch_inotify(rxctl, inochan));
+                self.inoctl = Some(txctl);
+                self.thumb_sender = Some(fichan);
                 return self.update(Message::LoadDir);
             },
             Message::Scrolled(viewport) => self.scroll_offset = viewport.absolute_offset(),
@@ -434,13 +449,22 @@ impl Application for FilePicker {
             loop {
                 match &mut state {
                     SubState::Starting => {
-                        let (sender, receiver) = mpsc::channel(100);
-                        messager.send(Message::Init(sender)).await.unwrap();
-                        state = SubState::Ready(receiver);
+                        let (fi_sender, fi_reciever) = mpsc::channel(100);
+                        let (ino_sender, ino_receiver) = unbounded_channel::<Inochan>();
+                        messager.send(Message::Init((fi_sender, ino_sender))).await.unwrap();
+                        state = SubState::Ready((fi_reciever,ino_receiver));
                     }
-                    SubState::Ready(thumb_receiver) => {
-                        let item = thumb_receiver.select_next_some().await;
-                        messager.send(Message::NextItem(item)).await.unwrap();
+                    SubState::Ready((thumb_recv, ino_recv)) => {
+                        tokio::select! {
+                            item = thumb_recv.select_next_some() => messager.send(Message::NextItem(item)).await.unwrap(),
+                            evt = ino_recv.recv() => {
+                                match evt {
+                                    Some(Inochan::Delete(file)) => messager.send(Message::InoDelete(file)).await.unwrap(),
+                                    Some(Inochan::Create(file)) => messager.send(Message::InoCreate(file)).await.unwrap(),
+                                    _ => {},
+                                }
+                            }
+                        }
                     },
                 }
             }
@@ -697,6 +721,52 @@ impl FileItem {
     }
 }
 
+enum Inochan {
+    NewDirs(Vec<String>),
+    Delete(String),
+    Create(String),
+}
+async fn watch_inotify(mut rx: UnboundedReceiver<Inochan>, tx: UnboundedSender<Inochan>) {
+    let ino = Inotify::init().expect("Error initializing inotify instance");
+    let evbuf = [0; 1024];
+    let mut estream = ino.into_event_stream(evbuf).unwrap();
+    let mut watches = Vec::<WatchDescriptor>::new();
+    loop {
+        tokio::select! {
+            eopt = estream.next() => {
+                match eopt {
+                    Some(eres) => {
+                        let ev = eres.unwrap();
+                        let created = ev.mask == inotify::EventMask::CREATE;
+                        let deleted = ev.mask == inotify::EventMask::DELETE;
+                        if let Some(name) = ev.name {
+                            let fname = name.to_string_lossy().to_string();
+                            if created {
+                                tx.send(Inochan::Create(fname)).unwrap();
+                            } else if deleted {
+                                tx.send(Inochan::Delete(fname)).unwrap();
+                            }
+                        }
+                    },
+                    None => {},
+                }
+            }
+            dirs = rx.recv() => {
+                match dirs {
+                    Some(Inochan::NewDirs(ls)) => {
+                        watches.iter().for_each(|wd| estream.watches().remove(wd.clone()).unwrap());
+                        watches.clear();
+                        ls.iter().for_each(|dir|{
+                            watches.push(estream.watches().add(dir, WatchMask::CREATE|WatchMask::DELETE).unwrap());
+                        });
+                    },
+                    _ => {},
+                }
+            }
+        }
+    }
+}
+
 impl FilePicker {
 
     fn run_command(self: &Self, icmd: usize) {
@@ -710,7 +780,10 @@ impl FilePicker {
             };
             let filecmd = cmd.replace("[path]", item.path.as_str())
                 .replace("[dir]", &path.parent().unwrap().to_string_lossy())
-                .replace("[ext]", format!(".{}", &path.extension().unwrap().to_string_lossy()).as_str())
+                .replace("[ext]", format!(".{}", &match path.extension() {
+                    Some(s)=>s.to_string_lossy(),
+                    None=> std::borrow::Cow::Borrowed(""),
+                }).as_str())
                 .replace("[name]", &fname)
                 .replace("[part]", &part);
             tokio::task::spawn_blocking(|| {
@@ -785,7 +858,8 @@ impl FilePicker {
                 ret.push(FileItem::new(path.into(), self.nav_id));
             });
         }
-        self.items = ret
+        self.inoctl.as_ref().unwrap().send(Inochan::NewDirs(self.dirs.clone())).unwrap();
+        self.items = ret;
     }
 
     fn add_bookmark(self: &mut Self, dragged: usize, target: Option<i32>) {

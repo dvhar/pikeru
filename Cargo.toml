@@ -16,3 +16,4 @@ ndarray = "0.15.6"
 getopts = "0.2.21"
 configparser = "3.0.4"
 iced_aw = { version = "0.8.0", features = ["menu"] }
+inotify = "0.10.2"
