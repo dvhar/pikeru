@@ -627,7 +627,24 @@ impl FileItem {
     fn preview(self: &Self) -> Option<Handle> {
         match (&self.ftype, self.vid) {
             (FType::Image, false) => {
-               Some(Handle::from_path(self.path.as_str()))
+               match std::fs::read(self.path.as_str()) {
+                   Ok(data) => {
+                        match load_from_memory(data.as_ref()) {
+                           Ok(img) => {
+                                let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
+                                Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                           },
+                           Err(e) => {
+                               eprintln!("Error decoding image {}:{}", self.path, e);
+                               None
+                           },
+                        }
+                   },
+                   Err(e) => {
+                       eprintln!("Error reading {}:{}", self.path, e);
+                       None
+                   },
+               }
             },
             (FType::Image, true) => {
                vid_frame(self.path.as_str(), None)
