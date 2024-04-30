@@ -1,4 +1,5 @@
 use img::load_from_memory;
+use img;
 use num_cpus;
 use itertools::Itertools;
 mod wrapper;
@@ -15,7 +16,7 @@ use iced::{
     keyboard::Key,
     keyboard::key::Named::{Shift,Control},
     widget::{
-        vertical_space,
+        vertical_space, checkbox,
         container::{Appearance, StyleSheet,Id as CId},
         image, image::Handle, Column, Row, text, responsive,
         Scrollable, scrollable, scrollable::{Direction,Properties},
@@ -181,10 +182,12 @@ enum Message {
     NextImage(i64),
     Scrolled(scrollable::Viewport),
     PositionInfo(Rectangle, Rectangle),
-    View(i32),
+    Sort(i32),
+    ShowHidden(bool),
     RunCmd(usize),
     InoDelete(String),
     InoCreate(String),
+    Dummy,
 }
 
 enum SubState {
@@ -311,7 +314,12 @@ impl Application for FilePicker {
                 self.items.iter_mut().enumerate().for_each(|(i,item)|item.idx = i);
             },
             Message::RunCmd(i) => self.run_command(i),
-            Message::View(i) => {
+            Message::Dummy => {},
+            Message::ShowHidden(show) => {
+                self.show_hidden = show;
+                return self.update(Message::LoadDir);
+            },
+            Message::Sort(i) => {
                 match i {
                     1 => self.items.sort_unstable_by(|a,b|b.isdir().cmp(&a.isdir()).then_with(||a.path.cmp(&b.path))),
                     2 => self.items.sort_unstable_by(|a,b|b.isdir().cmp(&a.isdir()).then_with(||b.path.cmp(&a.path))),
@@ -319,10 +327,8 @@ impl Application for FilePicker {
                     4 => self.items.sort_unstable_by(|a,b|b.isdir().cmp(&a.isdir()).then_with(||a.mtime.partial_cmp(&b.mtime).unwrap())),
                     _ => {},
                 }
-                if i > 0 && i < 5 {
-                    self.items.iter_mut().enumerate().for_each(|(i,item)|item.idx = i);
-                    self.conf.sort_by = i;
-                }
+                self.items.iter_mut().enumerate().for_each(|(i,item)|item.idx = i);
+                self.conf.sort_by = i;
             },
             Message::PositionInfo(widget, viewport) => {
                 if let Some(_) = self.last_clicked {
@@ -376,13 +382,14 @@ impl Application for FilePicker {
             },
             Message::LoadBookmark(idx) => {
                 self.dirs = vec![self.conf.bookmarks[idx].path.clone()];
+                self.scroll_offset.y = 0.0;
                 return self.update(Message::LoadDir);
             },
             Message::LoadDir => {
                 self.view_image = (0, None);
                 self.inputbar = self.dirs[0].clone();
                 self.load_dir();
-                let _ = self.update(Message::View(self.conf.sort_by));
+                let _ = self.update(Message::Sort(self.conf.sort_by));
                 self.last_loaded = self.nproc.min(self.items.len());
                 for i in 0..self.last_loaded {
                     let item = mem::take(&mut self.items[i]);
@@ -401,7 +408,10 @@ impl Application for FilePicker {
             Message::LeftClick(idx) => {
                 match self.clicktimer.click(idx) {
                     ClickType::Single => self.click_item(idx, self.shift_pressed, self.ctrl_pressed),
-                    ClickType::Double => return self.update(Message::Open),
+                    ClickType::Double => {
+                        self.items[idx].sel = true;
+                        return self.update(Message::Open);
+                    },
                 }
             },
             Message::RightClick(idx) => {
@@ -504,14 +514,15 @@ impl Application for FilePicker {
             let ctrlbar = column![
                 row![
                     menu_bar![
-                        (top_button("Cmd", 80.0, Message::View(0)), 
+                        (top_button("Cmd", 80.0, Message::Dummy), 
                             view_menu(cmd_list))
-                        (top_button("View", 80.0, Message::View(0)),
+                        (top_button("View", 80.0, Message::Dummy),
                             view_menu(menu_items!(
-                                    (menu_button("Sort A-Z",Message::View(1)))
-                                    (menu_button("Sort Z-A",Message::View(2)))
-                                    (menu_button("Sort Newest first",Message::View(3)))
-                                    (menu_button("Sort Oldest first",Message::View(4)))
+                                    (menu_button("Sort A-Z",Message::Sort(1)))
+                                    (menu_button("Sort Z-A",Message::Sort(2)))
+                                    (menu_button("Sort Newest first",Message::Sort(3)))
+                                    (menu_button("Sort Oldest first",Message::Sort(4)))
+                                    (checkbox("Show Hidden", self.show_hidden).on_toggle(Message::ShowHidden))
                                     )))
                     ].spacing(2.0),
                     top_button("New Dir", 80.0, Message::Cancel),
@@ -627,22 +638,30 @@ impl FileItem {
     fn preview(self: &Self) -> Option<Handle> {
         match (&self.ftype, self.vid) {
             (FType::Image, false) => {
-               match std::fs::read(self.path.as_str()) {
-                   Ok(data) => {
-                        match load_from_memory(data.as_ref()) {
-                           Ok(img) => {
-                                let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-                                Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
-                           },
+               let fmt = img::ImageFormat::from_path(&self.path).unwrap();
+               match img::load(std::io::BufReader::new(std::fs::File::open(&self.path).ok()?), fmt) {
+                   Ok(img) => {
+                        Some(Handle::from_pixels(img.width(), img.height(), img.into_rgba8().as_raw().clone()))
+                   },
+                   Err(_) => {
+                       match std::fs::read(self.path.as_str()) {
+                           Ok(data) => {
+                                match load_from_memory(data.as_ref()) {
+                                   Ok(img) => {
+                                        let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
+                                        Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                                   },
+                                   Err(e) => {
+                                       eprintln!("Error decoding image {}:{}", self.path, e);
+                                       None
+                                   },
+                                }
+                           }
                            Err(e) => {
-                               eprintln!("Error decoding image {}:{}", self.path, e);
+                               eprintln!("Error reading image {}:{}", self.path, e);
                                None
                            },
-                        }
-                   },
-                   Err(e) => {
-                       eprintln!("Error reading {}:{}", self.path, e);
-                       None
+                       }
                    },
                }
             },
@@ -717,7 +736,7 @@ impl FileItem {
                                         FType::Image
                                     },
                                     Err(e) => {
-                                        eprintln!("Error loading image {}: {}", self.path, e);
+                                        eprintln!("Error decoding image {}: {}", self.path, e);
                                         self.handle = Some(icons.error.clone());
                                         FType::File
                                     },
