@@ -4,6 +4,7 @@ use num_cpus;
 use itertools::Itertools;
 mod wrapper;
 mod iced_drop;
+mod style;
 use iced::{
     advanced::widget::Id,
     Rectangle,
@@ -434,8 +435,11 @@ impl Application for FilePicker {
                     while (y<0 && i>0) || (y>0 && i<self.items.len()-1) {
                         i = ((i as i64) + y) as usize;
                         if self.items[i as usize].ftype == FType::Image {
-                            self.view_image = (i as usize, self.items[i].preview());
-                            return self.update(Message::LeftClick(i as usize));
+                            let img = self.items[i].preview();
+                            if img != None {
+                                self.view_image = (i as usize, img);
+                                return self.update(Message::LeftClick(i as usize));
+                            }
                         }
                     }
                 }
@@ -540,6 +544,7 @@ impl Application for FilePicker {
                                         text(bm.label.as_str())
                                            .horizontal_alignment(alignment::Horizontal::Center)
                                            .width(Length::Fill)).id(bm.id.clone()))
+                                           .style(style::get_but_theme())
                                      .on_press(Message::LoadBookmark(i)))
                     }).push(container(vertical_space()).height(Length::Fill).width(Length::Fill)
                             .id(CId::new("bookmarks"))).width(Length::Fixed(120.0));
@@ -587,12 +592,14 @@ fn menu_button(txt: &str, msg: Message) -> Element<'static, Message> {
     Button::new(container(text(txt)
                 .width(Length::Fill)
                 .horizontal_alignment(alignment::Horizontal::Center)))
+        .style(style::get_but_theme())
         .on_press(msg).into()
 }
 fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
     Button::new(text(txt)
                 .width(size)
                 .horizontal_alignment(alignment::Horizontal::Center))
+        .style(style::get_but_theme())
         .on_press(msg).into()
 }
 
