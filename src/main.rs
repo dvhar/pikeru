@@ -599,7 +599,7 @@ impl Application for FilePicker {
                                         text(bm.label.as_str())
                                            .horizontal_alignment(alignment::Horizontal::Center)
                                            .width(Length::Fill)).id(bm.id.clone()))
-                                           .style(style::get_but_theme())
+                                           .style(style::side_but_theme())
                                      .on_press(Message::LoadBookmark(i)))
                     }).push(container(vertical_space()).height(Length::Fill).width(Length::Fill)
                             .id(CId::new("bookmarks"))).width(Length::Fixed(120.0));
@@ -647,14 +647,14 @@ fn menu_button(txt: &str, msg: Message) -> Element<'static, Message> {
     Button::new(container(text(txt)
                 .width(Length::Fill)
                 .horizontal_alignment(alignment::Horizontal::Center)))
-        .style(style::get_but_theme())
+        .style(style::top_but_theme())
         .on_press(msg).into()
 }
 fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
     Button::new(text(txt)
                 .width(size)
                 .horizontal_alignment(alignment::Horizontal::Center))
-        .style(style::get_but_theme())
+        .style(style::top_but_theme())
         .on_press(msg).into()
 }
 
