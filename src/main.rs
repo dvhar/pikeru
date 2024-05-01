@@ -749,15 +749,19 @@ impl FItem {
         let path = pth.to_string_lossy();
         let mut label = path.rsplitn(2,'/').next().unwrap().to_string();
         if label.len() > 20 {
-            let mut shortened = ['.' as u8; 40];
-            let splitpoint = label.len()-20;
-            let maxlen = 36.min(label.len());
-            //TODO: watch out for unicode runes
-            shortened[19] = b'\n';
-            shortened[20..].copy_from_slice(&label.as_bytes()[splitpoint..]);
-            shortened[39-maxlen..19].copy_from_slice(&label.as_bytes()[label.len()-maxlen..splitpoint]);
-            let start = 40 - maxlen - if label.len() > maxlen { 3 } else { 1 };
-            label = String::from(unsafe{std::str::from_utf8_unchecked(&shortened[start..])})
+            let mut start = label.len()-40.min(label.len());
+            while  (label.as_bytes()[start] & 0b11000000) == 0b10000000 {
+                start += 1;
+            }
+            let mut split = label.len()-20;
+            while  (label.as_bytes()[split] & 0b11000000) == 0b10000000 {
+                split += 1;
+            }
+            if start == split {
+                label = label[start..].to_string();
+            } else {
+                label = format!("{}{}\n{}", if start == 0 { "" } else { "..." }, &label[start..split], &label[split..]);
+            }
         }
         FItem {
             path: path.to_string(),
