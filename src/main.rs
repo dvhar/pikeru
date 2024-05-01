@@ -85,6 +85,7 @@ impl Config {
     #[inline]
     fn saving(self: &Self) -> bool { self.mode == Mode::Save }
     fn multi(self: &Self) -> bool { self.mode == Mode::Files }
+    fn dir(self: &Self) -> bool { self.mode == Mode::Dir }
 
     fn new() -> Self {
         let args: Vec<String> = std::env::args().skip(1).collect();
@@ -99,7 +100,7 @@ impl Config {
         };
 
         let home = std::env::var("HOME").unwrap();
-        let confpath = home + "/.config/pikeru.conf";
+        let confpath = Path::new(&home).join(".config").join("pikeru.conf").to_string_lossy().to_string();
         let txt = std::fs::read_to_string(confpath).unwrap();
         enum S { Commands, Settings, Bookmarks }
         let mut section = S::Commands;
@@ -173,7 +174,7 @@ impl Mode {
 enum Message {
     LoadDir,
     LoadBookmark(usize),
-    Select,
+    Select(bool),
     Cancel,
     UpDir,
     Init((mpsc::Sender<FItem>, UnboundedSender<Inochan>)),
@@ -262,6 +263,7 @@ struct FilePicker {
     scroll_offset: scrollable::AbsoluteOffset,
     ino_updater: Option<UnboundedSender<Inochan>>,
     save_filename: Option<String>,
+    select_button: String,
 }
 
 impl Application for FilePicker {
@@ -284,6 +286,11 @@ impl Application for FilePicker {
         } else {
             None
         };
+        let select_button = match conf.mode {
+            Mode::Files|Mode::File => "Open",
+            Mode::Save => "Save",
+            Mode::Dir => "Selecct",
+        }.to_string();
         (
             Self {
                 conf,
@@ -305,6 +312,7 @@ impl Application for FilePicker {
                 scroll_offset: scrollable::AbsoluteOffset{x: 0.0, y: 0.0},
                 ino_updater: None,
                 save_filename,
+                select_button,
             },
             Command::none(),
         )
@@ -326,7 +334,13 @@ impl Application for FilePicker {
                 let mut item = FItem::new(file.as_str().into(), self.nav_id);
                 item.idx = len;
                 item.nav_id = self.nav_id;
-                tokio::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                let sender = self.thumb_sender.as_ref().unwrap().clone();
+                let icons = self.icons.clone();
+                let ts = self.conf.thumb_size as u32;
+                tokio::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+                    item.load(sender, icons, ts).await;
+                });
             },
             Message::InoDelete(file) => {
                 if let Some(i) = self.items.iter().position(|x|x.path == file) {
@@ -435,7 +449,7 @@ impl Application for FilePicker {
                     ClickType::Single => self.click_item(idx, self.shift_pressed, self.ctrl_pressed),
                     ClickType::Double => {
                         self.items[idx].sel = true;
-                        return self.update(Message::Select);
+                        return self.update(Message::Select(false));
                     },
                 }
             },
@@ -470,14 +484,19 @@ impl Application for FilePicker {
                     }
                 }
             }
-            Message::Select => {
+            Message::Select(button) => {
                 let sels: Vec<&FItem> = self.items.iter().filter(|item| item.sel ).collect();
                 if sels.len() != 0 {
                     match sels[0].ftype {
                         FType::Dir => {
-                            self.dirs = sels.iter().filter_map(|item| match item.ftype {
-                                FType::Dir => Some(item.path.clone()), _ => None}).collect();
-                            return self.update(Message::LoadDir);
+                            if self.conf.dir() && sels.len() == 1 && button {
+                                println!("{}", sels[0].path);
+                                process::exit(0);
+                            } else {
+                                self.dirs = sels.iter().filter_map(|item| match item.ftype {
+                                    FType::Dir => Some(item.path.clone()), _ => None}).collect();
+                                return self.update(Message::LoadDir);
+                            }
                         },
                         _ => {
                             if self.conf.saving() {
@@ -568,7 +587,7 @@ impl Application for FilePicker {
                     top_button("New Dir", 80.0, Message::Cancel),
                     top_button("Up Dir", 80.0, Message::UpDir),
                     top_button("Cancel", 100.0, Message::Cancel),
-                    top_button(if self.conf.saving() {"Save"} else {"Open"}, 100.0, Message::Select)
+                    top_button(&self.select_button, 100.0, Message::Select(true))
                 ].spacing(1),
                 TextInput::new("directory or file path", self.inputbar.as_str())
                     .on_input(Message::TxtInput)
@@ -834,11 +853,7 @@ async fn watch_inotify(mut rx: UnboundedReceiver<Inochan>, tx: UnboundedSender<I
                             (Some(name),Some(dir)) => {
                                 let path = Path::new(dir).join(name).to_string_lossy().to_string();
                                     if created {
-                                        let atx = tx.clone();
-                                        tokio::spawn(async move {
-                                            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-                                            atx.send(Inochan::Create(path)).unwrap();
-                                        });
+                                        tx.send(Inochan::Create(path)).unwrap();
                                     } else if deleted {
                                         tx.send(Inochan::Delete(path)).unwrap();
                                     }
