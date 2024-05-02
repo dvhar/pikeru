@@ -511,29 +511,29 @@ impl Application for FilePicker {
                 }
             }
             Message::Select(button) => {
-                let sels: Vec<&FItem> = self.items.iter().filter(|item| item.sel ).collect();
-                if sels.len() != 0 {
-                    match sels[0].ftype {
-                        FType::Dir => {
-                            if self.conf.dir() && sels.len() == 1 && button {
-                                println!("{}", sels[0].path);
-                                process::exit(0);
-                            } else {
-                                self.dirs = sels.iter().filter_map(|item| match item.ftype {
-                                    FType::Dir => Some(item.path.clone()), _ => None}).collect();
-                                return self.update(Message::LoadDir);
-                            }
-                        },
-                        _ => {
-                            if self.conf.saving() {
-                                if !self.inputbar.is_empty() {
-                                    let result = Path::new(&self.inputbar);
-                                    if !result.is_dir() {
-                                        println!("{}", self.inputbar);
-                                        process::exit(0);
-                                    }
+                if self.conf.saving() {
+                    if !self.inputbar.is_empty() {
+                        let result = Path::new(&self.inputbar);
+                        if !result.is_dir() {
+                            println!("{}", self.inputbar);
+                            process::exit(0);
+                        }
+                    }
+                } else {
+                    let sels: Vec<&FItem> = self.items.iter().filter(|item| item.sel ).collect();
+                    if sels.len() != 0 {
+                        match sels[0].ftype {
+                            FType::Dir => {
+                                if self.conf.dir() && sels.len() == 1 && button {
+                                    println!("{}", sels[0].path);
+                                    process::exit(0);
+                                } else {
+                                    self.dirs = sels.iter().filter_map(|item| match item.ftype {
+                                        FType::Dir => Some(item.path.clone()), _ => None}).collect();
+                                    return self.update(Message::LoadDir);
                                 }
-                            } else {
+                            },
+                            _ => {
                                 sels.iter().for_each(|item| println!("{}", item.path));
                                 process::exit(0);
                             }
