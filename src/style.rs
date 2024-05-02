@@ -1,10 +1,8 @@
 use iced::{
-    color, Background, Border, border::Radius,
+    color, Border, border::Radius,
     widget::button::{Appearance as ButAppearance, StyleSheet as ButStyle},
     Color,
     gradient, Radians,
-    Shadow,
-    Vector,
 };
 
 struct TopButTheme;
@@ -12,28 +10,11 @@ impl ButStyle for TopButTheme {
     type Style = iced::Theme;
 
     fn active(&self, _style: &Self::Style) -> ButAppearance {
-        let mut appearance = ButAppearance::default();
-        let gradient = gradient::Linear::new(Radians(0.0))
-            .add_stop(0.0, color!(0x232323))
-            .add_stop(1.0, color!(0x303030))
-            .into();
-        appearance.background = Some(iced::Background::Gradient(gradient));
-        appearance.text_color = color!(0xdddddd);
-        appearance.border = border(color!(0x383838));
-        appearance.shadow = Shadow {
-            color: color!(0xa02020),
-            offset: Vector::new(8.0, 8.0),
-            blur_radius: 18.0,
-        };
-        appearance
+        gradbut(color!(0x232323), color!(0x303030), color!(0xdddddd), Radians(0.0))
     }
 
     fn hovered(&self, _style: &Self::Style) -> ButAppearance {
-        let mut appearance = ButAppearance::default();
-        appearance.background = Some(Background::Color(color!(0x454035)));
-        appearance.text_color = color!(0xdddddd);
-        appearance.border = border(color!(0x383838));
-        appearance
+        gradbut(color!(0x563656), color!(0x404060), color!(0xeeeeee), Radians(0.0))
     }
 
 }
@@ -43,30 +24,25 @@ impl ButStyle for SideButTheme {
     type Style = iced::Theme;
 
     fn active(&self, _style: &Self::Style) -> ButAppearance {
-        let mut appearance = ButAppearance::default();
-        let gradient = gradient::Linear::new(Radians(280.0))
-            .add_stop(0.0, color!(0x262626))
-            .add_stop(1.0, color!(0x282828))
-            .into();
-        appearance.background = Some(iced::Background::Gradient(gradient));
-        appearance.text_color = color!(0xdddddd);
-        appearance.border = border(color!(0x383838));
-        appearance.shadow = Shadow {
-            color: color!(0xa02020),
-            offset: Vector::new(8.0, 8.0),
-            blur_radius: 18.0,
-        };
-        appearance
+        gradbut(color!(0x262626), color!(0x2c2c28), color!(0xdddddd), Radians(280.0))
     }
 
     fn hovered(&self, _style: &Self::Style) -> ButAppearance {
-        let mut appearance = ButAppearance::default();
-        appearance.background = Some(Background::Color(color!(0x454035)));
-        appearance.text_color = color!(0xdddddd);
-        appearance.border = border(color!(0x383838));
-        appearance
+        gradbut(color!(0x563656), color!(0x404068), color!(0xeeeeee), Radians(280.0))
     }
 
+}
+
+fn gradbut(c1: Color, c2: Color, txt: Color, rad: Radians) -> ButAppearance {
+    let mut appearance = ButAppearance::default();
+    let gradient = gradient::Linear::new(rad)
+        .add_stop(0.0, c1)
+        .add_stop(1.0, c2)
+        .into();
+    appearance.background = Some(iced::Background::Gradient(gradient));
+    appearance.text_color = txt;
+    appearance.border = border(color!(0x383838));
+    appearance
 }
 
 fn border(color: Color) -> Border {

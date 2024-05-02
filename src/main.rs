@@ -54,8 +54,11 @@ use video_rs::{Decoder, Location, DecoderBuilder, Resize};
 use ndarray;
 use getopts::Options;
 use inotify::{Inotify, WatchMask, WatchDescriptor};
-use iced_aw::{menu_bar, menu_items};
-use iced_aw::menu::{Item, Menu};
+use iced_aw::{
+    menu_bar, menu_items,
+    menu::{Item, Menu},
+    modal, Card
+};
 
 macro_rules! die {
     ($($arg:tt)*) => {{
@@ -177,6 +180,8 @@ enum Message {
     Select(bool),
     Cancel,
     UpDir,
+    NewDir(bool),
+    NewDirInput(String),
     Init((mpsc::Sender<FItem>, UnboundedSender<Inochan>)),
     NextItem(FItem),
     LeftClick(usize),
@@ -195,6 +200,7 @@ enum Message {
     RunCmd(usize),
     InoDelete(String),
     InoCreate(String),
+    CloseModal,
     Dummy,
 }
 
@@ -243,6 +249,12 @@ struct Cmd {
     cmd: String,
 }
 
+enum FModal {
+    None,
+    NewDir,
+    OverWrite,
+}
+
 struct FilePicker {
     conf: Config,
     scroll_id: scrollable::Id,
@@ -264,6 +276,8 @@ struct FilePicker {
     ino_updater: Option<UnboundedSender<Inochan>>,
     save_filename: Option<String>,
     select_button: String,
+    new_dir: String,
+    modal: FModal,
 }
 
 impl Application for FilePicker {
@@ -313,8 +327,10 @@ impl Application for FilePicker {
                 ino_updater: None,
                 save_filename,
                 select_button,
+                modal: FModal::None,
+                new_dir: Default::default(),
             },
-            Command::none(),
+            Command::none()
         )
     }
 
@@ -443,6 +459,16 @@ impl Application for FilePicker {
                     .unique_by(|s|s.to_owned()).collect();
                 return self.update(Message::LoadDir);
             },
+            Message::NewDir(confirmed) => if confirmed {
+                    let path = Path::new(&self.dirs[0]).join(&self.new_dir);
+                    if let Err(e) = std::fs::create_dir_all(&path) {
+                        eprintln!("Error creating directory {:?}", path);
+                    }
+                } else {
+                    self.modal = FModal::NewDir;
+                },
+            Message::NewDirInput(dir) => self.new_dir = dir,
+            Message::CloseModal => self.modal = FModal::None,
             Message::MiddleClick(idx) => self.click_item(idx, false, true),
             Message::LeftClick(idx) => {
                 match self.clicktimer.click(idx) {
@@ -584,7 +610,7 @@ impl Application for FilePicker {
                                     (checkbox("Show Hidden", self.show_hidden).on_toggle(Message::ShowHidden))
                                     )))
                     ].spacing(1.0),
-                    top_button("New Dir", 80.0, Message::Cancel),
+                    top_button("New Dir", 80.0, Message::NewDir(false)),
                     top_button("Up Dir", 80.0, Message::UpDir),
                     top_button("Cancel", 100.0, Message::Cancel),
                     top_button(&self.select_button, 100.0, Message::Select(true))
@@ -635,10 +661,29 @@ impl Application for FilePicker {
                     .direction(Direction::Vertical(Properties::new()))
                     .id(self.scroll_id.clone()).into()
             };
-            column![
+            let mainview = column![
                 ctrlbar,
                 row![bookmarks, content],
-            ].into()
+            ];
+            match self.modal {
+                FModal::None => mainview.into(),
+                FModal::OverWrite => mainview.into(),
+                FModal::NewDir => modal(
+                    mainview,
+                    Some(Card::new(
+                        text("Enter new directory name"),
+                        TextInput::new("Untitled", self.new_dir.as_str())
+                            .on_input(Message::NewDirInput)
+                            .on_submit(Message::NewDir(true))
+                            .on_paste(Message::NewDirInput),
+                        ).max_width(500.0)
+                        .on_close(Message::CloseModal))
+                    )
+                    .backdrop(Message::CloseModal)
+                    .on_esc(Message::CloseModal)
+                    .align_y(alignment::Vertical::Center)
+                    .into(),
+            }
         }).into()
     }
 }
