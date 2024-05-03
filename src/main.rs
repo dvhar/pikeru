@@ -182,6 +182,7 @@ enum Message {
     OverWrite,
     Cancel,
     UpDir,
+    DownDir,
     NewDir(bool),
     NewDirInput(String),
     Init((mpsc::Sender<FItem>, UnboundedSender<Inochan>)),
@@ -281,6 +282,7 @@ struct FilePicker {
     select_button: String,
     new_dir: String,
     modal: FModal,
+    dir_history: Vec<Vec<String>>,
 }
 
 impl Application for FilePicker {
@@ -315,13 +317,13 @@ impl Application for FilePicker {
         (
             Self {
                 conf,
-                items: Default::default(),
+                items: vec![],
                 thumb_sender: None,
                 nproc: num_cpus::get() * 2,
                 dirs: vec![startdir.to_string()],
                 last_loaded: 0,
                 last_clicked: None,
-                inputbar: Default::default(),
+                inputbar: String::new(),
                 icons: Arc::new(Icons::new(ts)),
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
                 ctrl_pressed: false,
@@ -335,7 +337,8 @@ impl Application for FilePicker {
                 save_filename,
                 select_button,
                 modal: FModal::None,
-                new_dir: Default::default(),
+                new_dir: String::new(),
+                dir_history: vec![],
             },
             Command::none()
         )
@@ -435,6 +438,7 @@ impl Application for FilePicker {
                 }
             },
             Message::LoadBookmark(idx) => {
+                self.dir_history.push(mem::take(&mut self.dirs));
                 self.dirs = vec![self.conf.bookmarks[idx].path.clone()];
                 self.scroll_offset.y = 0.0;
                 return self.update(Message::LoadDir);
@@ -455,10 +459,19 @@ impl Application for FilePicker {
                 }
                 return scrollable::snap_to(self.scroll_id.clone(), scrollable::RelativeOffset::START);
             },
+            Message::DownDir => {
+                if let Some(dirs) = self.dir_history.pop() {
+                    self.dirs = dirs;
+                    self.scroll_offset.y = 0.0;
+                    return self.update(Message::LoadDir);
+                }
+            },
             Message::UpDir => {
-                self.dirs = self.dirs.iter().map(|dir| Path::new(dir.as_str()).parent().unwrap()
+                let dirs = mem::take(&mut self.dirs);
+                self.dirs = dirs.iter().map(|dir| Path::new(dir.as_str()).parent().unwrap()
                                                  .as_os_str().to_str().unwrap().to_string())
                     .unique_by(|s|s.to_owned()).collect();
+                self.dir_history.push(dirs);
                 return self.update(Message::LoadDir);
             },
             Message::NewDir(confirmed) => if confirmed {
@@ -590,7 +603,7 @@ impl Application for FilePicker {
         let events = event::listen_with(|evt, _| {
             match evt {
                 Mouse(ButtonPressed(Back)) => Some(Message::UpDir),
-                Mouse(ButtonPressed(Forward)) => None,
+                Mouse(ButtonPressed(Forward)) => Some(Message::DownDir),
                 Mouse(WheelScrolled{ delta: ScrollDelta::Lines{ y, ..}}) => Some(Message::NextImage(if y<0.0 {1} else {-1})),
                 Keyboard(KeyPressed{ key: Key::Named(Shift), .. }) => Some(Message::Shift(true)),
                 Keyboard(KeyReleased{ key: Key::Named(Shift), .. }) => Some(Message::Shift(false)),
