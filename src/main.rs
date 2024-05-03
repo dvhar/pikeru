@@ -42,6 +42,7 @@ use tokio::{
 };
 use std::{
     collections::HashMap,
+    collections::HashSet,
     str,
     path::{PathBuf,Path},
     mem,
@@ -474,10 +475,10 @@ impl Application for FilePicker {
                 },
             Message::NewDirInput(dir) => self.new_dir = dir,
             Message::CloseModal => self.modal = FModal::None,
-            Message::MiddleClick(idx) => self.click_item(idx, false, true),
+            Message::MiddleClick(idx) => self.click_item(idx, false, true, false),
             Message::LeftClick(idx) => {
                 match self.clicktimer.click(idx) {
-                    ClickType::Single => self.click_item(idx, self.shift_pressed, self.ctrl_pressed),
+                    ClickType::Single => self.click_item(idx, self.shift_pressed, self.ctrl_pressed, false),
                     ClickType::Double => {
                         self.items[idx].sel = true;
                         return self.update(Message::Select(false));
@@ -490,10 +491,9 @@ impl Application for FilePicker {
                     let item = &self.items[idx];
                     if item.ftype == FType::Image {
                         self.view_image = (item.idx, item.preview());
-                        self.click_item(idx, false, false);
-                        self.items[idx].sel = true;
+                        self.click_item(idx, false, false, true);
                     } else {
-                        self.click_item(idx as usize, true, false);
+                        self.click_item(idx as usize, true, false, false);
                     }
                 } else {
                     self.view_image = (0, None);
@@ -922,20 +922,30 @@ async fn watch_inotify(mut rx: UnboundedReceiver<Inochan>, tx: UnboundedSender<I
     let ino = Inotify::init().expect("Error initializing inotify instance");
     let evbuf = [0; 1024];
     let mut estream = ino.into_event_stream(evbuf).unwrap();
-    let mut watches = HashMap::<WatchDescriptor,String>::new();
+    struct Dir {
+        name: String,
+        created: HashSet<std::ffi::OsString>,
+    }
+    let mut watches = HashMap::<WatchDescriptor,Dir>::new();
     loop {
         tokio::select! {
             eopt = estream.next() => {
                 match eopt {
                     Some(eres) => {
                         let ev = eres.unwrap();
-                        let created = ev.mask.contains(EventMask::CREATE|EventMask::ISDIR)
-                            || ev.mask.contains(EventMask::CLOSE_WRITE);
+                        let create_file = ev.mask == EventMask::CREATE;
+                        let create_dir = ev.mask == EventMask::CREATE|EventMask::ISDIR;
+                        let write_file = ev.mask.contains(EventMask::CLOSE_WRITE);
                         let deleted = ev.mask.contains(EventMask::DELETE);
-                        match(ev.name, watches.get(&ev.wd)) {
+                        match(ev.name, watches.get_mut(&ev.wd)) {
                             (Some(name),Some(dir)) => {
-                                let path = Path::new(dir).join(name).to_string_lossy().to_string();
-                                    if created {
+                                let path = Path::new(&dir.name).join(name.clone()).to_string_lossy().to_string();
+                                    if create_dir {
+                                        tx.send(Inochan::Create(path)).unwrap();
+                                    } else if create_file {
+                                        dir.created.insert(name);
+                                    } else if write_file && dir.created.contains(&name) {
+                                        dir.created.remove(&name);
                                         tx.send(Inochan::Create(path)).unwrap();
                                     } else if deleted {
                                         tx.send(Inochan::Delete(path)).unwrap();
@@ -956,7 +966,8 @@ async fn watch_inotify(mut rx: UnboundedReceiver<Inochan>, tx: UnboundedSender<I
                             watches.insert(estream.watches().add(dir,
                                                                  WatchMask::CREATE|
                                                                  WatchMask::CLOSE_WRITE|
-                                                                 WatchMask::DELETE).unwrap(), dir.to_string());
+                                                                 WatchMask::DELETE).unwrap(),
+                                           Dir{name:dir.to_string(), created:Default::default()});
                         });
                     },
                     _ => {},
@@ -1012,7 +1023,7 @@ impl FilePicker {
         Command::none()
     }
 
-    fn click_item(self: &mut Self, i: usize, shift: bool, ctrl: bool) {
+    fn click_item(self: &mut Self, i: usize, shift: bool, ctrl: bool, always_sel: bool) {
 
         self.last_clicked = Some(i);
         let isdir = self.items[i].isdir();
@@ -1033,19 +1044,19 @@ impl FilePicker {
             }
             return;
         }
-        if !self.items[i].sel {
+        if always_sel || !self.items[i].sel {
             self.items[i].sel = true;
         } else if prevsel.len() == 1 || ctrl {
             self.items[i].sel = false;
         }
-        prevsel.into_iter().for_each(|j| {
+        prevsel.into_iter().filter(|j|*j != i).for_each(|j| {
             if !(ctrl && (self.conf.multi()||isdir)) || self.items[j].isdir() != isdir { self.items[j].sel = false; }
         });
-        if self.items[i].sel {
-            self.inputbar = self.items[i].path.clone();
+        self.inputbar = if self.items[i].sel {
+            self.items[i].path.clone()
         } else {
-            self.inputbar = self.dirs[0].clone();
-        }
+            self.dirs[0].clone()
+        };
     }
 
     fn load_dir(self: &mut Self) {
