@@ -53,7 +53,7 @@ use std::{
 use video_rs::{Decoder, Location, DecoderBuilder, Resize};
 use ndarray;
 use getopts::Options;
-use inotify::{Inotify, WatchMask, WatchDescriptor};
+use inotify::{Inotify, WatchMask, WatchDescriptor, EventMask};
 use iced_aw::{
     menu_bar, menu_items,
     menu::{Item, Menu},
@@ -253,6 +253,7 @@ enum FModal {
     None,
     NewDir,
     OverWrite,
+    Error(String),
 }
 
 struct FilePicker {
@@ -350,13 +351,8 @@ impl Application for FilePicker {
                 let mut item = FItem::new(file.as_str().into(), self.nav_id);
                 item.idx = len;
                 item.nav_id = self.nav_id;
-                let sender = self.thumb_sender.as_ref().unwrap().clone();
-                let icons = self.icons.clone();
-                let ts = self.conf.thumb_size as u32;
-                tokio::spawn(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-                    item.load(sender, icons, ts).await;
-                });
+                tokio::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone(),
+                                       self.icons.clone(), self.conf.thumb_size as u32));
             },
             Message::InoDelete(file) => {
                 if let Some(i) = self.items.iter().position(|x|x.path == file) {
@@ -462,7 +458,11 @@ impl Application for FilePicker {
             Message::NewDir(confirmed) => if confirmed {
                     let path = Path::new(&self.dirs[0]).join(&self.new_dir);
                     if let Err(e) = std::fs::create_dir_all(&path) {
-                        eprintln!("Error creating directory {:?}", path);
+                        let msg = format!("Error creating directory: {:?}", e);
+                        eprintln!("{}", msg);
+                        self.modal = FModal::Error(msg);
+                    } else {
+                        self.modal = FModal::None;
                     }
                 } else {
                     self.modal = FModal::NewDir;
@@ -534,7 +534,7 @@ impl Application for FilePicker {
                                 }
                             },
                             _ => {
-                                sels.iter().for_each(|item| println!("{}", item.path));
+                                println!("{}", sels.iter().map(|item|item.path.as_str()).join("\n"));
                                 process::exit(0);
                             }
                         }
@@ -668,14 +668,27 @@ impl Application for FilePicker {
             match self.modal {
                 FModal::None => mainview.into(),
                 FModal::OverWrite => mainview.into(),
+                FModal::Error(ref msg) => modal(mainview, Some(Card::new(
+                            text("Error"), text(msg)).max_width(500.0))
+                    )
+                    .backdrop(Message::CloseModal)
+                    .on_esc(Message::CloseModal)
+                    .align_y(alignment::Vertical::Center)
+                    .into(),
                 FModal::NewDir => modal(
                     mainview,
                     Some(Card::new(
                         text("Enter new directory name"),
-                        TextInput::new("Untitled", self.new_dir.as_str())
-                            .on_input(Message::NewDirInput)
-                            .on_submit(Message::NewDir(true))
-                            .on_paste(Message::NewDirInput),
+                        column![
+                            TextInput::new("Untitled", self.new_dir.as_str())
+                                .on_input(Message::NewDirInput)
+                                .on_submit(Message::NewDir(true))
+                                .on_paste(Message::NewDirInput),
+                            row![
+                                Button::new("Create").on_press(Message::NewDir(true)),
+                                Button::new("Cancel").on_press(Message::CloseModal),
+                            ].spacing(5.0)
+                        ]
                         ).max_width(500.0)
                         .on_close(Message::CloseModal))
                     )
@@ -896,8 +909,9 @@ async fn watch_inotify(mut rx: UnboundedReceiver<Inochan>, tx: UnboundedSender<I
                 match eopt {
                     Some(eres) => {
                         let ev = eres.unwrap();
-                        let created = ev.mask == inotify::EventMask::CREATE;
-                        let deleted = ev.mask == inotify::EventMask::DELETE;
+                        let created = ev.mask.contains(EventMask::CREATE|EventMask::ISDIR)
+                            || ev.mask.contains(EventMask::CLOSE_WRITE);
+                        let deleted = ev.mask.contains(EventMask::DELETE);
                         match(ev.name, watches.get(&ev.wd)) {
                             (Some(name),Some(dir)) => {
                                 let path = Path::new(dir).join(name).to_string_lossy().to_string();
@@ -919,7 +933,10 @@ async fn watch_inotify(mut rx: UnboundedReceiver<Inochan>, tx: UnboundedSender<I
                         watches.iter().for_each(|(wd,_)| estream.watches().remove(wd.clone()).unwrap());
                         watches.clear();
                         ls.iter().for_each(|dir|{
-                            watches.insert(estream.watches().add(dir, WatchMask::CREATE|WatchMask::DELETE).unwrap(), dir.to_string());
+                            watches.insert(estream.watches().add(dir,
+                                                                 WatchMask::CREATE|
+                                                                 WatchMask::CLOSE_WRITE|
+                                                                 WatchMask::DELETE).unwrap(), dir.to_string());
                         });
                     },
                     _ => {},
