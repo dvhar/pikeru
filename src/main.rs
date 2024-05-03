@@ -178,6 +178,7 @@ enum Message {
     LoadDir,
     LoadBookmark(usize),
     Select(bool),
+    OverWrite,
     Cancel,
     UpDir,
     NewDir(bool),
@@ -297,7 +298,11 @@ impl Application for FilePicker {
         };
         let ts = conf.thumb_size;
         let save_filename = if conf.saving() {
-            Some(path.file_name().unwrap().to_string_lossy().to_string())
+            if path.is_dir() {
+                None
+            } else {
+                Some(path.file_name().unwrap().to_string_lossy().to_string())
+            }
         } else {
             None
         };
@@ -509,12 +514,18 @@ impl Application for FilePicker {
                         }
                     }
                 }
-            }
+            },
+            Message::OverWrite => {
+                println!("{}", self.inputbar);
+                process::exit(0);
+            },
             Message::Select(button) => {
                 if self.conf.saving() {
                     if !self.inputbar.is_empty() {
                         let result = Path::new(&self.inputbar);
-                        if !result.is_dir() {
+                        if result.is_file() {
+                            self.modal = FModal::OverWrite;
+                        } else if !result.is_dir() {
                             println!("{}", self.inputbar);
                             process::exit(0);
                         }
@@ -617,7 +628,8 @@ impl Application for FilePicker {
                 ].spacing(1),
                 TextInput::new("directory or file path", self.inputbar.as_str())
                     .on_input(Message::TxtInput)
-                    .on_paste(Message::TxtInput),
+                    .on_paste(Message::TxtInput)
+                    .on_submit(Message::Select(false)),
             ].align_items(iced::Alignment::End).width(Length::Fill);
             let bookmarks = self.conf.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
                         col.push(Button::new(
@@ -667,7 +679,6 @@ impl Application for FilePicker {
             ];
             match self.modal {
                 FModal::None => mainview.into(),
-                FModal::OverWrite => mainview.into(),
                 FModal::Error(ref msg) => modal(mainview, Some(Card::new(
                             text("Error"), text(msg)).max_width(500.0))
                     )
@@ -675,9 +686,18 @@ impl Application for FilePicker {
                     .on_esc(Message::CloseModal)
                     .align_y(alignment::Vertical::Center)
                     .into(),
-                FModal::NewDir => modal(
-                    mainview,
-                    Some(Card::new(
+                FModal::OverWrite => modal(mainview, Some(Card::new(
+                        text("File exists. Overwrite?"),
+                        row![
+                            Button::new("Overwrite").on_press(Message::OverWrite),
+                            Button::new("Cancel").on_press(Message::CloseModal),
+                        ].spacing(5.0)).max_width(500.0))
+                    )
+                    .backdrop(Message::CloseModal)
+                    .on_esc(Message::CloseModal)
+                    .align_y(alignment::Vertical::Center)
+                    .into(),
+                FModal::NewDir => modal(mainview, Some(Card::new(
                         text("Enter new directory name"),
                         column![
                             TextInput::new("Untitled", self.new_dir.as_str())
