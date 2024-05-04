@@ -461,12 +461,12 @@ impl Application for FilePicker {
             },
             Message::NextItem(doneitem) => {
                 if doneitem.nav_id == self.nav_id {
-                    self.last_loaded += 1;
                     if self.last_loaded < self.items.len() &&  self.items[self.last_loaded].handle == None {
                         let nextitem = mem::take(&mut self.items[self.last_loaded]);
                         tokio::task::spawn(nextitem.load(
                                 self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
                     }
+                    self.last_loaded += 1;
                     let i = doneitem.idx;
                     self.items[i] = doneitem;
                 }
@@ -1130,16 +1130,22 @@ impl FilePicker {
 
     fn load_dir(self: &mut Self) {
         let mut ret = vec![];
+        let mut inodirs = vec![];
         self.nav_id = self.nav_id.wrapping_add(1);
         for dir in self.dirs.iter() {
-            let entries: Vec<_> = std::fs::read_dir(dir.as_str()).unwrap().map(|f| f.unwrap().path()).collect();
-            entries.iter().filter(|path|{ self.show_hidden ||
-                !path.as_os_str().to_str().map(|s|s.rsplitn(2,'/').next().unwrap_or("").starts_with('.')).unwrap_or(false)
-            }).for_each(|path| {
-                ret.push(FItem::new(path.into(), self.nav_id));
-            });
+            match std::fs::read_dir(dir.as_str()) {
+                Ok(rd) => {
+                    inodirs.push(dir.clone());
+                    rd.map(|f| f.unwrap().path()).filter(|path|{ self.show_hidden ||
+                        !path.as_os_str().to_str().map(|s|s.rsplitn(2,'/').next().unwrap_or("").starts_with('.')).unwrap_or(false)
+                    }).for_each(|path| {
+                        ret.push(FItem::new(path.into(), self.nav_id));
+                    });
+                },
+                Err(e) => eprintln!("Error reading dir {}: {}", dir, e),
+            }
         }
-        self.ino_updater.as_ref().unwrap().send(Inochan::NewDirs(self.dirs.clone())).unwrap();
+        self.ino_updater.as_ref().unwrap().send(Inochan::NewDirs(inodirs)).unwrap();
         self.items = ret;
     }
 
