@@ -15,7 +15,8 @@ use iced::{
     mouse::ScrollDelta,
     keyboard::Event::{KeyPressed,KeyReleased},
     keyboard::Key,
-    keyboard::key::Named::{Shift,Control},
+    keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace},
+    keyboard::key::Named,
     widget::{
         vertical_space, checkbox,
         container::{Appearance, StyleSheet,Id as CId},
@@ -29,7 +30,7 @@ use iced::{
         sink::SinkExt,
         StreamExt,
     },
-    event::{self, Event::{Mouse,Keyboard}},
+    event::{self, Status, Event::{Mouse,Keyboard}},
     Point,
 };
 use tokio::{
@@ -178,7 +179,7 @@ impl Mode {
 enum Message {
     LoadDir,
     LoadBookmark(usize),
-    Select(bool),
+    Select(SelType),
     OverWrite,
     Cancel,
     UpDir,
@@ -197,8 +198,9 @@ enum Message {
     HandleZones(usize, Vec<(Id, iced::Rectangle)>),
     NextImage(i64),
     Scrolled(scrollable::Viewport),
-    PositionInfo(Rectangle, Rectangle),
+    PositionInfo(i32, Rectangle, Rectangle),
     Sort(i32),
+    ArrowKey(Named),
     ShowHidden(bool),
     RunCmd(usize),
     InoDelete(String),
@@ -219,6 +221,7 @@ enum FType {
     Dir,
     #[default]
     Unknown,
+    NotExist,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -259,6 +262,13 @@ enum FModal {
     Error(String),
 }
 
+#[derive(PartialEq, Debug, Clone)]
+enum SelType {
+    Button,
+    Click,
+    TxtEntr,
+}
+
 struct FilePicker {
     conf: Config,
     scroll_id: scrollable::Id,
@@ -268,7 +278,7 @@ struct FilePicker {
     thumb_sender: Option<mpsc::Sender<FItem>>,
     nproc: usize,
     last_loaded: usize,
-    last_clicked: Option<usize>,
+    last_clicked: (usize, bool),
     icons: Arc<Icons>,
     clicktimer: ClickTimer,
     ctrl_pressed: bool,
@@ -283,6 +293,7 @@ struct FilePicker {
     new_dir: String,
     modal: FModal,
     dir_history: Vec<Vec<String>>,
+    content_width: f32,
 }
 
 impl Application for FilePicker {
@@ -322,7 +333,7 @@ impl Application for FilePicker {
                 nproc: num_cpus::get() * 2,
                 dirs: vec![startdir.to_string()],
                 last_loaded: 0,
-                last_clicked: None,
+                last_clicked: (0, false),
                 inputbar: String::new(),
                 icons: Arc::new(Icons::new(ts)),
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
@@ -339,6 +350,7 @@ impl Application for FilePicker {
                 modal: FModal::None,
                 new_dir: String::new(),
                 dir_history: vec![],
+                content_width: 0.0,
             },
             Command::none()
         )
@@ -387,10 +399,16 @@ impl Application for FilePicker {
                 self.items.iter_mut().enumerate().for_each(|(i,item)|item.idx = i);
                 self.conf.sort_by = i;
             },
-            Message::PositionInfo(widget, viewport) => {
-                if let Some(_) = self.last_clicked {
-                    self.last_clicked = None;
-                    return self.keep_in_view(widget, viewport);
+            Message::PositionInfo(elem, widget, viewport) => {
+                match elem {
+                    1 => {
+                        if self.last_clicked.1 {
+                            self.last_clicked.1 = false;
+                            return self.keep_in_view(widget, viewport);
+                        }
+                    },
+                    2 => self.content_width = widget.width,
+                    _ => {},
                 }
             },
             Message::DropBookmark(idx, cursor_pos) => {
@@ -425,6 +443,22 @@ impl Application for FilePicker {
             Message::TxtInput(txt) => self.inputbar = txt,
             Message::Ctrl(pressed) => self.ctrl_pressed = pressed,
             Message::Shift(pressed) => self.shift_pressed = pressed,
+            Message::ArrowKey(key) => {
+                let idx = if self.items.iter().any(|item|item.sel) {
+                    let maxcols = (((self.content_width-130.0) / self.conf.thumb_size)+1.0).max(1.0) as i32;
+                    let i = self.last_clicked.0 as i32;
+                    match key {
+                        ArrowUp => i - maxcols,
+                        ArrowDown => i + maxcols,
+                        ArrowLeft => i - 1,
+                        ArrowRight => i + 1,
+                        _ => -1,
+                    }
+                } else { 0 };
+                if idx >= 0 && idx < self.items.len() as i32 {
+                    self.click_item(idx as usize, self.shift_pressed, self.ctrl_pressed, false);
+                }
+            },
             Message::NextItem(doneitem) => {
                 if doneitem.nav_id == self.nav_id {
                     self.last_loaded += 1;
@@ -494,7 +528,7 @@ impl Application for FilePicker {
                     ClickType::Single => self.click_item(idx, self.shift_pressed, self.ctrl_pressed, false),
                     ClickType::Double => {
                         self.items[idx].sel = true;
-                        return self.update(Message::Select(false));
+                        return self.update(Message::Select(SelType::Click));
                     },
                 }
             },
@@ -532,23 +566,32 @@ impl Application for FilePicker {
                 println!("{}", self.inputbar);
                 process::exit(0);
             },
-            Message::Select(button) => {
+            Message::Select(seltype) => {
                 if self.conf.saving() {
                     if !self.inputbar.is_empty() {
                         let result = Path::new(&self.inputbar);
                         if result.is_file() {
                             self.modal = FModal::OverWrite;
-                        } else if !result.is_dir() {
+                        } else if result.is_dir() {
+                            self.dir_history.push(mem::take(&mut self.dirs));
+                            self.dirs = vec![self.inputbar.clone()];
+                            self.scroll_offset.y = 0.0;
+                            return self.update(Message::LoadDir);
+                        } else {
                             println!("{}", self.inputbar);
                             process::exit(0);
                         }
                     }
                 } else {
-                    let sels: Vec<&FItem> = self.items.iter().filter(|item| item.sel ).collect();
+                    let pb =  FItem::new(PathBuf::from(&self.inputbar), self.nav_id);
+                    let sels: Vec<&FItem> = match seltype {
+                        SelType::TxtEntr => vec![&pb],
+                        _ => self.items.iter().filter(|item| item.sel ).collect(),
+                    };
                     if sels.len() != 0 {
                         match sels[0].ftype {
                             FType::Dir => {
-                                if self.conf.dir() && sels.len() == 1 && button {
+                                if self.conf.dir() && sels.len() == 1 && seltype == SelType::Button {
                                     println!("{}", sels[0].path);
                                     process::exit(0);
                                 } else {
@@ -557,6 +600,7 @@ impl Application for FilePicker {
                                     return self.update(Message::LoadDir);
                                 }
                             },
+                            FType::NotExist => {},
                             _ => {
                                 println!("{}", sels.iter().map(|item|item.path.as_str()).join("\n"));
                                 process::exit(0);
@@ -600,17 +644,25 @@ impl Application for FilePicker {
                 }
             }
         });
-        let events = event::listen_with(|evt, _| {
-            match evt {
-                Mouse(ButtonPressed(Back)) => Some(Message::UpDir),
-                Mouse(ButtonPressed(Forward)) => Some(Message::DownDir),
-                Mouse(WheelScrolled{ delta: ScrollDelta::Lines{ y, ..}}) => Some(Message::NextImage(if y<0.0 {1} else {-1})),
-                Keyboard(KeyPressed{ key: Key::Named(Shift), .. }) => Some(Message::Shift(true)),
-                Keyboard(KeyReleased{ key: Key::Named(Shift), .. }) => Some(Message::Shift(false)),
-                Keyboard(KeyPressed{ key: Key::Named(Control), .. }) => Some(Message::Ctrl(true)),
-                Keyboard(KeyReleased{ key: Key::Named(Control), .. }) => Some(Message::Ctrl(false)),
-                _ => None,
-            }
+        let events = event::listen_with(|evt, stat| {
+            if stat == Status::Ignored {
+                match evt {
+                    Mouse(ButtonPressed(Back)) => Some(Message::UpDir),
+                    Mouse(ButtonPressed(Forward)) => Some(Message::DownDir),
+                    Mouse(WheelScrolled{ delta: ScrollDelta::Lines{ y, ..}}) => Some(Message::NextImage(if y<0.0 {1} else {-1})),
+                    Keyboard(KeyPressed{ key: Key::Named(Enter), .. }) => Some(Message::Select(SelType::Click)),
+                    Keyboard(KeyPressed{ key: Key::Named(Shift), .. }) => Some(Message::Shift(true)),
+                    Keyboard(KeyReleased{ key: Key::Named(Shift), .. }) => Some(Message::Shift(false)),
+                    Keyboard(KeyPressed{ key: Key::Named(Control), .. }) => Some(Message::Ctrl(true)),
+                    Keyboard(KeyReleased{ key: Key::Named(Control), .. }) => Some(Message::Ctrl(false)),
+                    Keyboard(KeyPressed{ key: Key::Named(ArrowUp), .. }) => Some(Message::ArrowKey(ArrowUp)),
+                    Keyboard(KeyPressed{ key: Key::Named(ArrowDown), .. }) => Some(Message::ArrowKey(ArrowDown)),
+                    Keyboard(KeyPressed{ key: Key::Named(ArrowLeft), .. }) => Some(Message::ArrowKey(ArrowLeft)),
+                    Keyboard(KeyPressed{ key: Key::Named(ArrowRight), .. }) => Some(Message::ArrowKey(ArrowRight)),
+                    Keyboard(KeyPressed{ key: Key::Named(Backspace), .. }) => Some(Message::UpDir),
+                    _ => None,
+                }
+            } else { None }
         });
         subscription::Subscription::batch(vec![items, events/*, native*/])
     }
@@ -637,12 +689,12 @@ impl Application for FilePicker {
                     top_button("New Dir", 80.0, Message::NewDir(false)),
                     top_button("Up Dir", 80.0, Message::UpDir),
                     top_button("Cancel", 100.0, Message::Cancel),
-                    top_button(&self.select_button, 100.0, Message::Select(true))
+                    top_button(&self.select_button, 100.0, Message::Select(SelType::Button))
                 ].spacing(1),
                 TextInput::new("directory or file path", self.inputbar.as_str())
                     .on_input(Message::TxtInput)
                     .on_paste(Message::TxtInput)
-                    .on_submit(Message::Select(false)),
+                    .on_submit(Message::Select(SelType::TxtEntr)),
             ].align_items(iced::Alignment::End).width(Length::Fill);
             let bookmarks = self.conf.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
                         col.push(Button::new(
@@ -688,7 +740,7 @@ impl Application for FilePicker {
             };
             let mainview = column![
                 ctrlbar,
-                row![bookmarks, content],
+                row![bookmarks, wrapper::locator(content).on_info(|a,b|Message::PositionInfo(2,a,b))],
             ];
             match self.modal {
                 FModal::None => mainview.into(),
@@ -751,7 +803,7 @@ fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
 
 impl FItem {
 
-    fn display(&self, last_clicked: Option<usize>, thumbsize: f32) -> Element<'static, Message> {
+    fn display(&self, last_clicked: (usize, bool), thumbsize: f32) -> Element<'static, Message> {
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
             .width(Length::Fixed(thumbsize));
@@ -779,10 +831,10 @@ impl FItem {
             .on_right_press(Message::RightClick(self.idx as i64))
             .on_middle_press(Message::MiddleClick(self.idx));
         match last_clicked {
-            Some(i) if i == idx => {
-                wrapper::locator(clickable).on_info(Message::PositionInfo).into()
+            (i, true) if i == idx => {
+                wrapper::locator(clickable).on_info(|a,b|Message::PositionInfo(1,a,b)).into()
             },
-            _ => {
+            (_,_) => {
                 clickable.into()
             },
         }
@@ -830,13 +882,17 @@ impl FItem {
     }
 
     fn new(pth: PathBuf, nav_id: u8) -> Self {
-        let md = pth.metadata().unwrap();
-        let ftype = if md.is_dir() {
-            FType::Dir
-        } else {
-            FType::Unknown
+        let (ftype, mtime) = match pth.metadata() {
+            Ok(metadata) => {
+                if metadata.is_dir() {
+                    (FType::Dir, metadata.modified().unwrap())
+                } else {
+                    (FType::Unknown, metadata.modified().unwrap())
+                }
+            },
+            Err(_) => (FType::NotExist, std::time::SystemTime::now()),
+
         };
-        let mtime = md.modified().unwrap();
         let path = pth.to_string_lossy();
         let mut label = path.rsplitn(2,'/').next().unwrap().to_string();
         if label.len() > 20 {
@@ -1038,7 +1094,7 @@ impl FilePicker {
 
     fn click_item(self: &mut Self, i: usize, shift: bool, ctrl: bool, always_sel: bool) {
 
-        self.last_clicked = Some(i);
+        self.last_clicked = (i, true);
         let isdir = self.items[i].isdir();
         let prevsel = self.items.iter().filter_map(|item| if item.sel { Some(item.idx) } else { None }).collect::<Vec<usize>>();
         while (self.conf.multi() || isdir) && shift && prevsel.len() > 0 {
