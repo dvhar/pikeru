@@ -43,6 +43,7 @@ use tokio::{
     }
 };
 use std::{
+    fs,
     collections::HashMap,
     collections::HashSet,
     str,
@@ -72,9 +73,10 @@ macro_rules! die {
 }
 
 fn main() -> iced::Result {
-    let opts = Config::new();
+    let conf = Config::new();
+    conf.update();
     video_rs::init().unwrap();
-    FilePicker::run(iced::Settings::with_flags(opts))
+    FilePicker::run(iced::Settings::with_flags(conf))
 }
 
 struct Config {
@@ -85,9 +87,11 @@ struct Config {
     bookmarks: Vec<Bookmark>,
     cmds: Vec<Cmd>,
     thumb_size: f32,
+    dpi_scale: f64,
     window_size: Size,
     dark_theme: bool,
     cache_dir: String,
+    need_update: bool,
 }
 
 impl Config {
@@ -121,6 +125,8 @@ impl Config {
         let mut thumb_size = 160.0;
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dark_theme = true;
+        let mut dpi_scale: f32 = 1.0;
+        let mut opts_missing = 6;
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
             match line {
                 "[Commands]" => section = S::Commands,
@@ -133,13 +139,15 @@ impl Config {
                         S::Commands => cmds.push(Cmd::new(k, v)),
                         S::Bookmarks => bookmarks.push(Bookmark::new(k,v)),
                         S::Settings => match k {
-                            "thumbnail_size" => thumb_size = v.parse().unwrap(),
-                            "theme" => dark_theme = v == "dark",
-                            "cache_dir" => cache_dir = v.to_string(),
+                            "thumbnail_size" => { opts_missing -= 1; thumb_size = v.parse().unwrap() },
+                            "dpi_scale" => { opts_missing -= 1; dpi_scale = v.parse().unwrap() },
+                            "theme" => { opts_missing -= 1; dark_theme = v == "dark" },
+                            "cache_dir" => { opts_missing -= 1; cache_dir = v.to_string() },
                             "window_size" => {
+                                opts_missing -= 1;
                                 if !match str::split_once(v, 'x') {
                                     Some(wh) => match (wh.0.parse::<f32>(), wh.1.parse::<f32>()) {
-                                        (Ok(w),Ok(h)) => {window_size = Size {width: w, height: h}; true},
+                                        (Ok(w),Ok(h)) => {window_size = Size {width: w*dpi_scale, height: h*dpi_scale}; true},
                                         (_,_) => false,
                                     }
                                     None => false,
@@ -147,11 +155,14 @@ impl Config {
                                     eprintln!("window_size must have format WIDTHxHEIGHT");
                                 }
                             }
-                            "sort_by" => sort_by = match v {
-                                "name_desc" => 2,
-                                "time_asc" => 3,
-                                "time_desc" => 4,
-                                _ => 1,
+                            "sort_by" => {
+                                opts_missing -= 1;
+                                sort_by = match v {
+                                    "name_desc" => 2,
+                                    "time_asc" => 3,
+                                    "time_desc" => 4,
+                                    _ => 1,
+                                }
                             },
                             _ => {},
                         },
@@ -163,7 +174,7 @@ impl Config {
         Config {
             mode: Mode::from(matches.opt_str("m")),
             path: matches.opt_str("p").unwrap_or(pwd),
-            title: "File Picker".to_string(),
+            title: matches.opt_str("t").unwrap_or("File Picker".to_string()),
             cmds,
             bookmarks,
             sort_by,
@@ -171,7 +182,49 @@ impl Config {
             window_size,
             dark_theme,
             cache_dir,
+            dpi_scale: dpi_scale.into(),
+            need_update: opts_missing > 0,
         }
+    }
+
+    fn update(self: &Config) {
+        if !self.need_update {
+            return;
+        }
+        let mut conf = String::from("# Commands from the cmd menu will substitute the follwong values from the selected files before running, as seen in the convert examples. All paths and filenames are already quoted for you.
+# [path] is full file path
+# [name] is the filename without full path
+# [dir] is the current directory without trailing slash
+# [part] is the filename without path or extension
+# [ext] is the file extension, including the period
+[Commands]\n");
+        self.cmds.iter().for_each(|cmd| {
+            conf.push_str(&cmd.label);
+            conf.push_str(" = ");
+            conf.push_str(&cmd.cmd);
+            conf.push('\n');
+        });
+        conf.push_str("\n[Settings]\n");
+        conf.push_str(format!(
+                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\ntheme = {}\nsort_by = {}\ncache_dir = {}\n",
+                self.dpi_scale as i32,
+                self.window_size.width as i32, self.window_size.height as i32,
+                self.thumb_size as i32,
+                if self.dark_theme { "dark" } else { "light" },
+                match self.sort_by { 1=>"name_asc", 2=>"name_desc", 3=>"time_asc", 4=>"time_desc", _=>"" },
+                self.cache_dir
+                ).as_str());
+        conf.push_str("\n[Bookmarks]\n");
+        self.bookmarks.iter().for_each(|bm| {
+            conf.push_str(&bm.label);
+            conf.push_str(" = ");
+            conf.push_str(&bm.path);
+            conf.push('\n');
+        });
+        let home = std::env::var("HOME").unwrap();
+        let confpath = Path::new(&home).join(".config").join("pikeru.conf");
+        fs::write(confpath, conf.as_bytes()).unwrap();
+        eprintln!("updated config file with new setting");
     }
 }
 
@@ -646,7 +699,7 @@ impl Application for FilePicker {
     }
 
     fn scale_factor(self: &Self) -> f64 {
-        1.0
+        self.conf.dpi_scale
     }
 
     fn subscription(&self) -> iced::Subscription<Self::Message> {
