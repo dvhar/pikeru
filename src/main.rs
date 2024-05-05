@@ -31,7 +31,7 @@ use iced::{
         StreamExt,
     },
     event::{self, Status, Event::{Mouse,Keyboard}},
-    Point,
+    Point, Size,
 };
 use tokio::{
     fs::File, io::AsyncReadExt,
@@ -83,6 +83,9 @@ struct Config {
     bookmarks: Vec<Bookmark>,
     cmds: Vec<Cmd>,
     thumb_size: f32,
+    window_size: Size,
+    dark_theme: bool,
+    cache_dir: String,
 }
 
 impl Config {
@@ -106,6 +109,7 @@ impl Config {
 
         let home = std::env::var("HOME").unwrap();
         let confpath = Path::new(&home).join(".config").join("pikeru.conf").to_string_lossy().to_string();
+        let mut cache_dir = Path::new(&home).join(".cache").join("pikeru").to_string_lossy().to_string();
         let txt = std::fs::read_to_string(confpath).unwrap();
         enum S { Commands, Settings, Bookmarks }
         let mut section = S::Commands;
@@ -113,6 +117,8 @@ impl Config {
         let mut cmds = vec![];
         let mut sort_by = 1;
         let mut thumb_size = 160.0;
+        let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
+        let mut dark_theme = true;
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
             match line {
                 "[Commands]" => section = S::Commands,
@@ -126,6 +132,19 @@ impl Config {
                         S::Bookmarks => bookmarks.push(Bookmark::new(k,v)),
                         S::Settings => match k {
                             "thumbnail_size" => thumb_size = v.parse().unwrap(),
+                            "theme" => dark_theme = v == "dark",
+                            "cache_dir" => cache_dir = v.to_string(),
+                            "window_size" => {
+                                if !match str::split_once(v, 'x') {
+                                    Some(wh) => match (wh.0.parse::<f32>(), wh.1.parse::<f32>()) {
+                                        (Ok(w),Ok(h)) => {window_size = Size {width: w, height: h}; true},
+                                        (_,_) => false,
+                                    }
+                                    None => false,
+                                } {
+                                    eprintln!("window_size must have format WIDTHxHEIGHT");
+                                }
+                            }
                             "sort_by" => sort_by = match v {
                                 "name_desc" => 2,
                                 "time_asc" => 3,
@@ -138,6 +157,7 @@ impl Config {
                 },
             }
         }
+        eprintln!("Window size:{:?}", window_size);
 
         Config {
             mode: Mode::from(matches.opt_str("m")),
@@ -147,6 +167,9 @@ impl Config {
             bookmarks,
             sort_by,
             thumb_size,
+            window_size,
+            dark_theme,
+            cache_dir,
         }
     }
 }
@@ -305,6 +328,7 @@ impl Application for FilePicker {
     fn new(conf: Self::Flags) -> (Self, iced::Command<Self::Message>) {
         let pathstr = conf.path.clone();
         let path = Path::new(&pathstr);
+        let window_size = conf.window_size;
         let startdir = if path.is_dir() {
             path.to_string_lossy()
         } else {
@@ -352,12 +376,16 @@ impl Application for FilePicker {
                 dir_history: vec![],
                 content_width: 0.0,
             },
-            Command::none()
+            iced::window::resize(iced::window::Id::MAIN, window_size)
         )
     }
 
     fn theme(&self) -> iced::Theme {
-        iced::Theme::Dark
+        if self.conf.dark_theme {
+            iced::Theme::Dark
+        } else {
+            iced::Theme::Light
+        }
     }
 
     fn title(&self) -> String {
