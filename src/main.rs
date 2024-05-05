@@ -1013,7 +1013,12 @@ impl FItem {
         hasher.update(path.as_bytes());
         let cache_dir = Path::new(&icons.cache_dir).join(format!("{:x}{}.webp", hasher.finalize(), thumbsize));
         if cache_dir.is_file() {
-            Some(Handle::from_path(cache_dir))
+            let mut file = File::open(cache_dir).await.unwrap();
+            let mut buffer = Vec::new();
+            file.read_to_end(&mut buffer).await.unwrap_or(0);
+            let img = load_from_memory(buffer.as_ref()).unwrap();
+            let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
+            Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
         } else if vid {
             vid_frame(&path, Some(thumbsize), Some(&cache_dir))
         } else {
