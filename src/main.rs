@@ -609,7 +609,7 @@ impl Application for FilePicker {
             Message::MiddleClick(idx) => self.click_item(idx, false, true, false),
             Message::LeftClick(idx) => {
                 match self.clicktimer.click(idx) {
-                    ClickType::Single => self.click_item(idx, self.shift_pressed, self.ctrl_pressed, false),
+                    ClickType::Single => self.click_item(idx, self.shift_pressed, self.ctrl_pressed, idx == self.view_image.0),
                     ClickType::Double => {
                         self.items[idx].sel = true;
                         return self.update(Message::Select(SelType::Click));
@@ -797,8 +797,9 @@ impl Application for FilePicker {
                                     .height(Length::Fill))
                                .align_x(alignment::Horizontal::Center)
                                .align_y(alignment::Vertical::Center)
-                               .width(Length::Fill).height(Length::Fill)
-                    ).on_right_press(Message::RightClick(-1))
+                               .width(Length::Fill).height(Length::Fill))
+                    .on_right_press(Message::RightClick(-1))
+                    .on_release(Message::LeftClick(self.view_image.0))
                     .into()
             } else {
                 let maxcols = ((size.width-130.0) / self.conf.thumb_size).max(1.0) as usize;
