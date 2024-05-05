@@ -1,5 +1,6 @@
 use img::load_from_memory;
 use img;
+use img::codecs::webp::WebPEncoder;
 use num_cpus;
 use itertools::Itertools;
 mod wrapper;
@@ -61,6 +62,7 @@ use iced_aw::{
     menu::{Item, Menu},
     modal, Card
 };
+use md5::{Md5,Digest};
 
 macro_rules! die {
     ($($arg:tt)*) => {{
@@ -157,7 +159,6 @@ impl Config {
                 },
             }
         }
-        eprintln!("Window size:{:?}", window_size);
 
         Config {
             mode: Mode::from(matches.opt_str("m")),
@@ -265,6 +266,7 @@ struct Icons {
     doc: Handle,
     unknown: Handle,
     error: Handle,
+    cache_dir: String,
 }
 
 struct Bookmark {
@@ -349,6 +351,7 @@ impl Application for FilePicker {
             Mode::Save => "Save",
             Mode::Dir => "Selecct",
         }.to_string();
+        let cache_dir = conf.cache_dir.clone();
         (
             Self {
                 conf,
@@ -359,7 +362,7 @@ impl Application for FilePicker {
                 last_loaded: 0,
                 last_clicked: (0, false),
                 inputbar: String::new(),
-                icons: Arc::new(Icons::new(ts)),
+                icons: Arc::new(Icons::new(ts, cache_dir)),
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
                 ctrl_pressed: false,
                 shift_pressed: false,
@@ -899,7 +902,7 @@ impl FItem {
                }
             },
             (FType::Image, true) => {
-               vid_frame(self.path.as_str(), None)
+               vid_frame(self.path.as_str(), None, None)
             },
             _ => None,
         }
@@ -951,6 +954,44 @@ impl FItem {
         }
     }
 
+    async fn prepare_cached_thumbnail(self: &Self, path: &str, vid: bool, thumbsize: u32, icons: Arc<Icons>) -> Option<Handle> {
+        let mut hasher = Md5::new();
+        hasher.update(path.as_bytes());
+        let cache_dir = Path::new(&icons.cache_dir).join(format!("{:x}{}.webp", hasher.finalize(), thumbsize));
+        if cache_dir.is_file() {
+            Some(Handle::from_path(cache_dir))
+        } else if vid {
+            vid_frame(&path, Some(thumbsize), Some(&cache_dir))
+        } else {
+            let file = File::open(self.path.as_str()).await;
+            match file {
+                Ok(mut file) => {
+                    let mut buffer = Vec::new();
+                    file.read_to_end(&mut buffer).await.unwrap_or(0);
+                    let img = load_from_memory(buffer.as_ref());
+                    match img {
+                        Ok(img) => {
+                            let thumb = img.thumbnail(thumbsize, thumbsize);
+                            let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
+                            let mut file = std::fs::File::create_new(cache_dir).unwrap();
+                            let encoder = WebPEncoder::new_lossless(&mut file);
+                            encoder.encode(rgba.as_ref(), w, h, img::ExtendedColorType::Rgba8).unwrap();
+                            Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                        },
+                        Err(e) => {
+                            eprintln!("Error decoding image {}: {}", self.path, e);
+                            None
+                        },
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Error reading {}: {}", self.path, e);
+                    None
+                },
+            }
+        }
+    }
+
     async fn load(mut self, mut chan: mpsc::Sender<FItem>, icons: Arc<Icons>, thumbsize: u32) {
         match self.ftype {
             FType::Dir => {
@@ -963,37 +1004,23 @@ impl FItem {
                 };
                 self.ftype = match ext.to_lowercase().as_str() {
                     "png"|"jpg"|"jpeg"|"bmp"|"tiff"|"gif"|"webp" => {
-                        let file = File::open(self.path.as_str()).await;
-                        match file {
-                            Ok(mut file) => {
-                                let mut buffer = Vec::new();
-                                file.read_to_end(&mut buffer).await.unwrap_or(0);
-                                let img = load_from_memory(buffer.as_ref());
-                                match img {
-                                    Ok(img) => {
-                                        let thumb = img.thumbnail(thumbsize, thumbsize);
-                                        let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
-                                        self.handle = Some(Handle::from_pixels(w, h, rgba.as_raw().clone()));
-                                        FType::Image
-                                    },
-                                    Err(e) => {
-                                        eprintln!("Error decoding image {}: {}", self.path, e);
-                                        self.handle = Some(icons.error.clone());
-                                        FType::File
-                                    },
-                                }
-                            },
-                            Err(e) => {
-                                eprintln!("Error reading {}: {}", self.path, e);
-                                self.handle = Some(icons.error.clone());
-                                FType::File
-                            },
+                        self.handle = self.prepare_cached_thumbnail(self.path.as_str(), false, thumbsize, icons.clone()).await;
+                        if self.handle == None {
+                            self.handle = Some(icons.error.clone());
+                            FType::File
+                        } else {
+                            FType::Image
                         }
                     },
                     "webm"|"mkv"|"mp4"|"av1" => {
-                        self.handle = vid_frame(self.path.as_str(), Some(thumbsize));
-                        self.vid = true;
-                        FType::Image
+                        self.handle = self.prepare_cached_thumbnail(self.path.as_str(), true, thumbsize, icons.clone()).await;
+                        if self.handle == None {
+                            self.handle = Some(icons.error.clone());
+                            FType::File
+                        } else {
+                            self.vid = true;
+                            FType::Image
+                        }
                     },
                     "txt"|"pdf"|"doc"|"docx"|"xls"|"xlsx" => {
                         self.handle = Some(icons.doc.clone());
@@ -1194,12 +1221,13 @@ impl FilePicker {
 }
 
 impl Icons {
-    fn new(thumbsize: f32) -> Self {
+    fn new(thumbsize: f32, cache_dir: String) -> Self {
         Self {
             folder: Self::init(include_bytes!("../assets/folder.png"), thumbsize),
             unknown:  Self::init(include_bytes!("../assets/unknown.png"), thumbsize),
             doc:  Self::init(include_bytes!("../assets/document.png"), thumbsize),
             error:  Self::init(include_bytes!("../assets/error.png"), thumbsize),
+            cache_dir,
         }
     }
     fn init(img_bytes: &[u8], thumbsize: f32) -> Handle {
@@ -1268,7 +1296,7 @@ fn get_sel_theme() -> Container {
     )
 }
 
-fn vid_frame(src: &str, thumbnail: Option<u32>) -> Option<Handle> {
+fn vid_frame(src: &str, thumbnail: Option<u32>, safepath: Option<&PathBuf>) -> Option<Handle> {
     let mut decoder = if let Some(thumbsize) = thumbnail {
         DecoderBuilder::new(Location::File(src.into()))
             .with_resize(Resize::Fit(thumbsize, thumbsize)).build().ok()?
@@ -1288,6 +1316,11 @@ fn vid_frame(src: &str, thumbnail: Option<u32>) -> Option<Handle> {
                 *rgba.get_unchecked_mut(i4+1) = *rgb.get_unchecked(i3+1);
                 *rgba.get_unchecked_mut(i4+2) = *rgb.get_unchecked(i3+2);
             }}
+            if let Some(out) = safepath {
+                let mut file = std::fs::File::create_new(out).unwrap();
+                let encoder = WebPEncoder::new_lossless(&mut file);
+                encoder.encode(rgba.as_ref(), w, h, img::ExtendedColorType::Rgba8).unwrap();
+            }
             Some(Handle::from_pixels(w, h, rgba))
         },
         Err(e) => {
