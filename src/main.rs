@@ -43,6 +43,7 @@ use tokio::{
     }
 };
 use std::{
+    ops::{Deref,DerefMut},
     fs,
     collections::HashMap,
     collections::HashSet,
@@ -302,7 +303,7 @@ enum FType {
 }
 
 #[derive(Debug, Clone, Default)]
-struct FItem {
+struct FItemb {
     path: String,
     label: String,
     ftype: FType,
@@ -312,6 +313,19 @@ struct FItem {
     nav_id: u8,
     mtime: f32,
     vid: bool,
+}
+#[derive(Debug, Clone, Default)]
+struct FItem(Box<FItemb>);
+impl Deref for FItem {
+    type Target = FItemb;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl DerefMut for FItem {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 struct Icons {
@@ -995,7 +1009,7 @@ impl FItem {
                 label = format!("{}{}\n{}", if start == 0 { "" } else { "..." }, &label[start..split], &label[split..]);
             }
         }
-        FItem {
+        FItem(Box::new(FItemb {
             path: path.to_string(),
             label,
             ftype,
@@ -1005,7 +1019,7 @@ impl FItem {
             nav_id,
             mtime: mtime.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32(),
             vid: false,
-        }
+        }))
     }
 
     async fn prepare_cached_thumbnail(self: &Self, path: &str, vid: bool, thumbsize: u32, icons: Arc<Icons>) -> Option<Handle> {
