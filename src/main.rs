@@ -75,7 +75,7 @@ macro_rules! die {
 
 fn main() -> iced::Result {
     let conf = Config::new();
-    conf.update();
+    conf.update(false);
     video_rs::init().unwrap();
     FilePicker::run(iced::Settings::with_flags(conf))
 }
@@ -188,8 +188,8 @@ impl Config {
         }
     }
 
-    fn update(self: &Config) {
-        if !self.need_update {
+    fn update(self: &Config, force: bool) {
+        if !self.need_update && !force {
             return;
         }
         let mut conf = String::from("# Commands from the cmd menu will substitute the follwong values from the selected files before running, as seen in the convert examples. All paths and filenames are already quoted for you.
@@ -225,7 +225,9 @@ impl Config {
         let home = std::env::var("HOME").unwrap();
         let confpath = Path::new(&home).join(".config").join("pikeru.conf");
         fs::write(confpath, conf.as_bytes()).unwrap();
-        eprintln!("updated config file with new setting");
+        if !force {
+            eprintln!("updated config file with new setting");
+        }
     }
 }
 
@@ -1344,9 +1346,11 @@ impl FilePicker {
             Some(i) if i >= 0 => {
                 // TODO: multi-dir bookmark?
                 self.conf.bookmarks.push(Bookmark::new(label, item.path.as_str()));
+                self.conf.update(true);
             },
             Some(_) => {
                 self.conf.bookmarks.push(Bookmark::new(label, item.path.as_str()));
+                self.conf.update(true);
             },
             None => {},
         }
