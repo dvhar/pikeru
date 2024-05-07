@@ -603,14 +603,17 @@ impl Application for FilePicker {
             },
             Message::NextItem(doneitem) => {
                 if doneitem.nav_id == self.nav_id {
-                    if self.last_loaded < self.items.len() &&  self.items[self.last_loaded].handle == None {
-                        let nextitem = mem::take(&mut self.items[self.last_loaded]);
-                        tokio::task::spawn(nextitem.load(
-                                self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                    if self.last_loaded < self.displayed.len() {
+                        let i = self.dtoi(self.last_loaded);
+                        if self.items[i].handle == None {
+                            let nextitem = mem::take(&mut self.items[i]);
+                            tokio::task::spawn(nextitem.load(
+                                    self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                        }
                     }
                     self.last_loaded += 1;
-                    let i = doneitem.items_idx;
-                    self.items[i] = doneitem;
+                    let j = doneitem.items_idx;
+                    self.items[j] = doneitem;
                 }
             },
             Message::LoadBookmark(idx) => {
@@ -627,9 +630,9 @@ impl Application for FilePicker {
                 };
                 self.load_dir();
                 let _ = self.update(Message::Sort(self.conf.sort_by));
-                self.last_loaded = self.nproc.min(self.items.len());
+                self.last_loaded = self.nproc.min(self.displayed.len());
                 for i in 0..self.last_loaded {
-                    let item = mem::take(&mut self.items[i]);
+                    let item = mem::take(&mut self.items[self.displayed[i]]);
                     tokio::task::spawn(item.load(
                                 self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
                 }
@@ -694,17 +697,18 @@ impl Application for FilePicker {
             },
             Message::NextImage(step) => {
                 if self.view_image.1 != None {
-                    let mut didx = self.items[self.view_image.0].display_idx as i64;
+                    let mut didx = self.itod(self.view_image.0) as i64;
                     while (step<0 && didx>0) || (step>0 && didx<((self.displayed.len()-1) as i64)) {
                         didx = (didx as i64) + step;
                         if didx<0 || didx as usize>=self.displayed.len() {
                             return Command::none();
                         }
                         let di = didx as usize;
-                        if self.items[self.displayed[di]].ftype == FType::Image {
-                            let img = self.items[self.displayed[di]].preview();
+                        let ii = self.dtoi(di);
+                        if self.items[ii].ftype == FType::Image {
+                            let img = self.items[ii].preview();
                             if img != None {
-                                self.view_image = (self.displayed[di], img);
+                                self.view_image = (self.dtoi(di), img);
                                 return self.update(Message::LeftClick(self.view_image.0));
                             }
                         }
@@ -1236,6 +1240,11 @@ fn shquote(s: &str) -> String {
 }
 
 impl FilePicker {
+
+    #[inline]
+    fn itod(self: &Self, i: usize) -> usize { self.items[i].display_idx }
+    #[inline]
+    fn dtoi(self: &Self, i: usize) -> usize { self.displayed[i] }
 
     fn run_command(self: &Self, icmd: usize) {
         let cmd = self.conf.cmds[icmd].cmd.as_str();
