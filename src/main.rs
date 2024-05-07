@@ -160,8 +160,8 @@ impl Config {
                                 opts_missing -= 1;
                                 sort_by = match v {
                                     "name_desc" => 2,
-                                    "time_asc" => 3,
-                                    "time_desc" => 4,
+                                    "time_desc" => 3,
+                                    "time_asc" => 4,
                                     _ => 1,
                                 }
                             },
@@ -490,18 +490,25 @@ impl Application for FilePicker {
             Message::InoDelete(file) => {
                 if let Some(i) = self.items.iter().position(|x|x.path == file) {
                     let dix = self.items[i].display_idx;
-                    self.items.iter_mut().for_each(|m| if m.display_idx >= dix { m.display_idx-=1 });
+                    self.items.iter_mut().enumerate().for_each(|(i,m)|{
+                        m.items_idx = i;
+                        if m.display_idx >= dix { m.display_idx-=1 };
+                    });
                     self.displayed.iter_mut().for_each(|m| if *m >= i { *m-=1 });
                     self.items.remove(i);
                     self.displayed.remove(dix);
                 }
-                self.items.iter_mut().enumerate().for_each(|(i,item)|item.items_idx = i);
             },
             Message::RunCmd(i) => self.run_command(i),
             Message::Dummy => {},
             Message::ShowHidden(show) => {
                 self.show_hidden = show;
-                return self.update(Message::LoadDir);
+                self.displayed = self.items.iter().enumerate().filter_map(|(i,item)| {
+                    if show || !item.path.rsplitn(2,'/').next().unwrap_or("").starts_with('.') {
+                        Some(i)
+                    } else { None }
+                }).collect();
+                return self.update(Message::Sort(self.conf.sort_by));
             },
             Message::Sort(i) => {
                 match i {
@@ -527,7 +534,7 @@ impl Application for FilePicker {
                     }),
                     _ => unreachable!(),
                 };
-                self.displayed.iter().enumerate().for_each(|(i,j)|self.items[*j].display_idx = i);
+                self.displayed.iter().enumerate().for_each(|(i,j)|unsafe{self.items.get_unchecked_mut(*j)}.display_idx = i);
                 self.conf.sort_by = i;
             },
             Message::PositionInfo(elem, widget, viewport) => {
@@ -675,7 +682,7 @@ impl Application for FilePicker {
                     let iidx = iidx as usize;
                     let item = &self.items[iidx];
                     if item.ftype == FType::Image {
-                        self.view_image = (item.display_idx, item.preview());
+                        self.view_image = (item.items_idx, item.preview());
                         self.click_item(iidx, false, false, true);
                     } else {
                         self.click_item(iidx as usize, true, false, false);
@@ -687,7 +694,7 @@ impl Application for FilePicker {
             },
             Message::NextImage(step) => {
                 if self.view_image.1 != None {
-                    let mut didx = self.view_image.0 as i64;
+                    let mut didx = self.items[self.view_image.0].display_idx as i64;
                     while (step<0 && didx>0) || (step>0 && didx<((self.displayed.len()-1) as i64)) {
                         didx = (didx as i64) + step;
                         if didx<0 || didx as usize>=self.displayed.len() {
@@ -697,8 +704,8 @@ impl Application for FilePicker {
                         if self.items[self.displayed[di]].ftype == FType::Image {
                             let img = self.items[self.displayed[di]].preview();
                             if img != None {
-                                self.view_image = (di as usize, img);
-                                return self.update(Message::LeftClick(self.items[self.displayed[di]].items_idx));
+                                self.view_image = (self.displayed[di], img);
+                                return self.update(Message::LeftClick(self.view_image.0));
                             }
                         }
                     }
