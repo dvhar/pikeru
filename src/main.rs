@@ -258,7 +258,7 @@ enum Message {
     LoadDir,
     LoadBookmark(usize),
     Select(SelType),
-    OverWrite,
+    OverWriteOK,
     Cancel,
     UpDir,
     DownDir,
@@ -308,7 +308,8 @@ struct FItemb {
     label: String,
     ftype: FType,
     handle: Option<Handle>,
-    idx: usize,
+    items_idx: usize,
+    display_idx: usize,
     sel: bool,
     nav_id: u8,
     mtime: f32,
@@ -361,16 +362,24 @@ enum SelType {
     TxtEntr,
 }
 
+#[derive(Default)]
+struct LastClicked {
+    iidx: usize,
+    didx: usize,
+    new: bool,
+}
+
 struct FilePicker {
     conf: Config,
     scroll_id: scrollable::Id,
     items: Vec<FItem>,
+    displayed: Vec<usize>,
     dirs: Vec<String>,
     inputbar: String,
     thumb_sender: Option<mpsc::Sender<FItem>>,
     nproc: usize,
     last_loaded: usize,
-    last_clicked: (usize, bool),
+    last_clicked: LastClicked,
     icons: Arc<Icons>,
     clicktimer: ClickTimer,
     ctrl_pressed: bool,
@@ -423,11 +432,12 @@ impl Application for FilePicker {
             Self {
                 conf,
                 items: vec![],
+                displayed: vec![],
                 thumb_sender: None,
                 nproc: num_cpus::get() * 2,
                 dirs: vec![startdir.to_string()],
                 last_loaded: 0,
-                last_clicked: (0, false),
+                last_clicked: LastClicked::default(),
                 inputbar: String::new(),
                 icons: Arc::new(Icons::new(ts, cache_dir)),
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
@@ -465,19 +475,25 @@ impl Application for FilePicker {
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
             Message::InoCreate(file) => {
-                let len = self.items.len();
-                self.items.push(FItem::default());
                 let mut item = FItem::new(file.as_str().into(), self.nav_id);
-                item.idx = len;
+                let len = self.items.len();
+                item.display_idx = self.displayed.len();
+                self.displayed.push(len);
+                self.items.push(FItem::default());
+                item.items_idx = len;
                 item.nav_id = self.nav_id;
                 tokio::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone(),
                                        self.icons.clone(), self.conf.thumb_size as u32));
             },
             Message::InoDelete(file) => {
                 if let Some(i) = self.items.iter().position(|x|x.path == file) {
+                    let dix = self.items[i].display_idx;
+                    self.items.iter_mut().for_each(|m| if m.display_idx >= dix { m.display_idx-=1 });
+                    self.displayed.iter_mut().for_each(|m| if *m >= i { *m-=1 });
                     self.items.remove(i);
+                    self.displayed.remove(dix);
                 }
-                self.items.iter_mut().enumerate().for_each(|(i,item)|item.idx = i);
+                self.items.iter_mut().enumerate().for_each(|(i,item)|item.items_idx = i);
             },
             Message::RunCmd(i) => self.run_command(i),
             Message::Dummy => {},
@@ -486,22 +502,37 @@ impl Application for FilePicker {
                 return self.update(Message::LoadDir);
             },
             Message::Sort(i) => {
-                self.items.sort_unstable_by(
-                    match i {
-                        1 => |a:&FItem,b:&FItem|b.isdir().cmp(&a.isdir()).then_with(||a.path.cmp(&b.path)),
-                        2 => |a:&FItem,b:&FItem|b.isdir().cmp(&a.isdir()).then_with(||b.path.cmp(&a.path)),
-                        3 => |a:&FItem,b:&FItem|b.isdir().cmp(&a.isdir()).then_with(||b.mtime.partial_cmp(&a.mtime).unwrap()),
-                        4 => |a:&FItem,b:&FItem|b.isdir().cmp(&a.isdir()).then_with(||a.mtime.partial_cmp(&b.mtime).unwrap()),
-                        _ => unreachable!(),
-                    });
-                self.items.iter_mut().enumerate().for_each(|(i,item)|item.idx = i);
+                match i {
+                    1 => self.displayed.sort_by(|a:&usize,b:&usize| unsafe {
+                        let x = self.items.get_unchecked(*a);
+                        let y = self.items.get_unchecked(*b);
+                        y.isdir().cmp(&x.isdir()).then_with(||x.path.cmp(&y.path))
+                    }),
+                    2 => self.displayed.sort_by(|a:&usize,b:&usize| unsafe {
+                        let x = self.items.get_unchecked(*a);
+                        let y = self.items.get_unchecked(*b);
+                        y.isdir().cmp(&x.isdir()).then_with(||y.path.cmp(&x.path))
+                    }),
+                    3 => self.displayed.sort_by(|a:&usize,b:&usize| unsafe {
+                        let x = self.items.get_unchecked(*a);
+                        let y = self.items.get_unchecked(*b);
+                        y.isdir().cmp(&x.isdir()).then_with(||y.mtime.partial_cmp(&x.mtime).unwrap())
+                    }),
+                    4 => self.displayed.sort_by(|a:&usize,b:&usize| unsafe {
+                        let x = self.items.get_unchecked(*a);
+                        let y = self.items.get_unchecked(*b);
+                        y.isdir().cmp(&x.isdir()).then_with(||x.mtime.partial_cmp(&y.mtime).unwrap())
+                    }),
+                    _ => unreachable!(),
+                };
+                self.displayed.iter().enumerate().for_each(|(i,j)|self.items[*j].display_idx = i);
                 self.conf.sort_by = i;
             },
             Message::PositionInfo(elem, widget, viewport) => {
                 match elem {
                     1 => {
-                        if self.last_clicked.1 {
-                            self.last_clicked.1 = false;
+                        if self.last_clicked.new {
+                            self.last_clicked.new = false;
                             return self.keep_in_view(widget, viewport);
                         }
                     },
@@ -542,9 +573,9 @@ impl Application for FilePicker {
             Message::Ctrl(pressed) => self.ctrl_pressed = pressed,
             Message::Shift(pressed) => self.shift_pressed = pressed,
             Message::ArrowKey(key) => {
-                let idx = if self.items.iter().any(|item|item.sel) {
-                    let maxcols = (((self.content_width-130.0) / self.conf.thumb_size)+1.0).max(1.0) as i32;
-                    let i = self.last_clicked.0 as i32;
+                let didx = if self.items.iter().any(|item|item.sel) {
+                    let maxcols = (((self.content_width-130.0) / self.conf.thumb_size)+1.0).max(1.0) as i64;
+                    let i = self.last_clicked.didx as i64;
                     match key {
                         ArrowUp => i - maxcols,
                         ArrowDown => i + maxcols,
@@ -553,8 +584,12 @@ impl Application for FilePicker {
                         _ => -1,
                     }
                 } else { 0 };
-                if idx >= 0 && idx < self.items.len() as i32 {
-                    self.click_item(idx as usize, self.shift_pressed, self.ctrl_pressed, false);
+                if self.view_image.1 != None {
+                    let step = didx - (self.last_clicked.didx as i64);
+                    return self.update(Message::NextImage(step));
+                }
+                if didx >= 0 && didx < self.displayed.len() as i64 {
+                    self.click_item(self.items[self.displayed[didx as usize]].items_idx, self.shift_pressed, self.ctrl_pressed, false);
                 }
             },
             Message::NextItem(doneitem) => {
@@ -565,7 +600,7 @@ impl Application for FilePicker {
                                 self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
                     }
                     self.last_loaded += 1;
-                    let i = doneitem.idx;
+                    let i = doneitem.items_idx;
                     self.items[i] = doneitem;
                 }
             },
@@ -600,9 +635,13 @@ impl Application for FilePicker {
             },
             Message::UpDir => {
                 let dirs = mem::take(&mut self.dirs);
-                self.dirs = dirs.iter().map(|dir| Path::new(dir.as_str()).parent().unwrap()
-                                                 .as_os_str().to_str().unwrap().to_string())
-                    .unique_by(|s|s.to_owned()).collect();
+                self.dirs = dirs.iter().map(|dir| {
+                    let path = Path::new(dir.as_str());
+                    match path.parent() {
+                        Some(par) => par.as_os_str().to_str().unwrap().to_string(),
+                        None => dir.clone(),
+                    }
+                }).unique_by(|s|s.to_owned()).collect();
                 self.dir_history.push(dirs);
                 return self.update(Message::LoadDir);
             },
@@ -610,7 +649,6 @@ impl Application for FilePicker {
                     let path = Path::new(&self.dirs[0]).join(&self.new_dir);
                     if let Err(e) = std::fs::create_dir_all(&path) {
                         let msg = format!("Error creating directory: {:?}", e);
-                        eprintln!("{}", msg);
                         self.modal = FModal::Error(msg);
                     } else {
                         self.modal = FModal::None;
@@ -620,25 +658,25 @@ impl Application for FilePicker {
                 },
             Message::NewDirInput(dir) => self.new_dir = dir,
             Message::CloseModal => self.modal = FModal::None,
-            Message::MiddleClick(idx) => self.click_item(idx, false, true, false),
-            Message::LeftClick(idx) => {
-                match self.clicktimer.click(idx) {
-                    ClickType::Single => self.click_item(idx, self.shift_pressed, self.ctrl_pressed, idx == self.view_image.0),
+            Message::MiddleClick(iidx) => self.click_item(iidx, false, true, false),
+            Message::LeftClick(iidx) => {
+                match self.clicktimer.click(iidx) {
+                    ClickType::Single => self.click_item(iidx, self.shift_pressed, self.ctrl_pressed, iidx == self.view_image.0),
                     ClickType::Double => {
-                        self.items[idx].sel = true;
+                        self.items[iidx].sel = true;
                         return self.update(Message::Select(SelType::Click));
                     },
                 }
             },
-            Message::RightClick(idx) => {
-                if idx >= 0 {
-                    let idx = idx as usize;
-                    let item = &self.items[idx];
+            Message::RightClick(iidx) => {
+                if iidx >= 0 {
+                    let iidx = iidx as usize;
+                    let item = &self.items[iidx];
                     if item.ftype == FType::Image {
-                        self.view_image = (item.idx, item.preview());
-                        self.click_item(idx, false, false, true);
+                        self.view_image = (item.display_idx, item.preview());
+                        self.click_item(iidx, false, false, true);
                     } else {
-                        self.click_item(idx as usize, true, false, false);
+                        self.click_item(iidx as usize, true, false, false);
                     }
                 } else {
                     self.view_image = (0, None);
@@ -647,20 +685,24 @@ impl Application for FilePicker {
             },
             Message::NextImage(step) => {
                 if self.view_image.1 != None {
-                    let mut i = self.view_image.0;
-                    while (step<0 && i>0) || (step>0 && i<self.items.len()-1) {
-                        i = ((i as i64) + step) as usize;
-                        if self.items[i as usize].ftype == FType::Image {
-                            let img = self.items[i].preview();
+                    let mut didx = self.view_image.0 as i64;
+                    while (step<0 && didx>0) || (step>0 && didx<((self.displayed.len()-1) as i64)) {
+                        didx = (didx as i64) + step;
+                        if didx<0 || didx as usize>=self.displayed.len() {
+                            return Command::none();
+                        }
+                        let di = didx as usize;
+                        if self.items[self.displayed[di]].ftype == FType::Image {
+                            let img = self.items[self.displayed[di]].preview();
                             if img != None {
-                                self.view_image = (i as usize, img);
-                                return self.update(Message::LeftClick(i as usize));
+                                self.view_image = (di as usize, img);
+                                return self.update(Message::LeftClick(self.items[self.displayed[di]].items_idx));
                             }
                         }
                     }
                 }
             },
-            Message::OverWrite => {
+            Message::OverWriteOK => {
                 println!("{}", self.inputbar);
                 process::exit(0);
             },
@@ -817,15 +859,17 @@ impl Application for FilePicker {
                     .into()
             } else {
                 let maxcols = ((size.width-130.0) / self.conf.thumb_size).max(1.0) as usize;
-                let num_rows = self.items.len() / maxcols + if self.items.len() % maxcols != 0 { 1 } else { 0 };
+                let num_rows = self.displayed.len() / maxcols + if self.displayed.len() % maxcols != 0 { 1 } else { 0 };
                 let mut rows = Column::new();
                 for i in 0..num_rows {
                     let start = i * maxcols;
                     let mut row = Row::new().width(Length::Fill);
                     for j in 0..maxcols {
                         let idx = start + j;
-                        if idx < self.items.len() {
-                            row = row.push(unsafe{self.items.get_unchecked(idx)}.display(self.last_clicked, self.conf.thumb_size));
+                        if idx < self.displayed.len() {
+                            row = row.push(unsafe{
+                                self.items.get_unchecked(*self.displayed.get_unchecked(idx))
+                            }.display(&self.last_clicked, self.conf.thumb_size));
                         }
                     }
                     rows = rows.push(row);
@@ -853,7 +897,7 @@ impl Application for FilePicker {
                 FModal::OverWrite => modal(mainview, Some(Card::new(
                         text("File exists. Overwrite?"),
                         row![
-                            Button::new("Overwrite").on_press(Message::OverWrite),
+                            Button::new("Overwrite").on_press(Message::OverWriteOK),
                             Button::new("Cancel").on_press(Message::CloseModal),
                         ].spacing(5.0)).max_width(500.0))
                     )
@@ -902,7 +946,7 @@ fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
 
 impl FItem {
 
-    fn display(&self, last_clicked: (usize, bool), thumbsize: f32) -> Element<'static, Message> {
+    fn display(&self, last_clicked: &LastClicked, thumbsize: f32) -> Element<'static, Message> {
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
             .width(Length::Fixed(thumbsize));
@@ -910,7 +954,7 @@ impl FItem {
             col = col.push(image(h.clone()));
         }
         col = col.push(text(self.label.as_str()).size(13));
-        let idx = self.idx;
+        let idx = self.items_idx;
         let clickable = match (self.isdir(), self.sel) {
             (true, true) => {
                 let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::DropBookmark(idx, point));
@@ -926,10 +970,10 @@ impl FItem {
             (false, false) => {
                 mouse_area(col)
             },
-        }.on_release(Message::LeftClick(self.idx))
-            .on_right_press(Message::RightClick(self.idx as i64))
-            .on_middle_press(Message::MiddleClick(self.idx));
-        match last_clicked {
+        }.on_release(Message::LeftClick(self.items_idx))
+            .on_right_press(Message::RightClick(self.items_idx as i64))
+            .on_middle_press(Message::MiddleClick(self.items_idx));
+        match (last_clicked.iidx, last_clicked.new) {
             (i, true) if i == idx => {
                 wrapper::locator(clickable).on_info(|a,b|Message::PositionInfo(1,a,b)).into()
             },
@@ -1013,7 +1057,8 @@ impl FItem {
             path: path.to_string(),
             label,
             ftype,
-            idx: 0,
+            items_idx: 0,
+            display_idx: 0,
             handle: None,
             sel: false,
             nav_id,
@@ -1174,6 +1219,13 @@ async fn watch_inotify(mut rx: UnboundedReceiver<Inochan>, tx: UnboundedSender<I
     }
 }
 
+fn shquote(s: &str) -> String {
+    if s.contains("\"") {
+        return format!("'{}'", s);
+    }
+    return format!("\"{}\"", s);
+}
+
 impl FilePicker {
 
     fn run_command(self: &Self, icmd: usize) {
@@ -1185,16 +1237,19 @@ impl FilePicker {
                 Some(s) => s,
                 None => &fname,
             };
+            let fname = shquote(fname.as_ref());
+            let part = shquote(part.as_ref());
             let dir = path.parent().unwrap();
-            let filecmd = cmd.replace("[path]", format!("'{}'", &item.path).as_str())
-                .replace("[dir]", format!("'{}'", &dir.to_string_lossy()).as_str())
+            let filecmd = cmd.replace("[path]", shquote(&item.path).as_str())
+                .replace("[dir]", &shquote(&dir.to_string_lossy()).as_str())
                 .replace("[ext]", format!(".{}", &match path.extension() {
                     Some(s)=>s.to_string_lossy(),
                     None=> std::borrow::Cow::Borrowed(""),
                 }).as_str())
-                .replace("[name]", format!("'{}'", &fname).as_str())
-                .replace("[part]", format!("'{}'", &part).as_str());
+                .replace("[name]", &fname)
+                .replace("[part]", &part);
             let cwd = dir.to_owned();
+            eprintln!("CMD:{}", filecmd);
             tokio::task::spawn_blocking(move || {
                 match OsCmd::new("bash").arg("-c").arg(filecmd).current_dir(cwd).output() {
                     Ok(output) => eprintln!("{}{}",
@@ -1220,37 +1275,37 @@ impl FilePicker {
         Command::none()
     }
 
-    fn click_item(self: &mut Self, i: usize, shift: bool, ctrl: bool, always_sel: bool) {
+    fn click_item(self: &mut Self, iidx: usize, shift: bool, ctrl: bool, always_sel: bool) {
 
-        self.last_clicked = (i, true);
-        let isdir = self.items[i].isdir();
-        let prevsel = self.items.iter().filter_map(|item| if item.sel { Some(item.idx) } else { None }).collect::<Vec<usize>>();
+        self.last_clicked = LastClicked{new: true, iidx, didx: self.items[iidx].display_idx};
+        let isdir = self.items[iidx].isdir();
+        let prevsel = self.items.iter().filter_map(|item| if item.sel { Some(item.items_idx) } else { None }).collect::<Vec<usize>>();
         while (self.conf.multi() || isdir) && shift && prevsel.len() > 0 {
             let prevdir = self.items[prevsel[0]].isdir();
             if prevdir != isdir {
                 break;
             }
-            let mut lo = self.items[i].idx;
+            let mut lo = self.items[iidx].display_idx;
             let mut hi = lo;
             prevsel.iter().for_each(|j| {
-                lo = lo.min(self.items[*j].idx);
-                hi = hi.max(self.items[*j].idx);
+                lo = lo.min(self.items[*j].display_idx);
+                hi = hi.max(self.items[*j].display_idx);
             });
             for j in lo..=hi {
-                self.items[j].sel = self.items[j].isdir() == isdir;
+                self.items[self.displayed[j]].sel = self.items[self.displayed[j]].isdir() == isdir;
             }
             return;
         }
-        if always_sel || !self.items[i].sel {
-            self.items[i].sel = true;
+        if always_sel || !self.items[iidx].sel {
+            self.items[iidx].sel = true;
         } else if prevsel.len() == 1 || ctrl {
-            self.items[i].sel = false;
+            self.items[iidx].sel = false;
         }
-        prevsel.into_iter().filter(|j|*j != i).for_each(|j| {
+        prevsel.into_iter().filter(|j|*j != iidx).for_each(|j| {
             if !(ctrl && (self.conf.multi()||isdir)) || self.items[j].isdir() != isdir { self.items[j].sel = false; }
         });
-        self.inputbar = if self.items[i].sel {
-            self.items[i].path.clone()
+        self.inputbar = if self.items[iidx].sel {
+            self.items[iidx].path.clone()
         } else {
             self.dirs[0].clone()
         };
@@ -1258,15 +1313,18 @@ impl FilePicker {
 
     fn load_dir(self: &mut Self) {
         let mut ret = vec![];
+        let mut displayed = vec![];
         let mut inodirs = vec![];
         self.nav_id = self.nav_id.wrapping_add(1);
         for dir in self.dirs.iter() {
             match std::fs::read_dir(dir.as_str()) {
                 Ok(rd) => {
                     inodirs.push(dir.clone());
-                    rd.map(|f| f.unwrap().path()).filter(|path|{ self.show_hidden ||
-                        !path.as_os_str().to_str().map(|s|s.rsplitn(2,'/').next().unwrap_or("").starts_with('.')).unwrap_or(false)
-                    }).for_each(|path| {
+                    rd.map(|f| f.unwrap().path()).for_each(|path| {
+                        if self.show_hidden ||
+                            !path.as_os_str().to_str().map(|s|s.rsplitn(2,'/').next().unwrap_or("").starts_with('.')).unwrap_or(false) {
+                                displayed.push(ret.len());
+                        }
                         ret.push(FItem::new(path.into(), self.nav_id));
                     });
                 },
@@ -1275,6 +1333,8 @@ impl FilePicker {
         }
         self.ino_updater.as_ref().unwrap().send(Inochan::NewDirs(inodirs)).unwrap();
         self.items = ret;
+        self.items.iter_mut().enumerate().for_each(|(i,item)|item.items_idx = i);
+        self.displayed = displayed;
     }
 
     fn add_bookmark(self: &mut Self, dragged: usize, target: Option<i32>) {
