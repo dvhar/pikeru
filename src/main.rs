@@ -268,6 +268,7 @@ enum Message {
     NewDirInput(String),
     Init((mpsc::Sender<FItem>, UnboundedSender<Inochan>)),
     NextItem(FItem),
+    LoadThumbs,
     LeftClick(usize),
     MiddleClick(usize),
     RightClick(i64),
@@ -314,6 +315,7 @@ struct FItemb {
     display_idx: usize,
     sel: bool,
     nav_id: u8,
+    view_id: u8,
     mtime: f32,
     vid: bool,
 }
@@ -387,6 +389,7 @@ struct FilePicker {
     ctrl_pressed: bool,
     shift_pressed: bool,
     nav_id: u8,
+    view_id: u8,
     show_hidden: bool,
     view_image: (usize, Option<Handle>),
     scroll_offset: scrollable::AbsoluteOffset,
@@ -447,6 +450,7 @@ impl Application for FilePicker {
                 shift_pressed: false,
                 scroll_id: scrollable::Id::unique(),
                 nav_id: 0,
+                view_id: 0,
                 show_hidden: false,
                 view_image: (0, None),
                 scroll_offset: scrollable::AbsoluteOffset{x: 0.0, y: 0.0},
@@ -483,15 +487,14 @@ impl Application for FilePicker {
                 self.displayed.push(len);
                 self.items.push(FItem::default());
                 item.items_idx = len;
-                item.nav_id = self.nav_id;
                 tokio::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone(),
                                        self.icons.clone(), self.conf.thumb_size as u32));
             },
             Message::InoDelete(file) => {
                 if let Some(i) = self.items.iter().position(|x|x.path == file) {
-                    let dix = self.items[i].display_idx;
-                    self.items.iter_mut().enumerate().for_each(|(i,m)|{
-                        m.items_idx = i;
+                    let dix = self.itod(i);
+                    self.items.iter_mut().for_each(|m|{
+                        if m.items_idx >= i { m.items_idx-=1 };
                         if m.display_idx >= dix { m.display_idx-=1 };
                     });
                     self.displayed.iter_mut().for_each(|m| if *m >= i { *m-=1 });
@@ -536,6 +539,7 @@ impl Application for FilePicker {
                 };
                 self.displayed.iter().enumerate().for_each(|(i,j)|unsafe{self.items.get_unchecked_mut(*j)}.display_idx = i);
                 self.conf.sort_by = i;
+                return self.update(Message::LoadThumbs);
             },
             Message::PositionInfo(elem, widget, viewport) => {
                 match elem {
@@ -598,20 +602,43 @@ impl Application for FilePicker {
                     return self.update(Message::NextImage(step));
                 }
                 if didx >= 0 && didx < self.displayed.len() as i64 {
-                    self.click_item(self.items[self.displayed[didx as usize]].items_idx, self.shift_pressed, self.ctrl_pressed, false);
+                    self.click_item(self.dtoi(didx as usize), self.shift_pressed, self.ctrl_pressed, false);
                 }
+            },
+            Message::LoadThumbs => {
+                let mut max_load = self.nproc.min(self.displayed.len());
+                self.view_id = self.view_id.wrapping_add(1);
+                let mut di: usize = 0;
+                while di < self.displayed.len() && max_load > 0 {
+                    let ii = self.displayed[di];
+                    if self.items[ii].not_loaded() {
+                        let mut item = mem::take(&mut self.items[ii]);
+                        item.view_id = self.view_id;
+                        tokio::task::spawn(item.load(
+                                    self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                        max_load -= 1;
+                    }
+                    di += 1;
+                }
+                self.last_loaded = di;
             },
             Message::NextItem(doneitem) => {
                 if doneitem.nav_id == self.nav_id {
-                    if self.last_loaded < self.displayed.len() {
-                        let i = self.dtoi(self.last_loaded);
-                        if self.items[i].handle == None {
-                            let nextitem = mem::take(&mut self.items[i]);
-                            tokio::task::spawn(nextitem.load(
-                                    self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                    if doneitem.view_id == self.view_id {
+                        let mut prev = self.last_loaded;
+                        while prev < self.displayed.len() {
+                            let i = self.dtoi(prev);
+                            if self.items[i].not_loaded() {
+                                let mut nextitem = mem::take(&mut self.items[i]);
+                                nextitem.view_id = self.view_id;
+                                tokio::task::spawn(nextitem.load(
+                                        self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                                break;
+                            }
+                            prev += 1;
                         }
+                        self.last_loaded = prev + 1;
                     }
-                    self.last_loaded += 1;
                     let j = doneitem.items_idx;
                     self.items[j] = doneitem;
                 }
@@ -630,12 +657,6 @@ impl Application for FilePicker {
                 };
                 self.load_dir();
                 let _ = self.update(Message::Sort(self.conf.sort_by));
-                self.last_loaded = self.nproc.min(self.displayed.len());
-                for i in 0..self.last_loaded {
-                    let item = mem::take(&mut self.items[self.displayed[i]]);
-                    tokio::task::spawn(item.load(
-                                self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
-                }
                 return scrollable::snap_to(self.scroll_id.clone(), scrollable::RelativeOffset::START);
             },
             Message::DownDir => {
@@ -959,6 +980,12 @@ fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
 
 impl FItem {
 
+    #[inline]
+    fn isdir(self: &Self) -> bool { self.ftype == FType::Dir }
+
+    #[inline]
+    fn not_loaded(self: &Self) -> bool { self.handle == None && !self.path.is_empty() }
+
     fn display(&self, last_clicked: &LastClicked, thumbsize: f32) -> Element<'static, Message> {
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
@@ -1033,10 +1060,6 @@ impl FItem {
         }
     }
 
-    fn isdir(self: &Self) -> bool {
-        return self.ftype == FType::Dir;
-    }
-
     fn new(pth: PathBuf, nav_id: u8) -> Self {
         let (ftype, mtime) = match pth.metadata() {
             Ok(metadata) => {
@@ -1075,6 +1098,7 @@ impl FItem {
             handle: None,
             sel: false,
             nav_id,
+            view_id: 0,
             mtime: mtime.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32(),
             vid: false,
         }))
@@ -1124,44 +1148,46 @@ impl FItem {
     }
 
     async fn load(mut self, mut chan: mpsc::Sender<FItem>, icons: Arc<Icons>, thumbsize: u32) {
-        match self.ftype {
-            FType::Dir => {
-                self.handle = Some(icons.folder.clone());
-            },
-            _ => {
-                let ext = match self.path.rsplitn(2,'.').next() {
-                    Some(s) => s,
-                    None => "",
-                };
-                self.ftype = match ext.to_lowercase().as_str() {
-                    "png"|"jpg"|"jpeg"|"bmp"|"tiff"|"gif"|"webp" => {
-                        self.handle = self.prepare_cached_thumbnail(self.path.as_str(), false, thumbsize, icons.clone()).await;
-                        if self.handle == None {
-                            self.handle = Some(icons.error.clone());
+        if self.handle == None {
+            match self.ftype {
+                FType::Dir => {
+                    self.handle = Some(icons.folder.clone());
+                },
+                _ => {
+                    let ext = match self.path.rsplitn(2,'.').next() {
+                        Some(s) => s,
+                        None => "",
+                    };
+                    self.ftype = match ext.to_lowercase().as_str() {
+                        "png"|"jpg"|"jpeg"|"bmp"|"tiff"|"gif"|"webp" => {
+                            self.handle = self.prepare_cached_thumbnail(self.path.as_str(), false, thumbsize, icons.clone()).await;
+                            if self.handle == None {
+                                self.handle = Some(icons.error.clone());
+                                FType::File
+                            } else {
+                                FType::Image
+                            }
+                        },
+                        "webm"|"mkv"|"mp4"|"av1" => {
+                            self.handle = self.prepare_cached_thumbnail(self.path.as_str(), true, thumbsize, icons.clone()).await;
+                            if self.handle == None {
+                                self.handle = Some(icons.error.clone());
+                                FType::File
+                            } else {
+                                self.vid = true;
+                                FType::Image
+                            }
+                        },
+                        "txt"|"pdf"|"doc"|"docx"|"xls"|"xlsx" => {
+                            self.handle = Some(icons.doc.clone());
                             FType::File
-                        } else {
-                            FType::Image
-                        }
-                    },
-                    "webm"|"mkv"|"mp4"|"av1" => {
-                        self.handle = self.prepare_cached_thumbnail(self.path.as_str(), true, thumbsize, icons.clone()).await;
-                        if self.handle == None {
-                            self.handle = Some(icons.error.clone());
+                        },
+                        _ => {
+                            self.handle = Some(icons.unknown.clone());
                             FType::File
-                        } else {
-                            self.vid = true;
-                            FType::Image
-                        }
-                    },
-                    "txt"|"pdf"|"doc"|"docx"|"xls"|"xlsx" => {
-                        self.handle = Some(icons.doc.clone());
-                        FType::File
-                    },
-                    _ => {
-                        self.handle = Some(icons.unknown.clone());
-                        FType::File
-                    },
-                };
+                        },
+                    };
+                }
             }
         }
         chan.send(self).await.unwrap();
