@@ -19,7 +19,7 @@ use iced::{
     keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace},
     keyboard::key::Named,
     widget::{
-        vertical_space, checkbox,
+        vertical_space, checkbox, slider,
         container::{Appearance, StyleSheet,Id as CId},
         image, image::Handle, Column, Row, text, responsive,
         Scrollable, scrollable, scrollable::{Direction,Properties},
@@ -286,6 +286,7 @@ enum Message {
     RunCmd(usize),
     InoDelete(String),
     InoCreate(String),
+    Thumbsize(f32),
     CloseModal,
     Dummy,
 }
@@ -480,6 +481,9 @@ impl Application for FilePicker {
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
+            Message::Thumbsize(size) => {
+                self.conf.thumb_size = size;
+            },
             Message::InoCreate(file) => {
                 let mut item = FItem::new(file.as_str().into(), self.nav_id);
                 let len = self.items.len();
@@ -858,6 +862,8 @@ impl Application for FilePicker {
                                     (menu_button("Sort Newest first",Message::Sort(3)))
                                     (menu_button("Sort Oldest first",Message::Sort(4)))
                                     (checkbox("Show Hidden", self.show_hidden).on_toggle(Message::ShowHidden))
+                                    (text("Thumbnail size"))
+                                    (slider(50.0..=500.0, self.conf.thumb_size, Message::Thumbsize))
                                     )))
                     ].spacing(1.0),
                     top_button("New Dir", 80.0, Message::NewDir(false)),
