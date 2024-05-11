@@ -17,3 +17,4 @@ getopts = "0.2.21"
 iced_aw = { version = "0.8.0", features = ["menu"] }
 inotify = "0.10.2"
 md-5 = "0.10.6"
+rapidfuzz = "0.5.0"

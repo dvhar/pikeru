@@ -64,6 +64,7 @@ use iced_aw::{
     modal, Card
 };
 use md5::{Md5,Digest};
+use rapidfuzz::distance;
 
 macro_rules! die {
     ($($arg:tt)*) => {{
@@ -257,6 +258,7 @@ impl Mode {
 enum SearchEvent {
     NewItems(Vec<String>),
     NewView(Vec<usize>),
+    Results(Vec<(usize, f64)>),
     Search(String),
 }
 
@@ -294,7 +296,7 @@ enum Message {
     InoCreate(String),
     Thumbsize(f32),
     CloseModal,
-    SearchResult(Vec<usize>),
+    SearchResult(Vec<(usize, f64)>),
     Dummy,
 }
 
@@ -606,11 +608,22 @@ impl Application for FilePicker {
             Message::PathTxtInput(txt) => self.pathbar = txt,
             Message::SearchTxtInput(txt) => {
                 self.searchbar = txt;
-                self.search_commander.as_ref().unwrap().send(SearchEvent::Search(self.searchbar.clone())).unwrap();
+                if self.searchbar.is_empty() {
+                    return self.update(Message::Sort(self.conf.sort_by));
+                } else {
+                    self.search_commander.as_ref().unwrap().send(SearchEvent::Search(self.searchbar.clone())).unwrap();
+                }
             },
-            Message::SearchResult(res) => {
-                self.displayed = res;
-                return self.update(Message::Sort(self.conf.sort_by));
+            Message::SearchResult(mut res) => {
+                res.sort_by(|a,b| unsafe {
+                    let x = self.items.get_unchecked(a.0);
+                    let y = self.items.get_unchecked(b.0);
+                    y.isdir().cmp(&x.isdir()).then_with(||b.1.partial_cmp(&a.1).unwrap())
+                });
+                self.displayed = res.into_iter().enumerate().map(|(i,r)|{
+                    unsafe{self.items.get_unchecked_mut(i)}.display_idx = i;
+                    r.0
+                }).collect();
             }
             Message::Ctrl(pressed) => self.ctrl_pressed = pressed,
             Message::Shift(pressed) => self.shift_pressed = pressed,
@@ -836,8 +849,8 @@ impl Application for FilePicker {
                     SubState::Ready((thumb_recv, ino_recv, search_recv)) => {
                         tokio::select! {
                             res = search_recv.recv() => {
-                                if let Some(SearchEvent::NewView(didxs)) = res {
-                                    messager.send(Message::SearchResult(didxs)).await.unwrap();
+                                if let Some(SearchEvent::Results(matches)) = res {
+                                    messager.send(Message::SearchResult(matches)).await.unwrap();
                                 }
                             },
                             item = thumb_recv.recv() => messager.send(Message::NextItem(item.unwrap())).await.unwrap(),
@@ -1246,12 +1259,14 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USende
             Some(SearchEvent::NewItems(paths)) => items = paths,
             Some(SearchEvent::NewView(didxs)) => displayed = didxs,
             Some(SearchEvent::Search(term)) => {
-                let results = displayed.iter().filter_map(|i| {
-                    if items[*i].contains(&term) { Some(*i) } else { None }
-                }).collect();
-                result_sender.send(SearchEvent::NewView(results)).unwrap();
+                let results = displayed.iter().map(|i| {
+                    let text = items[*i].as_str();
+                    let dist = distance::levenshtein::similarity(text.chars(), term.chars());
+                    (*i, dist as f64)
+                }).collect::<Vec<_>>();
+                result_sender.send(SearchEvent::Results(results)).unwrap();
             },
-            None => unreachable!(),
+            _ => unreachable!(),
         }
     }
 }
