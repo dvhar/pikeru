@@ -27,7 +27,6 @@ use iced::{
         column, row, mouse_area, container,
     },
     futures::{
-        channel::mpsc,
         sink::SinkExt,
         StreamExt,
     },
@@ -37,8 +36,8 @@ use iced::{
 use tokio::{
     fs::File, io::AsyncReadExt,
     sync::mpsc::{
-        UnboundedReceiver,
-        UnboundedSender,
+        UnboundedReceiver as UReceiver,
+        UnboundedSender as USender,
         unbounded_channel,
     }
 };
@@ -255,6 +254,12 @@ impl Mode {
    }
 }
 
+enum SearchEvent {
+    NewItems(Vec<String>),
+    NewView(Vec<usize>),
+    Search(String),
+}
+
 #[derive(Debug, Clone)]
 enum Message {
     LoadDir,
@@ -266,13 +271,14 @@ enum Message {
     DownDir,
     NewDir(bool),
     NewDirInput(String),
-    Init((mpsc::Sender<FItem>, UnboundedSender<Inochan>)),
+    Init((USender<FItem>, USender<Inochan>, USender<SearchEvent>)),
     NextItem(FItem),
     LoadThumbs,
     LeftClick(usize),
     MiddleClick(usize),
     RightClick(i64),
-    TxtInput(String),
+    PathTxtInput(String),
+    SearchTxtInput(String),
     Shift(bool),
     Ctrl(bool),
     DropBookmark(usize, Point),
@@ -288,12 +294,13 @@ enum Message {
     InoCreate(String),
     Thumbsize(f32),
     CloseModal,
+    SearchResult(Vec<usize>),
     Dummy,
 }
 
 enum SubState {
     Starting,
-    Ready((mpsc::Receiver<FItem>,UnboundedReceiver<Inochan>)),
+    Ready((UReceiver<FItem>,UReceiver<Inochan>,UReceiver<SearchEvent>)),
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -380,8 +387,9 @@ struct FilePicker {
     items: Vec<FItem>,
     displayed: Vec<usize>,
     dirs: Vec<String>,
-    inputbar: String,
-    thumb_sender: Option<mpsc::Sender<FItem>>,
+    pathbar: String,
+    searchbar: String,
+    thumb_sender: Option<USender<FItem>>,
     nproc: usize,
     last_loaded: usize,
     last_clicked: LastClicked,
@@ -394,7 +402,8 @@ struct FilePicker {
     show_hidden: bool,
     view_image: (usize, Option<Handle>),
     scroll_offset: scrollable::AbsoluteOffset,
-    ino_updater: Option<UnboundedSender<Inochan>>,
+    ino_updater: Option<USender<Inochan>>,
+    search_commander: Option<USender<SearchEvent>>,
     save_filename: Option<String>,
     select_button: String,
     new_dir: String,
@@ -444,7 +453,8 @@ impl Application for FilePicker {
                 dirs: vec![startdir.to_string()],
                 last_loaded: 0,
                 last_clicked: LastClicked::default(),
-                inputbar: String::new(),
+                pathbar: String::new(),
+                searchbar: String::new(),
                 icons: Arc::new(Icons::new(ts, cache_dir)),
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
                 ctrl_pressed: false,
@@ -456,6 +466,7 @@ impl Application for FilePicker {
                 view_image: (0, None),
                 scroll_offset: scrollable::AbsoluteOffset{x: 0.0, y: 0.0},
                 ino_updater: None,
+                search_commander: None,
                 save_filename,
                 select_button,
                 modal: FModal::None,
@@ -515,7 +526,10 @@ impl Application for FilePicker {
                         Some(i)
                     } else { None }
                 }).collect();
-                return self.update(Message::Sort(self.conf.sort_by));
+                if self.searchbar.is_empty() {
+                    return self.update(Message::Sort(self.conf.sort_by));
+                }
+                self.update_searcher();
             },
             Message::Sort(i) => {
                 match i {
@@ -578,15 +592,26 @@ impl Application for FilePicker {
                     self.add_bookmark(idx, target);
                 }
             }
-            Message::Init((fichan, inochan)) => {
+            Message::Init((fichan, inochan, search_results)) => {
                 let (txctl, rxctl) = unbounded_channel::<Inochan>();
+                let (txsrch, search_commands) = unbounded_channel::<SearchEvent>();
                 tokio::spawn(watch_inotify(rxctl, inochan));
+                self.search_commander = Some(txsrch);
                 self.ino_updater = Some(txctl);
                 self.thumb_sender = Some(fichan);
+                tokio::task::spawn(search_loop(search_commands, search_results));
                 return self.update(Message::LoadDir);
             },
             Message::Scrolled(viewport) => self.scroll_offset = viewport.absolute_offset(),
-            Message::TxtInput(txt) => self.inputbar = txt,
+            Message::PathTxtInput(txt) => self.pathbar = txt,
+            Message::SearchTxtInput(txt) => {
+                self.searchbar = txt;
+                self.search_commander.as_ref().unwrap().send(SearchEvent::Search(self.searchbar.clone())).unwrap();
+            },
+            Message::SearchResult(res) => {
+                self.displayed = res;
+                return self.update(Message::Sort(self.conf.sort_by));
+            }
             Message::Ctrl(pressed) => self.ctrl_pressed = pressed,
             Message::Shift(pressed) => self.shift_pressed = pressed,
             Message::ArrowKey(key) => {
@@ -655,7 +680,7 @@ impl Application for FilePicker {
             },
             Message::LoadDir => {
                 self.view_image = (0, None);
-                self.inputbar = match &self.save_filename {
+                self.pathbar = match &self.save_filename {
                     Some(fname) => Path::new(&self.dirs[0]).join(fname).to_string_lossy().to_string(),
                     None => self.dirs[0].clone(),
                 };
@@ -741,27 +766,27 @@ impl Application for FilePicker {
                 }
             },
             Message::OverWriteOK => {
-                println!("{}", self.inputbar);
+                println!("{}", self.pathbar);
                 process::exit(0);
             },
             Message::Select(seltype) => {
                 if self.conf.saving() {
-                    if !self.inputbar.is_empty() {
-                        let result = Path::new(&self.inputbar);
+                    if !self.pathbar.is_empty() {
+                        let result = Path::new(&self.pathbar);
                         if result.is_file() {
                             self.modal = FModal::OverWrite;
                         } else if result.is_dir() {
                             self.dir_history.push(mem::take(&mut self.dirs));
-                            self.dirs = vec![self.inputbar.clone()];
+                            self.dirs = vec![self.pathbar.clone()];
                             self.scroll_offset.y = 0.0;
                             return self.update(Message::LoadDir);
                         } else {
-                            println!("{}", self.inputbar);
+                            println!("{}", self.pathbar);
                             process::exit(0);
                         }
                     }
                 } else {
-                    let pb =  FItem::new(PathBuf::from(&self.inputbar), self.nav_id);
+                    let pb =  FItem::new(PathBuf::from(&self.pathbar), self.nav_id);
                     let sels: Vec<&FItem> = match seltype {
                         SelType::TxtEntr => vec![&pb],
                         _ => self.items.iter().filter(|item| item.sel ).collect(),
@@ -802,14 +827,20 @@ impl Application for FilePicker {
             loop {
                 match &mut state {
                     SubState::Starting => {
-                        let (fi_sender, fi_reciever) = mpsc::channel(100);
+                        let (fi_sender, fi_reciever) = unbounded_channel::<FItem>();
                         let (ino_sender, ino_receiver) = unbounded_channel::<Inochan>();
-                        messager.send(Message::Init((fi_sender, ino_sender))).await.unwrap();
-                        state = SubState::Ready((fi_reciever,ino_receiver));
+                        let (search_sender, search_receiver) = unbounded_channel::<SearchEvent>();
+                        messager.send(Message::Init((fi_sender, ino_sender, search_sender))).await.unwrap();
+                        state = SubState::Ready((fi_reciever,ino_receiver,search_receiver));
                     }
-                    SubState::Ready((thumb_recv, ino_recv)) => {
+                    SubState::Ready((thumb_recv, ino_recv, search_recv)) => {
                         tokio::select! {
-                            item = thumb_recv.select_next_some() => messager.send(Message::NextItem(item)).await.unwrap(),
+                            res = search_recv.recv() => {
+                                if let Some(SearchEvent::NewView(didxs)) = res {
+                                    messager.send(Message::SearchResult(didxs)).await.unwrap();
+                                }
+                            },
+                            item = thumb_recv.recv() => messager.send(Message::NextItem(item.unwrap())).await.unwrap(),
                             evt = ino_recv.recv() => {
                                 match evt {
                                     Some(Inochan::Delete(file)) => messager.send(Message::InoDelete(file)).await.unwrap(),
@@ -871,10 +902,17 @@ impl Application for FilePicker {
                     top_button("Cancel", 100.0, Message::Cancel),
                     top_button(&self.select_button, 100.0, Message::Select(SelType::Button))
                 ].spacing(1),
-                TextInput::new("directory or file path", self.inputbar.as_str())
-                    .on_input(Message::TxtInput)
-                    .on_paste(Message::TxtInput)
-                    .on_submit(Message::Select(SelType::TxtEntr)),
+                row![
+                TextInput::new("directory or file path", self.pathbar.as_str())
+                    .on_input(Message::PathTxtInput)
+                    .on_paste(Message::PathTxtInput)
+                    .on_submit(Message::Select(SelType::TxtEntr))
+                    .width(Length::FillPortion(8)),
+                TextInput::new("search", self.searchbar.as_str())
+                    .on_input(Message::SearchTxtInput)
+                    .on_paste(Message::SearchTxtInput)
+                    .width(Length::FillPortion(2))
+                ]
             ].align_items(iced::Alignment::End).width(Length::Fill);
             let bookmarks = self.conf.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
                         col.push(Button::new(
@@ -1153,7 +1191,7 @@ impl FItem {
         }
     }
 
-    async fn load(mut self, mut chan: mpsc::Sender<FItem>, icons: Arc<Icons>, thumbsize: u32) {
+    async fn load(mut self, chan: USender<FItem>, icons: Arc<Icons>, thumbsize: u32) {
         if self.handle == None {
             match self.ftype {
                 FType::Dir => {
@@ -1196,7 +1234,25 @@ impl FItem {
                 }
             }
         }
-        chan.send(self).await.unwrap();
+        chan.send(self).unwrap();
+    }
+}
+
+async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USender<SearchEvent>) {
+    let mut items = vec![];
+    let mut displayed = vec![];
+    loop {
+        match commands.recv().await {
+            Some(SearchEvent::NewItems(paths)) => items = paths,
+            Some(SearchEvent::NewView(didxs)) => displayed = didxs,
+            Some(SearchEvent::Search(term)) => {
+                let results = displayed.iter().filter_map(|i| {
+                    if items[*i].contains(&term) { Some(*i) } else { None }
+                }).collect();
+                result_sender.send(SearchEvent::NewView(results)).unwrap();
+            },
+            None => unreachable!(),
+        }
     }
 }
 
@@ -1205,7 +1261,7 @@ enum Inochan {
     Delete(String),
     Create(String),
 }
-async fn watch_inotify(mut rx: UnboundedReceiver<Inochan>, tx: UnboundedSender<Inochan>) {
+async fn watch_inotify(mut rx: UReceiver<Inochan>, tx: USender<Inochan>) {
     let ino = Inotify::init().expect("Error initializing inotify instance");
     let evbuf = [0; 1024];
     let mut estream = ino.into_event_stream(evbuf).unwrap();
@@ -1354,7 +1410,7 @@ impl FilePicker {
         prevsel.into_iter().filter(|j|*j != iidx).for_each(|j| {
             if !(ctrl && (self.conf.multi()||isdir)) || self.items[j].isdir() != isdir { self.items[j].sel = false; }
         });
-        self.inputbar = if self.items[iidx].sel {
+        self.pathbar = if self.items[iidx].sel {
             self.items[iidx].path.clone()
         } else {
             self.dirs[0].clone()
@@ -1373,7 +1429,7 @@ impl FilePicker {
                     rd.map(|f| f.unwrap().path()).for_each(|path| {
                         if self.show_hidden ||
                             !path.as_os_str().to_str().map(|s|s.rsplitn(2,'/').next().unwrap_or("").starts_with('.')).unwrap_or(false) {
-                                displayed.push(ret.len());
+                            displayed.push(ret.len());
                         }
                         ret.push(FItem::new(path.into(), self.nav_id));
                     });
@@ -1381,10 +1437,23 @@ impl FilePicker {
                 Err(e) => eprintln!("Error reading dir {}: {}", dir, e),
             }
         }
+        self.searchbar.clear();
         self.ino_updater.as_ref().unwrap().send(Inochan::NewDirs(inodirs)).unwrap();
         self.items = ret;
         self.items.iter_mut().enumerate().for_each(|(i,item)|item.items_idx = i);
         self.displayed = displayed;
+        let searchable = self.items.iter().map(|item| item.path.clone()).collect::<Vec<_>>();
+        if let Some(ref mut sender) = self.search_commander {
+            sender.send(SearchEvent::NewItems(searchable)).unwrap();
+            sender.send(SearchEvent::NewView(self.displayed.clone())).unwrap();
+        }
+    }
+
+    fn update_searcher(self: &mut Self) {
+        if let Some(ref mut sender) = self.search_commander {
+            sender.send(SearchEvent::NewView(self.displayed.clone())).unwrap();
+            sender.send(SearchEvent::Search(self.searchbar.clone())).unwrap();
+        }
     }
 
     fn add_bookmark(self: &mut Self, dragged: usize, target: Option<i32>) {
