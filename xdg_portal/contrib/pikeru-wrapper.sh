@@ -43,6 +43,6 @@ else
 fi
 
 pikerudir="$(dirname "$(readlink -f "$0")")"
-cmd="$pikerudir/../../pikeru -m $mode -t 'File Picker' -p \"$path\""
+cmd="$pikerudir/../../target/release/pikeru -m $mode -t 'File Picker' -p \"$path\""
 echo "$cmd" >> /tmp/pk.log
 eval "$cmd"
