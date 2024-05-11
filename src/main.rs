@@ -1050,7 +1050,7 @@ impl FItem {
         if let Some(h) = &self.handle {
             col = col.push(image(h.clone()));
         }
-        col = col.push(text(self.label.as_str()).size(13));
+        col = col.push(text(self.label.as_str()).size(13).shaping(text::Shaping::Advanced));
         let idx = self.items_idx;
         let clickable = match (self.isdir(), self.sel) {
             (true, true) => {
