@@ -19,11 +19,11 @@ use iced::{
     keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace},
     keyboard::key::Named,
     widget::{
-        vertical_space, checkbox, slider,
+        horizontal_space, vertical_space, checkbox, slider,
         container::{Appearance, StyleSheet,Id as CId},
         image, image::Handle, Column, Row, text, responsive,
         Scrollable, scrollable, scrollable::{Direction,Properties},
-        Button, TextInput,
+        Button, TextInput, Text,
         column, row, mouse_area, container,
     },
     futures::{
@@ -65,6 +65,7 @@ use iced_aw::{
 };
 use md5::{Md5,Digest};
 use rapidfuzz::distance;
+use csv;
 
 macro_rules! die {
     ($($arg:tt)*) => {{
@@ -93,6 +94,7 @@ struct Config {
     dark_theme: bool,
     cache_dir: String,
     need_update: bool,
+    index_file: String,
 }
 
 impl Config {
@@ -127,7 +129,8 @@ impl Config {
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dark_theme = true;
         let mut dpi_scale: f32 = 1.0;
-        let mut opts_missing = 6;
+        let mut opts_missing = 7;
+        let mut index_file = "/tmp/captions.csv".to_string();
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
             match line {
                 "[Commands]" => section = S::Commands,
@@ -141,6 +144,7 @@ impl Config {
                         S::Bookmarks => bookmarks.push(Bookmark::new(k,v)),
                         S::Settings => match k {
                             "thumbnail_size" => { opts_missing -= 1; thumb_size = v.parse().unwrap() },
+                            "index_file" => { opts_missing -= 1; index_file = v.into() },
                             "dpi_scale" => { opts_missing -= 1; dpi_scale = v.parse().unwrap() },
                             "theme" => { opts_missing -= 1; dark_theme = v == "dark" },
                             "cache_dir" => { opts_missing -= 1; cache_dir = v.to_string() },
@@ -183,6 +187,7 @@ impl Config {
             window_size,
             dark_theme,
             cache_dir,
+            index_file,
             dpi_scale: dpi_scale.into(),
             need_update: opts_missing > 0,
         }
@@ -207,13 +212,14 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\ntheme = {}\nsort_by = {}\ncache_dir = {}\n",
+                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\ntheme = {}\nsort_by = {}\ncache_dir = {}\nindex_file= {}\n",
                 self.dpi_scale as i32,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
                 if self.dark_theme { "dark" } else { "light" },
                 match self.sort_by { 1=>"name_asc", 2=>"name_desc", 3=>"time_asc", 4=>"time_desc", _=>"" },
-                self.cache_dir
+                self.cache_dir,
+                self.index_file
                 ).as_str());
         conf.push_str("\n[Bookmarks]\n");
         self.bookmarks.iter().for_each(|bm| {
@@ -328,6 +334,7 @@ struct FItemb {
     view_id: u8,
     mtime: f32,
     vid: bool,
+    size: u64,
 }
 #[derive(Debug, Clone, Default)]
 struct FItem(Box<FItemb>);
@@ -381,6 +388,7 @@ struct LastClicked {
     iidx: usize,
     didx: usize,
     new: bool,
+    size: Option<String>,
 }
 
 struct FilePicker {
@@ -601,7 +609,7 @@ impl Application for FilePicker {
                 self.search_commander = Some(txsrch);
                 self.ino_updater = Some(txctl);
                 self.thumb_sender = Some(fichan);
-                tokio::task::spawn(search_loop(search_commands, search_results));
+                tokio::task::spawn(search_loop(search_commands, search_results, mem::take(&mut self.conf.index_file)));
                 return self.update(Message::LoadDir);
             },
             Message::Scrolled(viewport) => self.scroll_offset = viewport.absolute_offset(),
@@ -896,6 +904,9 @@ impl Application for FilePicker {
                 |(i,cmd)|Item::new(menu_button(cmd.label.as_str(), Message::RunCmd(i)))).collect();
             let ctrlbar = column![
                 row![
+                    match &self.last_clicked.size {
+                        Some(size) => row![Text::new(size), horizontal_space()], None => row![]
+                    },
                     menu_bar![
                         (top_button("Cmd", 80.0, Message::Dummy), 
                             view_menu(cmd_list))
@@ -1118,15 +1129,16 @@ impl FItem {
     }
 
     fn new(pth: PathBuf, nav_id: u8) -> Self {
-        let (ftype, mtime) = match pth.metadata() {
+        let (ftype, mtime, size) = match pth.metadata() {
             Ok(metadata) => {
                 if metadata.is_dir() {
-                    (FType::Dir, metadata.modified().unwrap())
+                    (FType::Dir, metadata.modified().unwrap(), 0)
                 } else {
-                    (FType::Unknown, metadata.modified().unwrap())
+                    (FType::Unknown, metadata.modified().unwrap(),
+                        metadata.len())
                 }
             },
-            Err(_) => (FType::NotExist, std::time::SystemTime::now()),
+            Err(_) => (FType::NotExist, std::time::SystemTime::now(), 0),
 
         };
         let path = pth.to_string_lossy();
@@ -1158,6 +1170,7 @@ impl FItem {
             view_id: 0,
             mtime: mtime.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32(),
             vid: false,
+            size,
         }))
     }
 
@@ -1251,17 +1264,39 @@ impl FItem {
     }
 }
 
-async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USender<SearchEvent>) {
+struct FileIdx<'a> {
+    path: String,
+    data: Option<&'a str>,
+}
+
+async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USender<SearchEvent>, index: String) {
     let mut items = vec![];
     let mut displayed = vec![];
+    let rdr = csv::Reader::from_path(index).ok();
+    let captions = match rdr {
+        Some(mut rdr) => rdr.records().filter_map(|r|r.ok()).fold(HashMap::new(), |mut acc,rec| {
+            acc.insert(rec[0].to_string(), rec[1].to_string());
+            acc
+        }),
+        None => Default::default(),
+    };
     loop {
         match commands.recv().await {
-            Some(SearchEvent::NewItems(paths)) => items = paths,
+            Some(SearchEvent::NewItems(paths)) => items = paths.into_iter().map(|path| {
+                let data = captions.get(&path).map(|x|x.as_str());
+                FileIdx {
+                    path,
+                    data,
+                }
+            }).collect(),
             Some(SearchEvent::NewView(didxs)) => displayed = didxs,
             Some(SearchEvent::Search(term)) => {
                 let results = displayed.iter().map(|i| {
-                    let text = items[*i].as_str();
-                    let dist = distance::levenshtein::similarity(text.chars(), term.chars());
+                    let item = &items[*i];
+                    let mut dist = distance::levenshtein::similarity(item.path.chars(), term.chars());
+                    if let Some(data) = item.data {
+                        dist = dist.max(if data.contains(&term) { term.len() } else { 0 });
+                    }
                     (*i, dist as f64)
                 }).collect::<Vec<_>>();
                 result_sender.send(SearchEvent::Results(results)).unwrap();
@@ -1398,8 +1433,19 @@ impl FilePicker {
 
     fn click_item(self: &mut Self, iidx: usize, shift: bool, ctrl: bool, always_sel: bool) {
 
-        self.last_clicked = LastClicked{new: true, iidx, didx: self.items[iidx].display_idx};
         let isdir = self.items[iidx].isdir();
+        self.last_clicked = LastClicked{
+            new: true,
+            iidx,
+            didx: self.items[iidx].display_idx,
+            size: if isdir { None } else {
+                let bytes = self.items[iidx].size as f64;
+                Some(if bytes > 1073741824.0 { format!("{:.2}GB", bytes/1073741824.0 ) }
+                else if bytes > 1048576.0 { format!("{:.1}MB", bytes/1048576.0 ) }
+                else if bytes > 1024.0 { format!("{:.0}KB", bytes/1024.0 ) }
+                else { format!("{:.0}B", bytes) })
+                }
+        };
         let prevsel = self.items.iter().filter_map(|item| if item.sel { Some(item.items_idx) } else { None }).collect::<Vec<usize>>();
         while (self.conf.multi() || isdir) && shift && prevsel.len() > 0 {
             let prevdir = self.items[prevsel[0]].isdir();
