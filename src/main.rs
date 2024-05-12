@@ -64,7 +64,7 @@ use iced_aw::{
     modal, Card
 };
 use md5::{Md5,Digest};
-use rapidfuzz::distance;
+use fuzzy_matcher::{self, FuzzyMatcher};
 use csv;
 
 macro_rules! die {
@@ -525,6 +525,7 @@ impl Application for FilePicker {
                     self.displayed.iter_mut().for_each(|m| if *m >= i { *m-=1 });
                     self.items.remove(i);
                     self.displayed.remove(dix);
+                    self.update_searcher_items(self.items.iter().map(|item|item.path.clone()).collect());
                 }
             },
             Message::RunCmd(i) => self.run_command(i),
@@ -539,7 +540,7 @@ impl Application for FilePicker {
                 if self.searchbar.is_empty() {
                     return self.update(Message::Sort(self.conf.sort_by));
                 }
-                self.update_searcher();
+                self.update_searcher_visible();
             },
             Message::Sort(i) => {
                 match i {
@@ -617,6 +618,11 @@ impl Application for FilePicker {
             Message::SearchTxtInput(txt) => {
                 self.searchbar = txt;
                 if self.searchbar.is_empty() {
+                    self.displayed = self.items.iter().enumerate().filter_map(|(i,item)| {
+                        if self.show_hidden || !item.path.rsplitn(2,'/').next().unwrap_or("").starts_with('.') {
+                            Some(i)
+                        } else {None}
+                    }).collect();
                     return self.update(Message::Sort(self.conf.sort_by));
                 } else {
                     self.search_commander.as_ref().unwrap().send(SearchEvent::Search(self.searchbar.clone())).unwrap();
@@ -629,7 +635,7 @@ impl Application for FilePicker {
                     y.isdir().cmp(&x.isdir()).then_with(||b.1.partial_cmp(&a.1).unwrap())
                 });
                 self.displayed = res.into_iter().enumerate().map(|(i,r)|{
-                    unsafe{self.items.get_unchecked_mut(i)}.display_idx = i;
+                    unsafe{self.items.get_unchecked_mut(r.0)}.display_idx = i;
                     r.0
                 }).collect();
             }
@@ -1280,6 +1286,7 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USende
         }),
         None => Default::default(),
     };
+    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
     loop {
         match commands.recv().await {
             Some(SearchEvent::NewItems(paths)) => items = paths.into_iter().map(|path| {
@@ -1291,13 +1298,19 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USende
             }).collect(),
             Some(SearchEvent::NewView(didxs)) => displayed = didxs,
             Some(SearchEvent::Search(term)) => {
-                let results = displayed.iter().map(|i| {
+                let results = displayed.iter().filter_map(|i| {
                     let item = &items[*i];
-                    let mut dist = distance::levenshtein::similarity(item.path.chars(), term.chars());
-                    if let Some(data) = item.data {
-                        dist = dist.max(if data.contains(&term) { term.len() } else { 0 });
+                    let name_match = matcher.fuzzy_match(item.path.as_str(), term.as_str());
+                    let data_match = match item.data {
+                        Some(data) => matcher.fuzzy_match(data, term.as_str()),
+                        None => None,
+                    };
+                    match (name_match, data_match) {
+                        (Some(a), Some(b)) => Some((*i, a.max(b) as f64)),
+                        (Some(a), None) => Some((*i, a as f64)),
+                        (None, Some(b)) => Some((*i, b as f64)),
+                        (None, None) => None,
                     }
-                    (*i, dist as f64)
                 }).collect::<Vec<_>>();
                 result_sender.send(SearchEvent::Results(results)).unwrap();
             },
@@ -1503,14 +1516,17 @@ impl FilePicker {
         self.items = ret;
         self.items.iter_mut().enumerate().for_each(|(i,item)|item.items_idx = i);
         self.displayed = displayed;
-        let searchable = self.items.iter().map(|item| item.path.clone()).collect::<Vec<_>>();
+        self.update_searcher_items(self.items.iter().map(|item|item.path.clone()).collect());
+    }
+
+    fn update_searcher_items(self: &mut Self, searchable: Vec<String>) {
         if let Some(ref mut sender) = self.search_commander {
             sender.send(SearchEvent::NewItems(searchable)).unwrap();
             sender.send(SearchEvent::NewView(self.displayed.clone())).unwrap();
         }
     }
 
-    fn update_searcher(self: &mut Self) {
+    fn update_searcher_visible(self: &mut Self) {
         if let Some(ref mut sender) = self.search_commander {
             sender.send(SearchEvent::NewView(self.displayed.clone())).unwrap();
             sender.send(SearchEvent::Search(self.searchbar.clone())).unwrap();
