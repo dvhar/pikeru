@@ -264,7 +264,7 @@ impl Mode {
 enum SearchEvent {
     NewItems(Vec<String>),
     NewView(Vec<usize>),
-    Results(Vec<(usize, f64)>),
+    Results(Vec<(usize, i64)>),
     Search(String),
 }
 
@@ -302,7 +302,7 @@ enum Message {
     InoCreate(String),
     Thumbsize(f32),
     CloseModal,
-    SearchResult(Vec<(usize, f64)>),
+    SearchResult(Vec<(usize, i64)>),
     Dummy,
 }
 
@@ -335,6 +335,7 @@ struct FItemb {
     mtime: f32,
     vid: bool,
     size: u64,
+    hidden: bool,
 }
 #[derive(Debug, Clone, Default)]
 struct FItem(Box<FItemb>);
@@ -532,15 +533,16 @@ impl Application for FilePicker {
             Message::Dummy => {},
             Message::ShowHidden(show) => {
                 self.show_hidden = show;
-                self.displayed = self.items.iter().enumerate().filter_map(|(i,item)| {
-                    if show || !item.path.rsplitn(2,'/').next().unwrap_or("").starts_with('.') {
-                        Some(i)
+                let displayed = self.items.iter().enumerate().filter_map(|(i,item)| {
+                    if show || !item.hidden { Some(i)
                     } else { None }
                 }).collect();
                 if self.searchbar.is_empty() {
+                    self.displayed = displayed;
                     return self.update(Message::Sort(self.conf.sort_by));
+                } else {
+                    self.update_searcher_visible(displayed);
                 }
-                self.update_searcher_visible();
             },
             Message::Sort(i) => {
                 match i {
@@ -632,12 +634,13 @@ impl Application for FilePicker {
                 res.sort_by(|a,b| unsafe {
                     let x = self.items.get_unchecked(a.0);
                     let y = self.items.get_unchecked(b.0);
-                    y.isdir().cmp(&x.isdir()).then_with(||b.1.partial_cmp(&a.1).unwrap())
+                    y.isdir().cmp(&x.isdir()).then_with(||b.1.cmp(&a.1))
                 });
                 self.displayed = res.into_iter().enumerate().map(|(i,r)|{
-                    unsafe{self.items.get_unchecked_mut(r.0)}.display_idx = i;
+                    self.items[r.0].display_idx = i;
                     r.0
                 }).collect();
+                return self.update(Message::LoadThumbs);
             }
             Message::Ctrl(pressed) => self.ctrl_pressed = pressed,
             Message::Shift(pressed) => self.shift_pressed = pressed,
@@ -1149,6 +1152,7 @@ impl FItem {
         };
         let path = pth.to_string_lossy();
         let mut label = path.rsplitn(2,'/').next().unwrap().to_string();
+        let hidden = label.starts_with('.');
         if label.len() > 20 {
             let mut start = label.len()-40.min(label.len());
             while  (label.as_bytes()[start] & 0b11000000) == 0b10000000 {
@@ -1177,6 +1181,7 @@ impl FItem {
             mtime: mtime.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32(),
             vid: false,
             size,
+            hidden,
         }))
     }
 
@@ -1306,9 +1311,9 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USende
                         None => None,
                     };
                     match (name_match, data_match) {
-                        (Some(a), Some(b)) => Some((*i, a.max(b) as f64)),
-                        (Some(a), None) => Some((*i, a as f64)),
-                        (None, Some(b)) => Some((*i, b as f64)),
+                        (Some(a), Some(b)) => Some((*i, a.max(b))),
+                        (Some(a), None) => Some((*i, a)),
+                        (None, Some(b)) => Some((*i, b)),
                         (None, None) => None,
                     }
                 }).collect::<Vec<_>>();
@@ -1501,11 +1506,10 @@ impl FilePicker {
                 Ok(rd) => {
                     inodirs.push(dir.clone());
                     rd.map(|f| f.unwrap().path()).for_each(|path| {
-                        if self.show_hidden ||
-                            !path.as_os_str().to_str().map(|s|s.rsplitn(2,'/').next().unwrap_or("").starts_with('.')).unwrap_or(false) {
-                            displayed.push(ret.len());
-                        }
                         ret.push(FItem::new(path.into(), self.nav_id));
+                        if self.show_hidden || !ret.last().unwrap().hidden {
+                            displayed.push(ret.len()-1);
+                        }
                     });
                 },
                 Err(e) => eprintln!("Error reading dir {}: {}", dir, e),
@@ -1526,9 +1530,9 @@ impl FilePicker {
         }
     }
 
-    fn update_searcher_visible(self: &mut Self) {
+    fn update_searcher_visible(self: &mut Self, displaylist: Vec<usize>) {
         if let Some(ref mut sender) = self.search_commander {
-            sender.send(SearchEvent::NewView(self.displayed.clone())).unwrap();
+            sender.send(SearchEvent::NewView(displaylist)).unwrap();
             sender.send(SearchEvent::Search(self.searchbar.clone())).unwrap();
         }
     }
