@@ -33,6 +33,18 @@ impl ButStyle for SideButTheme {
 
 }
 
+struct FlatButTheme;
+impl ButStyle for FlatButTheme {
+    type Style = iced::Theme;
+
+    fn active(&self, _style: &Self::Style) -> ButAppearance {
+        let mut appearance = ButAppearance::default();
+        appearance.background = Some(iced::Background::Color(color!(0x262626)));
+        appearance.text_color = color!(0xdddddd);
+        appearance
+    }
+}
+
 fn gradbut(c1: Color, c2: Color, txt: Color, rad: Radians) -> ButAppearance {
     let mut appearance = ButAppearance::default();
     let gradient = gradient::Linear::new(rad)
@@ -61,5 +73,10 @@ pub fn top_but_theme() -> iced::theme::Button {
 pub fn side_but_theme() -> iced::theme::Button {
     iced::theme::Button::Custom(
         Box::new(SideButTheme) as Box<dyn ButStyle<Style = iced::Theme>>
+    )
+}
+pub fn flat_but_theme() -> iced::theme::Button {
+    iced::theme::Button::Custom(
+        Box::new(FlatButTheme) as Box<dyn ButStyle<Style = iced::Theme>>
     )
 }

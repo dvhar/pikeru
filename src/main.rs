@@ -260,7 +260,9 @@ impl Mode {
 #[derive(Clone, Debug)]
 enum SearchEvent {
     NewItems(Vec<String>, u8),
+    AddItems(Vec<String>),
     NewView(Vec<usize>),
+    AddView(Vec<usize>),
     Results(Vec<(usize, i64)>, u8, usize, String),
     Search(String),
 }
@@ -300,6 +302,7 @@ enum Message {
     Thumbsize(f32),
     CloseModal,
     SearchResult(Box<SearchEvent>),
+    NextRecurse(Vec<FItem>, u8),
     Dummy,
 }
 
@@ -390,15 +393,23 @@ struct LastClicked {
     size: Option<String>,
 }
 
+#[derive(PartialEq)]
+enum RecState {
+    Run,
+    Stop,
+}
+
 struct FilePicker {
     conf: Config,
     scroll_id: scrollable::Id,
     items: Vec<FItem>,
     displayed: Vec<usize>,
+    end_idx: usize,
     dirs: Vec<String>,
     pathbar: String,
     searchbar: String,
     search_running: bool,
+    recurse_state: RecState,
     thumb_sender: Option<USender<FItem>>,
     nproc: usize,
     last_loaded: usize,
@@ -458,6 +469,7 @@ impl Application for FilePicker {
             Self {
                 conf,
                 items: vec![],
+                end_idx: 0,
                 displayed: vec![],
                 thumb_sender: None,
                 nproc: num_cpus::get() * 2,
@@ -467,6 +479,7 @@ impl Application for FilePicker {
                 pathbar: String::new(),
                 searchbar: String::new(),
                 search_running: false,
+                recurse_state: RecState::Stop,
                 icons: Arc::new(Icons::new(ts, cache_dir)),
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
                 ctrl_pressed: false,
@@ -514,6 +527,7 @@ impl Application for FilePicker {
                 item.display_idx = self.displayed.len();
                 self.displayed.push(len);
                 self.items.push(FItem::default());
+                self.end_idx += 1;
                 item.items_idx = len;
                 tokio::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone(),
                                        self.icons.clone(), self.conf.thumb_size as u32));
@@ -527,6 +541,7 @@ impl Application for FilePicker {
                     });
                     self.displayed.iter_mut().for_each(|m| if *m >= i { *m-=1 });
                     self.items.remove(i);
+                    self.end_idx -= 1;
                     self.displayed.remove(dix);
                     self.update_searcher_items(self.items.iter().map(|item|item.path.clone()).collect());
                 }
@@ -615,9 +630,9 @@ impl Application for FilePicker {
                 self.search_commander = Some(txsrch);
                 self.ino_updater = Some(txino);
                 self.thumb_sender = Some(fichan);
+                tokio::spawn(recursive_add(recurse_cmds, more_files, txrec.clone()));
                 self.recurse_updater = Some(txrec);
                 tokio::spawn(search_loop(search_cmds, search_res, mem::take(&mut self.conf.index_file)));
-                tokio::spawn(recursive_add(recurse_cmds, more_files));
                 return self.update(Message::LoadDir);
             },
             Message::Scrolled(viewport) => self.scroll_offset = viewport.absolute_offset(),
@@ -625,13 +640,18 @@ impl Application for FilePicker {
             Message::SearchTxtInput(txt) => {
                 self.searchbar = txt;
                 if self.searchbar.is_empty() {
-                    self.displayed = self.items.iter().enumerate().filter_map(|(i,item)| {
+                    self.recurse_state = RecState::Stop;
+                    self.displayed = self.items[..self.end_idx].iter().enumerate().filter_map(|(i,item)| {
                         if self.show_hidden || !item.hidden { Some(i) } else {None}
                     }).collect();
                     return self.update(Message::Sort(self.conf.sort_by));
                 } else if !self.search_running{
                     self.search_running = true;
                     self.search_commander.as_ref().unwrap().send(SearchEvent::Search(self.searchbar.clone())).unwrap();
+                    if self.recurse_state != RecState::Run {
+                        self.recurse_state = RecState::Run;
+                        self.recurse_updater.as_ref().unwrap().send(RecMsg::FetchMore(self.nav_id)).unwrap();
+                    }
                 }
             },
             Message::SearchResult(res) => {
@@ -655,11 +675,31 @@ impl Application for FilePicker {
                     }
                 }
                 self.search_running = still_running;
-            }
+            },
+            Message::NextRecurse(mut next_items, nav_id) => {
+                if nav_id == self.nav_id {
+                    let mut new_displayed = vec![];
+                    let paths = next_items.iter_mut().enumerate().map(|(i,fitem)| {
+                        fitem.items_idx = self.items.len() + i;
+                        if self.show_hidden || !fitem.hidden {
+                            new_displayed.push(fitem.items_idx);
+                        }
+                        fitem.path.clone()
+                    }).collect();
+                    let sender = self.search_commander.as_ref().unwrap();
+                    self.items.append(&mut next_items);
+                    sender.send(SearchEvent::AddItems(paths)).unwrap();
+                    sender.send(SearchEvent::AddView(new_displayed)).unwrap();
+                    sender.send(SearchEvent::Search(self.searchbar.clone())).unwrap();
+                    if self.recurse_state != RecState::Stop {
+                        self.recurse_updater.as_ref().unwrap().send(RecMsg::FetchMore(nav_id)).unwrap();
+                    }
+                }
+            },
             Message::Ctrl(pressed) => self.ctrl_pressed = pressed,
             Message::Shift(pressed) => self.shift_pressed = pressed,
             Message::ArrowKey(key) => {
-                let didx = if self.items.iter().any(|item|item.sel) {
+                let didx = if self.items.iter().filter(|item|!item.recursed || !self.searchbar.is_empty()).any(|item|item.sel) {
                     let maxcols = (((self.content_width-130.0) / self.conf.thumb_size)+1.0).max(1.0) as i64;
                     let i = self.last_clicked.didx as i64;
                     match key {
@@ -729,6 +769,8 @@ impl Application for FilePicker {
                     None => self.dirs[0].clone(),
                 };
                 self.load_dir();
+                self.recurse_state = RecState::Stop;
+                self.recurse_updater.as_ref().unwrap().send(RecMsg::NewNav(self.dirs.clone(), self.nav_id)).unwrap();
                 let _ = self.update(Message::Sort(self.conf.sort_by));
                 return scrollable::snap_to(self.scroll_id.clone(), scrollable::RelativeOffset::START);
             },
@@ -881,8 +923,8 @@ impl Application for FilePicker {
                     SubState::Ready((thumb_recv, ino_recv, search_recv, rec_recv)) => {
                         tokio::select! {
                             more = rec_recv.recv() => {
-                                if let Some(RecMsg::NewNav(dirs, nav_id)) = more {
-                                eprintln!("More files to search: {:?}", dirs);
+                                if let Some(RecMsg::NextItems(items, nav_id)) = more {
+                                    messager.send(Message::NextRecurse(items, nav_id)).await.unwrap();
                                 }
                             },
                             res = search_recv.recv() => {
@@ -964,7 +1006,8 @@ impl Application for FilePicker {
                 TextInput::new("search", self.searchbar.as_str())
                     .on_input(Message::SearchTxtInput)
                     .on_paste(Message::SearchTxtInput)
-                    .width(Length::FillPortion(2))
+                    .width(Length::FillPortion(2)),
+                Button::new("X").on_press(Message::SearchTxtInput("".to_string())).style(style::flat_but_theme())
                 ]
             ].align_items(iced::Alignment::End).width(Length::Fill);
             let bookmarks = self.conf.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
@@ -1495,6 +1538,7 @@ impl FilePicker {
         self.searchbar.clear();
         self.ino_updater.as_ref().unwrap().send(Inochan::NewDirs(inodirs)).unwrap();
         self.items = ret;
+        self.end_idx = self.items.len();
         self.items.iter_mut().enumerate().for_each(|(i,item)|item.items_idx = i);
         self.displayed = displayed;
         self.update_searcher_items(self.items.iter().map(|item|item.path.clone()).collect());
@@ -1665,7 +1709,22 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USende
                     data,
                 }
             }).collect(),
-            Some(SearchEvent::NewView(didxs)) => displayed = didxs,
+            Some(SearchEvent::AddItems(paths)) => {
+                let mut new_items = paths.into_iter().map(|path| {
+                    let data = captions.get(&path).map(|x|x.as_str());
+                    FileIdx {
+                        path,
+                        data,
+                    }
+                }).collect::<Vec<FileIdx<'_>>>();
+                items.append(&mut new_items);
+            },
+            Some(SearchEvent::NewView(didxs)) => {
+                displayed = didxs;
+            }
+            Some(SearchEvent::AddView(mut didxs)) => {
+                displayed.append(&mut didxs);
+            }
             Some(SearchEvent::Search(term)) => {
                 let results = displayed.iter().filter_map(|i| {
                     let item = &items[*i];
@@ -1690,27 +1749,60 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USende
 
 enum RecMsg {
     NewNav(Vec::<String>, u8),
+    FetchMore(u8),
+    NextItems(Vec<FItem>, u8),
 }
 
-async fn recursive_add(mut updates: UReceiver<RecMsg>, results: USender<RecMsg>) {
+async fn recursive_add(mut updates: UReceiver<RecMsg>, results: USender<RecMsg>, _selfy: USender<RecMsg>) {
+    let mut nav_id = 0;
+    let mut dirs = vec![];
     loop {
         match updates.recv().await {
-            Some(RecMsg::NewNav(dirs, nav_id)) => {
-                let mut ret = vec![];
+            Some(RecMsg::NewNav(new_dirs, nid)) => {
+                dirs = new_dirs;
+                nav_id = nid;
+                let mut next_dirs = vec![];
                 for dir in dirs.iter() {
                     match std::fs::read_dir(dir.as_str()) {
                         Ok(rd) => {
                             rd.map(|f| f.unwrap().path()).for_each(|path| {
-                                let mut item = FItem::new(path.into(), nav_id);
-                                item.recursed = true;
-                                ret.push(item);
+                                if path.is_dir() {
+                                    next_dirs.push(path.to_string_lossy().to_string());
+                                }
                             });
                         },
                         Err(e) => eprintln!("Error reading dir {}: {}", dir, e),
                     }
                 }
+                dirs = next_dirs;
+            }
+            Some(RecMsg::FetchMore(nid)) => {
+                if nid != nav_id {
+                    continue;
+                }
+                let mut new_items = vec![];
+                let mut next_dirs = vec![];
+                for dir in dirs.iter() {
+                    match std::fs::read_dir(dir.as_str()) {
+                        Ok(rd) => {
+                            rd.map(|f| f.unwrap().path()).for_each(|path| {
+                                if path.is_dir() {
+                                    next_dirs.push(path.to_string_lossy().to_string());
+                                }
+                                let mut item = FItem::new(path.into(), nid);
+                                item.recursed = true;
+                                new_items.push(item);
+                            });
+                        },
+                        Err(e) => eprintln!("Error reading dir {}: {}", dir, e),
+                    }
+                }
+                dirs = next_dirs;
+                if !new_items.is_empty() {
+                    results.send(RecMsg::NextItems(new_items, nid)).unwrap();
+                }
             },
-            None => {},
+            _ => {},
         };
     }
 }
