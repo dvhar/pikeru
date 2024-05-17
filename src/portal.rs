@@ -2,40 +2,33 @@
 //https://docs.rs/zbus/latest/zbus/index.html
 use std::{error::Error, future::pending};
 use zbus::{connection, interface};
-use zbus::zvariant;
+use std::collections::HashMap;
 
-#[derive(zvariant::SerializeDict, zvariant::DeserializeDict, zvariant::Type, Debug)]
-#[zvariant(signature = "a{sv}")]
-struct FOptions {
-    handle_token: String,
-    accept_label: String,
-    modal: bool,
-    multiple: bool,
-    directory: bool,
-}
 
-#[derive(zvariant::SerializeDict, zvariant::DeserializeDict, zvariant::Type, Debug)]
-#[zvariant(signature = "ssa{sv}")]
-struct FileRequest {
-    parent: String,
-    title: String,
-    options: FOptions,
-}
-
-#[derive(zvariant::SerializeDict, zvariant::DeserializeDict, zvariant::Type, Debug, Default)]
-#[zvariant(signature = "(as)")]
-struct FileResult {
-    uris: Vec<String>,
-}
-
-struct FilePicker {
-}
+struct FilePicker;
 
 #[interface(name = "org.freedesktop.impl.portal.FileChooser")]
 impl FilePicker {
-    async fn open_file(&mut self, args: FileRequest) -> FileResult {
-        eprintln!("req: {:?}", args);
-        FileResult::default()
+    fn open_file(
+        &self,
+        arg_1: zbus::zvariant::ObjectPath<'_>,
+        arg_2: &str,
+        arg_3: &str,
+        arg_4: &str,
+        arg_5: HashMap<&str, zbus::zvariant::Value<'_>>) -> (u32, HashMap<String, zbus::zvariant::OwnedValue>) {
+        eprint!("Open file");
+        (0, HashMap::default())
+    }
+
+    fn save_file(
+        &self,
+        arg_1: zbus::zvariant::ObjectPath<'_>,
+        arg_2: &str,
+        arg_3: &str,
+        arg_4: &str,
+        arg_5: HashMap<&str, zbus::zvariant::Value<'_>>) -> (u32, HashMap<String, zbus::zvariant::OwnedValue>) {
+        eprint!("Save file");
+        (0, HashMap::default())
     }
 }
 
