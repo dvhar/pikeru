@@ -13,28 +13,77 @@ use std::{
 };
 
 
+#[derive(Debug)]
 struct FilePicker {
     prev_path: String,
     postproc_dir: String,
     def_save_dir: String,
     cmd: String,
 }
-
+enum Section {
+    FileChooser,
+    Other,
+}
 impl<'a> FilePicker {
     fn new() -> Self {
+        let home = std::env::var("HOME").unwrap();
+        let xdg_home = std::env::var("XDG_CONFIG_HOME").unwrap_or("".to_string());
+        let conf_home = Path::new(&home).join(".config").to_string_lossy().to_string();
+        let sysconf = Path::new(&std::env::var("SYSCONFDIR") .unwrap_or("/etc".to_string()))
+            .join("xdg").to_string_lossy().to_string();
+        let cdt = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("Gnome".to_string());
+        let mut filenames = cdt.split(':').collect::<Vec<&str>>();
+        filenames.push("config");
+        let dirs = [&xdg_home, &conf_home, &sysconf];
+        let mut postproc_dir = "/tmp/pk_postprocess".to_string();
+        let mut def_save_dir = Path::new(&home).join("Downloads").to_string_lossy().to_string();
+        let mut cmd = "/usr/local/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh".to_string();
+        for dir in dirs {
+            for file in &filenames {
+                let cpath = Path::new(dir).join("xdg-desktop-portal-pikeru").join(&file);
+                if !cpath.is_file() {
+                    continue;
+                }
+                let txt = std::fs::read_to_string(cpath).unwrap();
+                let mut section = Section::Other;
+                for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
+                    match line {
+                        "[filechooser]" => section = Section::FileChooser,
+                        _ => match section {
+                            Section::FileChooser => {
+                                let (k, v) = str::split_once(line, '=').unwrap();
+                                let (k, v) = (k.trim(), v.trim());
+                                match k {
+                                    "cmd" => cmd = v.to_string(),
+                                    "default_dir" => def_save_dir = v.to_string(),
+                                    "postprocess_dir" => postproc_dir = v.to_string(),
+                                    _ => {},
+                                }
+                            },
+                            Section::Other => {},
+                        }
+                    }
+                }
+                break;
+            }
+        }
         Self {
-            prev_path: "".to_string(),
-            postproc_dir: "/tmp/pk_postprocess".to_string(),
-            def_save_dir: "/home/d/Downloads".to_string(),
-            cmd: "/usr/local/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh".to_string(),
+            prev_path: home.clone(),
+            postproc_dir,
+            def_save_dir,
+            cmd,
         }
     }
 
     fn select_files(self: &mut Self, dir: bool, multi: bool, save: bool, path: &str) -> (u32, HashMap<String, OwnedValue>) {
-        let dir   = if dir   { 1 } else { 0 };
+        let dir = if dir   { 1 } else { 0 };
         let multi = if multi { 1 } else { 0 };
-        let save  = if save  { 1 } else { 0 };
-        let cmd = format!("{} {} {} {} {}", self.cmd, multi, dir, save, path);
+        let savenum = if save  { 1 } else { 0 };
+        let cmd = if save {
+            format!("{} {} {} {} {}", self.cmd, multi, dir, savenum, path)
+        } else {
+            format!("POSTPROCESS_DIR={} {} {} {} {} {}", self.postproc_dir, self.cmd, multi, dir, savenum, path)
+        };
         eprintln!("CMD:{}", cmd);
         let output = match std::process::Command::new("sh").arg("-c").arg(cmd).output() {
             Ok(out) => unsafe { std::str::from_utf8_unchecked(&out.stdout).to_owned() },
@@ -116,8 +165,8 @@ impl FilePicker {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    eprintln!("portal running");
     let picker = FilePicker::new();
+    eprintln!("Running {:#?}", picker);
     let _conn = connection::Builder::session()?
         .name("org.freedesktop.impl.portal.desktop.pikeru")?
         .serve_at("/org/freedesktop/portal/desktop", picker)?
