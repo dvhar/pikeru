@@ -37,7 +37,11 @@ impl<'a> FilePicker {
         let dirs = [&xdg_home, &conf_home, &sysconf];
         let mut postproc_dir = "/tmp/pk_postprocess".to_string();
         let mut def_save_dir = Path::new(&home).join("Downloads").to_string_lossy().to_string();
-        let mut cmd = "/usr/local/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh".to_string();
+        let cmds = ["/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
+                    "/usr/local/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
+                    "/opt/pikeru/xdg_portal/contrib/pikeru-wrapper.sh"];
+        let mut cmd = cmds.iter().find_map(|c|if Path::new(c).is_file() {Some(*c)} else {None})
+            .unwrap_or(cmds[0]).to_string();
         for dir in dirs {
             for file in &filenames {
                 let cpath = Path::new(dir).join("xdg-desktop-portal-pikeru").join(&file);
