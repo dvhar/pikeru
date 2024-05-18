@@ -9,6 +9,7 @@ use zbus::{
 use std::{
     error::Error, future::pending,
     collections::HashMap,
+    borrow::Cow,
     path::Path
 };
 
@@ -19,17 +20,26 @@ struct FilePicker {
     postproc_dir: String,
     def_save_dir: String,
     cmd: String,
+    home: String,
 }
 enum Section {
     FileChooser,
     Other,
 }
-impl<'a> FilePicker {
+fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
+    if dir.contains('~') {
+        let expanded = dir.replace("~", &home);
+        return Cow::from(expanded)
+    }
+    Cow::from(dir)
+}
+impl FilePicker {
+
     fn new() -> Self {
         let home = std::env::var("HOME").unwrap();
         let xdg_home = std::env::var("XDG_CONFIG_HOME").unwrap_or("".to_string());
         let conf_home = Path::new(&home).join(".config").to_string_lossy().to_string();
-        let sysconf = Path::new(&std::env::var("SYSCONFDIR") .unwrap_or("/etc".to_string()))
+        let sysconf = Path::new(&std::env::var("SYSCONFDIR").unwrap_or("/etc".to_string()))
             .join("xdg").to_string_lossy().to_string();
         let cdt = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("Gnome".to_string());
         let mut filenames = cdt.split(':').collect::<Vec<&str>>();
@@ -73,23 +83,24 @@ impl<'a> FilePicker {
         }
         Self {
             prev_path: home.clone(),
-            postproc_dir,
-            def_save_dir,
-            cmd,
+            postproc_dir: tilda(&home, &postproc_dir).to_string(),
+            def_save_dir: tilda(&home, &def_save_dir).to_string(),
+            cmd: tilda(&home, &cmd).to_string(),
+            home,
         }
     }
 
-    fn select_files(self: &mut Self, dir: bool, multi: bool, save: bool, path: &str) -> (u32, HashMap<String, OwnedValue>) {
+    async fn select_files(self: &mut Self, dir: bool, multi: bool, save: bool, path: &str) -> (u32, HashMap<String, OwnedValue>) {
         let dir = if dir   { 1 } else { 0 };
         let multi = if multi { 1 } else { 0 };
         let savenum = if save  { 1 } else { 0 };
         let cmd = if save {
-            format!("{} {} {} {} {}", self.cmd, multi, dir, savenum, path)
+            format!("{} {} {} {} \"{}\"", self.cmd, multi, dir, savenum, tilda(&self.home,path))
         } else {
-            format!("POSTPROCESS_DIR={} {} {} {} {} {}", self.postproc_dir, self.cmd, multi, dir, savenum, path)
+            format!("POSTPROCESS_DIR=\"{}\" {} {} {} {} \"{}\"", self.postproc_dir, self.cmd, multi, dir, savenum, tilda(&self.home,path))
         };
         eprintln!("CMD:{}", cmd);
-        let output = match std::process::Command::new("sh").arg("-c").arg(cmd).output() {
+        let output = match tokio::process::Command::new("sh").arg("-c").arg(cmd).output().await {
             Ok(out) => unsafe { std::str::from_utf8_unchecked(&out.stdout).to_owned() },
             Err(e) => {eprintln!("Process error: {}", e); "".to_owned()},
         };
@@ -125,7 +136,7 @@ impl<'a> FilePicker {
 
 #[interface(name = "org.freedesktop.impl.portal.FileChooser")]
 impl FilePicker {
-    fn open_file(&mut self, _ob: ObjectPath<'_>, _caller: &str, _parent: &str,
+    async fn open_file(&mut self, _ob: ObjectPath<'_>, _caller: &str, _parent: &str,
                  _title: &str, options: HashMap<&str, Value<'_>>) -> (u32, HashMap<String, OwnedValue>) {
         let dir = match options.get("directory").unwrap_or(&Value::Bool(false)) {
             &Value::Bool(b) => b,
@@ -135,10 +146,10 @@ impl FilePicker {
             &Value::Bool(b) => b,
             _ => { eprintln!("MULTI type error"); false},
         };
-        self.select_files(multi, dir, false, "/home/d")
+        self.select_files(multi, dir, false, "/home/d").await
     }
 
-    fn save_file(&mut self, _ob: ObjectPath<'_>, _caller: &str, _parent: &str,
+    async fn save_file(&mut self, _ob: ObjectPath<'_>, _caller: &str, _parent: &str,
                  _title: &str, options: HashMap<&str, Value<'_>>) -> (u32, HashMap<String, OwnedValue>) {
         let dir = match options.get("current_folder").unwrap_or(&Value::from(&self.def_save_dir)) {
             Value::Str(s) => s.to_string(),
@@ -163,7 +174,7 @@ impl FilePicker {
         eprintln!("DIR:{} FNAME:{}", dir, fname);
         let path = Path::new(&dir).join(fname);
         eprintln!("PATH: {:?}", path);
-        self.select_files(false, false, true, &path.to_string_lossy())
+        self.select_files(false, false, true, &path.to_string_lossy()).await
     }
 }
 
