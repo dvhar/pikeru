@@ -3,7 +3,7 @@
 use zbus::{
     connection, interface,
     zvariant::{Value,OwnedValue,ObjectPath,
-    //to_bytes,LE,serialized::Context
+    to_bytes,LE,serialized::Context
     }
 };
 use std::{
@@ -53,7 +53,6 @@ impl FilePicker {
         let cdt = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("Gnome".to_string());
         let mut filenames = cdt.split(':').collect::<Vec<&str>>();
         filenames.push("config");
-        let dirs = [&xdg_home, &conf_home, &sysconf];
         let mut postproc_dir = "/tmp/pk_postprocess".to_string();
         let mut def_save_dir = Path::new(&home).join("Downloads").to_string_lossy().to_string();
         let cmds = ["/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
@@ -61,7 +60,7 @@ impl FilePicker {
                     "/opt/pikeru/xdg_portal/contrib/pikeru-wrapper.sh"];
         let mut cmd = cmds.iter().find_map(|c|if Path::new(c).is_file() {Some(*c)} else {None})
             .unwrap_or(cmds[0]).to_string();
-        for dir in dirs {
+        for dir in [&xdg_home, &conf_home, &sysconf] {
             for file in &filenames {
                 let cpath = Path::new(dir).join("xdg-desktop-portal-pikeru").join(&file);
                 if !cpath.is_file() {
@@ -90,6 +89,10 @@ impl FilePicker {
                 break;
             }
         }
+        if !Path::new(&cmd).is_file() {
+            eprintln!("No filepicker executable found: {}", cmd);
+            std::process::exit(1);
+        }
         Self {
             prev_path: home.clone(),
             postproc_dir: tilda(&home, &postproc_dir).to_string(),
@@ -99,18 +102,22 @@ impl FilePicker {
         }
     }
 
-    async fn select_files(self: &mut Self, dir: bool, multi: bool, save: bool, path: &str) -> (u32, HashMap<String, OwnedValue>) {
+    async fn select_files(self: &mut Self, multi: bool, dir: bool, save: bool, path: &str) -> (u32, HashMap<String, OwnedValue>) {
         let dir = if dir   { 1 } else { 0 };
         let multi = if multi { 1 } else { 0 };
         let savenum = if save  { 1 } else { 0 };
         let cmd = if save {
             format!("{} {} {} {} \"{}\"", self.cmd, multi, dir, savenum, tilda(&self.home,path))
         } else {
-            format!("POSTPROCESS_DIR=\"{}\" {} {} {} {} \"{}\"", self.postproc_dir, self.cmd, multi, dir, savenum, tilda(&self.home,path))
+            format!("POSTPROCESS_DIR=\"{}\" {} {} {} {} \"{}\"",
+                    self.postproc_dir, self.cmd, multi, dir, savenum, tilda(&self.home,&self.prev_path))
         };
         eprintln!("CMD:{}", cmd);
         let output = match tokio::process::Command::new("sh").arg("-c").arg(cmd).output().await {
-            Ok(out) => unsafe { std::str::from_utf8_unchecked(&out.stdout).to_owned() },
+            Ok(out) => {
+                eprintln!("{}", unsafe { std::str::from_utf8_unchecked(&out.stderr) });
+                unsafe { std::str::from_utf8_unchecked(&out.stdout).to_owned() }
+            },
             Err(e) => {eprintln!("Process error: {}", e); "".to_owned()},
         };
         let mut gotfirst = false;
@@ -155,34 +162,29 @@ impl FilePicker {
             &Value::Bool(b) => b,
             _ => { eprintln!("MULTI type error"); false},
         };
-        self.select_files(multi, dir, false, "/home/d").await
+        self.select_files(multi, dir, false, "/").await
     }
 
     async fn save_file(&mut self, _ob: ObjectPath<'_>, _caller: &str, _parent: &str,
                  _title: &str, options: HashMap<&str, Value<'_>>) -> (u32, HashMap<String, OwnedValue>) {
         let dir = match options.get("current_folder").unwrap_or(&Value::from(&self.def_save_dir)) {
-            Value::Str(s) => s.to_string(),
-            //Value::Array(s) => {
-                //let ctx = Context::new_dbus(LE, 0);
-                //let b = to_bytes(ctx, s).unwrap();
-                //eprintln!("WTF:{:?}", b);
-                //match std::str::from_utf8(&b[4..]) {
-                    //Ok(s) => s.to_string(),
-                    //Err(e) => {
-                        //eprintln!("Error reading dir:{}", e);
-                        //self.def_save_dir.clone()
-                    //},
-                //}
-            //},
+            Value::Array(s) => {
+                let b = to_bytes(Context::new_dbus(LE, 0), s).unwrap();
+                match std::str::from_utf8(&b[4..b.len()-1]) {
+                    Ok(s) => s.to_string(),
+                    Err(e) => {
+                        eprintln!("Error reading dir:{}", e);
+                        self.def_save_dir.clone()
+                    },
+                }
+            },
             _ => self.def_save_dir.clone(),
         };
         let fname = match options.get("current_name").unwrap_or(&Value::from("download")) {
             Value::Str(s) => s.to_string(),
             _ => "download".to_string(),
         };
-        eprintln!("DIR:{} FNAME:{}", dir, fname);
         let path = Path::new(&dir).join(fname);
-        eprintln!("PATH: {:?}", path);
         self.select_files(false, false, true, &path.to_string_lossy()).await
     }
 }
