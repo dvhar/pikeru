@@ -62,7 +62,7 @@ use iced_aw::{
 use md5::{Md5,Digest};
 use fuzzy_matcher::{self, FuzzyMatcher};
 use csv;
-use zbus::{Result, proxy,Connection};
+use zbus::{Result,proxy,Connection};
 
 macro_rules! die {
     ($($arg:tt)*) => {{
@@ -98,7 +98,9 @@ impl Config {
 
     #[inline]
     fn saving(self: &Self) -> bool { self.mode == Mode::Save }
+    #[inline]
     fn multi(self: &Self) -> bool { self.mode == Mode::Files }
+    #[inline]
     fn dir(self: &Self) -> bool { self.mode == Mode::Dir }
 
     fn new() -> Self {
@@ -685,7 +687,7 @@ impl Application for FilePicker {
                     self.search_commander.as_ref().unwrap().send(SearchEvent::Search(self.searchbar.clone())).unwrap();
                     if self.recurse_state != RecState::Run {
                         self.recurse_state = RecState::Run;
-                        self.recurse_updater.as_ref().unwrap().send(RecMsg::FetchMore(self.nav_id)).unwrap();
+                        self.recurse_updater.as_ref().unwrap().send(RecMsg::FetchMore(self.nav_id, true)).unwrap();
                     }
                 }
             },
@@ -693,12 +695,8 @@ impl Application for FilePicker {
                 let mut still_running = false;
                 if let SearchEvent::Results(mut res, nav_id, num_items, term) = *res {
                     if nav_id == self.nav_id && !self.searchbar.is_empty() {
-                        res.sort_by(|a,b| unsafe {
-                            let x = self.items.get_unchecked(a.0);
-                            let y = self.items.get_unchecked(b.0);
-                            y.isdir().cmp(&x.isdir()).then_with(||b.1.cmp(&a.1))
-                        });
-                        self.displayed = res.into_iter().enumerate().map(|(i,r)|{
+                        res.sort_by(|a,b|b.1.cmp(&a.1));
+                        self.displayed = res[..1000.min(res.len())].into_iter().enumerate().map(|(i,r)|{
                             self.items[r.0].display_idx = i;
                             r.0
                         }).collect();
@@ -725,9 +723,11 @@ impl Application for FilePicker {
                     self.items.append(&mut next_items);
                     sender.send(SearchEvent::AddItems(paths)).unwrap();
                     sender.send(SearchEvent::AddView(new_displayed)).unwrap();
-                    sender.send(SearchEvent::Search(self.searchbar.clone())).unwrap();
+                    if !self.search_running {
+                        sender.send(SearchEvent::Search(self.searchbar.clone())).unwrap();
+                    }
                     if self.recurse_state != RecState::Stop {
-                        self.recurse_updater.as_ref().unwrap().send(RecMsg::FetchMore(nav_id)).unwrap();
+                        self.recurse_updater.as_ref().unwrap().send(RecMsg::FetchMore(nav_id, true)).unwrap();
                     }
                 }
             },
@@ -1784,42 +1784,28 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USende
 
 enum RecMsg {
     NewNav(Vec::<String>, u8),
-    FetchMore(u8),
+    FetchMore(u8, bool),
     NextItems(Vec<FItem>, u8),
 }
 
-async fn recursive_add(mut updates: UReceiver<RecMsg>, results: USender<RecMsg>, _selfy: USender<RecMsg>) {
+async fn recursive_add(mut updates: UReceiver<RecMsg>, results: USender<RecMsg>, selfy: USender<RecMsg>) {
     let mut nav_id = 0;
     let mut dirs = vec![];
-    let mut proxy = IndexProxy::new().await;
+    let mut indexer = IndexProxy::new().await;
     loop {
         match updates.recv().await {
             Some(RecMsg::NewNav(new_dirs, nid)) => {
                 dirs = new_dirs;
-                proxy.update(&dirs, false).await;
                 nav_id = nid;
-                let mut next_dirs = vec![];
-                for dir in dirs.iter() {
-                    match std::fs::read_dir(dir.as_str()) {
-                        Ok(rd) => {
-                            rd.map(|f| f.unwrap().path()).for_each(|path| {
-                                if path.is_dir() {
-                                    next_dirs.push(path.to_string_lossy().to_string());
-                                }
-                            });
-                        },
-                        Err(e) => eprintln!("Error reading dir {}: {}", dir, e),
-                    }
-                }
-                dirs = next_dirs;
+                selfy.send(RecMsg::FetchMore(nid, false)).unwrap();
             }
-            Some(RecMsg::FetchMore(nid)) => {
+            Some(RecMsg::FetchMore(nid, get_items)) => {
                 if nid != nav_id {
                     continue;
                 }
                 let mut new_items = vec![];
                 let mut next_dirs = vec![];
-                proxy.update(&dirs, false).await;
+                indexer.update(&dirs, false).await;
                 for dir in dirs.iter() {
                     match std::fs::read_dir(dir.as_str()) {
                         Ok(rd) => {
@@ -1827,9 +1813,11 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>, results: USender<RecMsg>,
                                 if path.is_dir() {
                                     next_dirs.push(path.to_string_lossy().to_string());
                                 }
-                                let mut item = FItem::new(path.into(), nid);
-                                item.recursed = true;
-                                new_items.push(item);
+                                if get_items {
+                                    let mut item = FItem::new(path.into(), nid);
+                                    item.recursed = true;
+                                    new_items.push(item);
+                                }
                             });
                         },
                         Err(e) => eprintln!("Error reading dir {}: {}", dir, e),
