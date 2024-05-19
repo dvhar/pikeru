@@ -62,6 +62,7 @@ use iced_aw::{
 use md5::{Md5,Digest};
 use fuzzy_matcher::{self, FuzzyMatcher};
 use csv;
+use zbus::{Result, proxy,Connection};
 
 macro_rules! die {
     ($($arg:tt)*) => {{
@@ -397,6 +398,40 @@ struct LastClicked {
 enum RecState {
     Run,
     Stop,
+}
+
+#[proxy(
+    interface = "org.freedesktop.impl.portal.SearchIndexer",
+    default_service = "org.freedesktop.impl.portal.desktop.pikeru",
+    default_path = "/org/freedesktop/portal/desktop"
+)]
+trait Indexer {
+   async fn update(&mut self, path: Vec<&str>, recursive: bool) -> Result<String>;
+}
+struct IndexProxy<'a> {
+    proxy: Option<IndexerProxy<'a>>,
+}
+impl<'a> IndexProxy<'a> {
+    async fn new() -> Self {
+        let proxy = async {
+            let conn = Connection::session().await.ok()?;
+            let prox = IndexerProxy::new(&conn).await.ok()?;
+            Some(prox)
+        }.await;
+        Self { proxy }
+    }
+    async fn update(&mut self, paths: &Vec<String>, recursive: bool) {
+        if paths.is_empty() { return; }
+        if let Some(ref mut prox) = self.proxy {
+            match prox.update(paths.iter().map(|s|s.as_str()).collect(), recursive).await {
+                Ok(res) => eprintln!("{}", res),
+                Err(e) => {
+                    eprintln!("{}", e);
+                    self.proxy = None;
+                },
+            }
+        }
+    }
 }
 
 struct FilePicker {
@@ -1756,10 +1791,12 @@ enum RecMsg {
 async fn recursive_add(mut updates: UReceiver<RecMsg>, results: USender<RecMsg>, _selfy: USender<RecMsg>) {
     let mut nav_id = 0;
     let mut dirs = vec![];
+    let mut proxy = IndexProxy::new().await;
     loop {
         match updates.recv().await {
             Some(RecMsg::NewNav(new_dirs, nid)) => {
                 dirs = new_dirs;
+                proxy.update(&dirs, false).await;
                 nav_id = nid;
                 let mut next_dirs = vec![];
                 for dir in dirs.iter() {
@@ -1782,6 +1819,7 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>, results: USender<RecMsg>,
                 }
                 let mut new_items = vec![];
                 let mut next_dirs = vec![];
+                proxy.update(&dirs, false).await;
                 for dir in dirs.iter() {
                     match std::fs::read_dir(dir.as_str()) {
                         Ok(rd) => {

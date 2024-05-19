@@ -13,6 +13,13 @@ use std::{
     path::Path
 };
 
+struct Indexer;
+#[interface(name = "org.freedesktop.impl.portal.SearchIndexer")]
+impl Indexer {
+   async fn update(&mut self, paths: Vec<&str>, recursive: bool) -> String {
+        format!("Updating index for {:?}. Recursive: {}", paths, recursive)
+    }
+}
 
 #[derive(Debug)]
 struct FilePicker {
@@ -181,10 +188,12 @@ impl FilePicker {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let picker = FilePicker::new();
+    let indexer = Indexer{};
     eprintln!("Running {:#?}", picker);
     let _conn = connection::Builder::session()?
         .name("org.freedesktop.impl.portal.desktop.pikeru")?
         .serve_at("/org/freedesktop/portal/desktop", picker)?
+        .serve_at("/org/freedesktop/portal/desktop", indexer)?
         .build()
         .await?;
     pending::<()>().await;
