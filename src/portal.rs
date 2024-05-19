@@ -17,7 +17,9 @@ struct Indexer;
 #[interface(name = "org.freedesktop.impl.portal.SearchIndexer")]
 impl Indexer {
    async fn update(&mut self, paths: Vec<&str>, recursive: bool) -> String {
-        format!("Updating index for {:?}. Recursive: {}", paths, recursive)
+        let ret = format!("Updating index for {:?}. Recursive: {}", paths, recursive);
+        eprintln!("{}",ret);
+        ret
     }
 }
 
