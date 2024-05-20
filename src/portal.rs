@@ -10,16 +10,28 @@ use std::{
     error::Error, future::pending,
     collections::HashMap,
     borrow::Cow,
-    path::Path
+    path::Path,
+    mem::take,
 };
 
-struct Indexer;
+struct Indexer {
+    cmd: String,
+    check: String,
+}
 #[interface(name = "org.freedesktop.impl.portal.SearchIndexer")]
 impl Indexer {
    async fn update(&mut self, paths: Vec<&str>, recursive: bool) -> String {
         let ret = format!("Updating index for {:?}. Recursive: {}", paths, recursive);
         eprintln!("{}",ret);
         ret
+    }
+}
+impl Indexer {
+    fn new(conf: &mut Config) -> Self {
+        Self {
+            cmd: take(&mut conf.indexer_cmd),
+            check: take(&mut conf.indexer_check),
+        }
     }
 }
 
@@ -33,6 +45,7 @@ struct FilePicker {
 }
 enum Section {
     FileChooser,
+    Indexer,
     Other,
 }
 fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
@@ -42,8 +55,17 @@ fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
     }
     Cow::from(dir)
 }
-impl FilePicker {
 
+struct Config {
+    home: String,
+    prev_path: String,
+    postproc_dir: String,
+    def_save_dir: String,
+    filecmd: String,
+    indexer_cmd: String,
+    indexer_check: String,
+}
+impl Config {
     fn new() -> Self {
         let home = std::env::var("HOME").unwrap();
         let xdg_home = std::env::var("XDG_CONFIG_HOME").unwrap_or("".to_string());
@@ -55,11 +77,13 @@ impl FilePicker {
         filenames.push("config");
         let mut postproc_dir = "/tmp/pk_postprocess".to_string();
         let mut def_save_dir = Path::new(&home).join("Downloads").to_string_lossy().to_string();
-        let cmds = ["/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
+        let fp_cmds = ["/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
                     "/usr/local/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
                     "/opt/pikeru/xdg_portal/contrib/pikeru-wrapper.sh"];
-        let mut cmd = cmds.iter().find_map(|c|if Path::new(c).is_file() {Some(*c)} else {None})
-            .unwrap_or(cmds[0]).to_string();
+        let mut fp_cmd = fp_cmds.iter().find_map(|c|if Path::new(c).is_file() {Some(*c)} else {None})
+            .unwrap_or(fp_cmds[0]).to_string();
+        let mut indexer_cmd = "".to_string();
+        let mut indexer_check = "".to_string();
         for dir in [&xdg_home, &conf_home, &sysconf] {
             for file in &filenames {
                 let cpath = Path::new(dir).join("xdg-desktop-portal-pikeru").join(&file);
@@ -71,34 +95,60 @@ impl FilePicker {
                 for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
                     match line {
                         "[filechooser]" => section = Section::FileChooser,
-                        _ => match section {
-                            Section::FileChooser => {
-                                let (k, v) = str::split_once(line, '=').unwrap();
-                                let (k, v) = (k.trim(), v.trim());
-                                match k {
-                                    "cmd" => cmd = v.to_string(),
-                                    "default_dir" => def_save_dir = v.to_string(),
-                                    "postprocess_dir" => postproc_dir = v.to_string(),
-                                    _ => {},
-                                }
-                            },
-                            Section::Other => {},
+                        "[indexer]" => section = Section::Indexer,
+                        _ => {
+                            let (k, v) = str::split_once(line, '=').unwrap();
+                            let (k, v) = (k.trim(), v.trim());
+                            match section {
+                                Section::Indexer => {
+                                    match k {
+                                        "cmd" => indexer_cmd = v.to_string(),
+                                        "check" => indexer_check = v.to_string(),
+                                        _ => eprintln!("Unknown indexer config value:{}", line),
+                                    }
+                                },
+                                Section::FileChooser => {
+                                    match k {
+                                        "cmd" => fp_cmd = v.to_string(),
+                                        "default_dir" => def_save_dir = v.to_string(),
+                                        "postprocess_dir" => postproc_dir = v.to_string(),
+                                        "indexer" => indexer_cmd = v.to_string(),
+                                        _ => eprintln!("Unknown filechooser config value:{}", line),
+                                    }
+                                },
+                                Section::Other => {},
+                            }
                         }
                     }
                 }
                 break;
             }
         }
-        if !Path::new(&cmd).is_file() {
-            eprintln!("No filepicker executable found: {}", cmd);
+        if !Path::new(&fp_cmd).is_file() {
+            eprintln!("No filepicker executable found: {}", fp_cmd);
             std::process::exit(1);
         }
         Self {
             prev_path: home.clone(),
             postproc_dir: tilda(&home, &postproc_dir).to_string(),
             def_save_dir: tilda(&home, &def_save_dir).to_string(),
-            cmd: tilda(&home, &cmd).to_string(),
+            filecmd: tilda(&home, &fp_cmd).to_string(),
+            indexer_cmd: tilda(&home, &indexer_cmd).to_string(),
+            indexer_check,
             home,
+        }
+    }
+}
+
+impl FilePicker {
+
+    fn new(conf: &mut Config) -> Self {
+        Self {
+            prev_path: take(&mut conf.prev_path),
+            postproc_dir: take(&mut conf.postproc_dir),
+            def_save_dir: take(&mut conf.def_save_dir),
+            cmd: take(&mut conf.filecmd),
+            home: take(&mut conf.home),
         }
     }
 
@@ -191,8 +241,9 @@ impl FilePicker {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let picker = FilePicker::new();
-    let indexer = Indexer{};
+    let mut config = Config::new();
+    let picker = FilePicker::new(&mut config);
+    let indexer = Indexer::new(&mut config);
     eprintln!("Running {:#?}", picker);
     let _conn = connection::Builder::session()?
         .name("org.freedesktop.impl.portal.desktop.pikeru")?
