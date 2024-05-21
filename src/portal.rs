@@ -73,17 +73,15 @@ async fn update_file(path: &Path) {
     //let date = md.mtime();
 }
 async fn update_dir(dir: &String, exts: &Vec<&'static str>) {
-          eprintln!("INDEXING DIR:{}", dir);          
-    return;
     match std::fs::read_dir(dir) {
         Ok(rd) => {
             for f in rd {
                 let path = f.unwrap().path();
                 match path.extension() {
                     Some(ext) => {
-                        //if self.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
-                            //self.update_file(path.as_path()).await;
-                        //}
+                        if exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
+                            update_file(path.as_path()).await;
+                        }
                     },
                     None => {},
                 }
