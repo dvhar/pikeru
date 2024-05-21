@@ -426,7 +426,7 @@ impl<'a> IndexProxy<'a> {
         if paths.is_empty() { return; }
         if let Some(ref mut prox) = self.proxy {
             match prox.update(paths.iter().map(|s|s.as_str()).collect(), recursive).await {
-                Ok(res) => eprintln!("{}", res),
+                Ok(_) => {},
                 Err(e) => {
                     eprintln!("{}", e);
                     self.proxy = None;

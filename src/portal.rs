@@ -7,31 +7,71 @@ use zbus::{
     }
 };
 use std::{
+    collections::HashSet,
     error::Error, future::pending,
     collections::HashMap,
     borrow::Cow,
     path::Path,
     mem::take,
+    sync::Mutex,
 };
+use rusqlite;
 
 struct Indexer {
     cmd: String,
     check: String,
+    db: Mutex<rusqlite::Connection>,
+    queue: HashSet<String>,
+    exts: Vec<&'static str>,
 }
 #[interface(name = "org.freedesktop.impl.portal.SearchIndexer")]
 impl Indexer {
-   async fn update(&mut self, paths: Vec<&str>, recursive: bool) -> String {
-        let ret = format!("Updating index for {:?}. Recursive: {}", paths, recursive);
-        eprintln!("{}",ret);
+    async fn update(&self, dirs: Vec<String>, recursive: bool) -> String {
+        let ret = format!("Updating index for {:?}. Recursive: {}", dirs, recursive);
+        //self.update_dir(dirs, recursive).await;
         ret
     }
+
 }
 impl Indexer {
     fn new(conf: &mut Config) -> Self {
+        let con = rusqlite::Connection::open("/tmp/pk_index.db").unwrap();
+        con.execute("create table if not exists descriptions
+                    (fname text, dir text, description text, mtime real);", ()).unwrap();
         Self {
             cmd: take(&mut conf.indexer_cmd),
             check: take(&mut conf.indexer_check),
+            db: Mutex::new(con),
+            exts: Box::new(take(&mut conf.indexer_exts)).leak().split(',').collect(),
+            queue: HashSet::new(),
         }
+    }
+
+    async fn update_file(&self, path: &Path) {
+        //let ext = path.extension().unwrap_or("".into());
+        eprintln!("PATH:{}", path.to_string_lossy());
+        //let md = path.metadata().unwrap();
+        //let date = md.mtime();
+    }
+    async fn update_dir(&self, dirs: Vec<String>, _recursive: bool) {
+        for dir in dirs.iter() {
+            match std::fs::read_dir(dir) {
+                Ok(rd) => {
+                    for f in rd {
+                        let path = f.unwrap().path();
+                        match path.extension() {
+                            Some(ext) => {
+                                if self.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
+                                    self.update_file(path.as_path()).await;
+                                }
+                            },
+                            None => {},
+                        }
+                    }
+                },
+                Err(e) => eprintln!("Error reading dir {}: {}", dir, e),
+            }
+        };
     }
 }
 
@@ -64,6 +104,7 @@ struct Config {
     filecmd: String,
     indexer_cmd: String,
     indexer_check: String,
+    indexer_exts: String,
 }
 impl Config {
     fn new() -> Self {
@@ -84,6 +125,7 @@ impl Config {
             .unwrap_or(fp_cmds[0]).to_string();
         let mut indexer_cmd = "".to_string();
         let mut indexer_check = "".to_string();
+        let mut indexer_exts = "".to_string();
         for dir in [&xdg_home, &conf_home, &sysconf] {
             for file in &filenames {
                 let cpath = Path::new(dir).join("xdg-desktop-portal-pikeru").join(&file);
@@ -104,6 +146,7 @@ impl Config {
                                     match k {
                                         "cmd" => indexer_cmd = v.to_string(),
                                         "check" => indexer_check = v.to_string(),
+                                        "extensions" => indexer_exts = v.to_string(),
                                         _ => eprintln!("Unknown indexer config value:{}", line),
                                     }
                                 },
@@ -135,6 +178,7 @@ impl Config {
             filecmd: tilda(&home, &fp_cmd).to_string(),
             indexer_cmd: tilda(&home, &indexer_cmd).to_string(),
             indexer_check,
+            indexer_exts,
             home,
         }
     }
