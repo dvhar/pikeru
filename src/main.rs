@@ -408,7 +408,7 @@ enum RecState {
     default_path = "/org/freedesktop/portal/desktop"
 )]
 trait Indexer {
-   async fn update(&mut self, path: Vec<&str>, recursive: bool) -> Result<String>;
+   async fn update(&mut self, path: Vec<&str>) -> Result<()>;
 }
 struct IndexProxy<'a> {
     proxy: Option<IndexerProxy<'a>>,
@@ -422,10 +422,10 @@ impl<'a> IndexProxy<'a> {
         }.await;
         Self { proxy }
     }
-    async fn update(&mut self, paths: &Vec<String>, recursive: bool) {
+    async fn update(&mut self, paths: &Vec<String>) {
         if paths.is_empty() { return; }
         if let Some(ref mut prox) = self.proxy {
-            match prox.update(paths.iter().map(|s|s.as_str()).collect(), recursive).await {
+            match prox.update(paths.iter().map(|s|s.as_str()).collect()).await {
                 Ok(_) => {},
                 Err(e) => {
                     eprintln!("{}", e);
@@ -1805,7 +1805,7 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>, results: USender<RecMsg>,
                 }
                 let mut new_items = vec![];
                 let mut next_dirs = vec![];
-                indexer.update(&dirs, false).await;
+                indexer.update(&dirs).await;
                 for dir in dirs.iter() {
                     match std::fs::read_dir(dir.as_str()) {
                         Ok(rd) => {
