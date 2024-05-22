@@ -88,6 +88,13 @@ fn shquote(s: &str) -> String {
     return format!("\"{}\"", s);
 }
 
+#[derive(PartialEq)]
+enum Caption {
+    None,
+    Old,
+    Done,
+}
+
 impl IdxManager {
 
     fn new(shtate: Arc<Mutex<Shtate>>, config: &mut Config) -> Self {
@@ -110,32 +117,40 @@ impl IdxManager {
         }
     }
 
-    fn already_done(self: &Self, dir: &String, fname: &str, mtime: f32) -> bool {
+    fn already_done(self: &Self, dir: &String, fname: &str, mtime: f32) -> Caption {
         let con = self.con.lock().unwrap();
         let mut query = con.prepare_cached("select mtime from descriptions where dir = ?1 and fname = ?2").unwrap();
-        match query.query([dir.as_str(), fname.as_ref()]).unwrap().next().unwrap() {
+        let ret = match query.query([dir.as_str(), fname.as_ref()]).unwrap().next().unwrap() {
             Some(r) => {
                 let prev_time: f32 = r.get(0).unwrap();
-                eprintln!("PT:{}, MT:{}", prev_time, mtime);
-                return prev_time == mtime;
+                match prev_time == mtime {
+                    true => Caption::Done,
+                    false => Caption::Old,
+                }
             },
-            None => {},
-        }
-        false
+            None => Caption::None,
+        };
+        ret
     }
 
-    fn save(self: &Self, dir: &String, fname: &str, desc: &str, mtime: f32) {
+    fn save(self: &Self, dir: &String, fname: &str, desc: &str, mtime: f32, stat: Caption) {
         let con = self.con.lock().unwrap();
-        let mut query = con.prepare_cached("insert into descriptions (dir, fname, description, mtime)
-                                           values (?1, ?2, ?3, ?4)").unwrap();
+        let mut query = if stat == Caption::None {
+            con.prepare_cached("insert into descriptions (dir, fname, description, mtime)
+                                values (?1, ?2, ?3, ?4)").unwrap()
+        } else {
+            con.prepare_cached("update descriptions set description = ?3, mtime = ?4
+                               where dir = ?1 and fname = ?2").unwrap()
+        };
         query.execute((dir, fname, desc, mtime)).unwrap();
     }
 
     async fn update_file(self: &Self, path: &Path, dir: &String) {
         let mtime = path.metadata().unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32();
         let fname = path.file_name().unwrap().to_string_lossy();
-        if self.already_done(dir, &fname, mtime) {
-            return
+        let stat = self.already_done(dir, &fname, mtime);
+        if stat == Caption::Done {
+            return;
         }
         let cmd = format!("{} {}", self.cmd, shquote(path.to_string_lossy().as_ref()));
         match tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await {
@@ -145,7 +160,7 @@ impl IdxManager {
                 } else {
                     let description = unsafe { std::str::from_utf8_unchecked(&out.stdout) };
                     eprintln!("{:?} DESC:{}", path, description);
-                    self.save(dir, &fname, &description, mtime);
+                    self.save(dir, &fname, &description, mtime, stat);
                 }
             },
             Err(e) => {eprintln!("Process error: {}", e)},
