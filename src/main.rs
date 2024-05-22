@@ -1725,13 +1725,45 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USende
     let mut items = vec![];
     let mut displayed = vec![];
     let mut nav_id = 0;
-    let rdr = csv::Reader::from_path(index).ok();
-    let captions = match rdr {
-        Some(mut rdr) => rdr.records().filter_map(|r|r.ok()).fold(HashMap::new(), |mut acc,rec| {
-            acc.insert(rec[0].to_string(), rec[1].to_string());
-            acc
-        }),
-        None => Default::default(),
+    let ext = Path::new(&index).extension();
+    let ext = match ext {
+        Some(ext) => ext.to_string_lossy().to_string(),
+        None => "".to_string(),
+    };
+    let captions = match (index.as_str(), ext.as_str()) {
+        (_,"csv") => {
+            let rdr = csv::Reader::from_path(index).ok();
+            match rdr {
+                Some(mut rdr) => rdr.records().filter_map(|r|r.ok()).fold(HashMap::new(), |mut acc,rec| {
+                    acc.insert(rec[0].to_string(), rec[1].to_string());
+                    acc
+                }),
+                None => Default::default(),
+            }
+        },
+        (_,"db") => {
+            let con = rusqlite::Connection::open(&index).unwrap();
+            let mut query = con.prepare_cached("select dir, fname, description from descriptions").unwrap();
+            query.query_map([], |r| {
+                struct Desc { path: String, desc: String, }
+                let dir: String = r.get(0).unwrap();
+                let fname: String = r.get(1).unwrap();
+                Ok(Desc{
+                    path: Path::new(&dir).join(&fname).to_string_lossy().to_string(),
+                    desc: r.get(2).unwrap()
+                })
+            }).unwrap()
+            .filter_map(|r| match r { Ok(d) => Some(d), _ => None})
+            .fold(HashMap::new(), |mut acc,desc| {
+                acc.insert(desc.path, desc.desc);
+                acc
+            })
+        },
+        ("",_) => Default::default(),
+        (_,_) => {
+            eprintln!("Error: index file must be csv with format 'path,description' or sqlite file created by the pikeru xdg portaal.");
+            Default::default()
+        },
     };
     let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
     loop {

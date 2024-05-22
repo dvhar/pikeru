@@ -135,13 +135,11 @@ impl IdxManager {
 
     fn save(self: &Self, dir: &String, fname: &str, desc: &str, mtime: f32, stat: Caption) {
         let con = self.con.lock().unwrap();
-        let mut query = if stat == Caption::None {
-            con.prepare_cached("insert into descriptions (dir, fname, description, mtime)
-                                values (?1, ?2, ?3, ?4)").unwrap()
+        let mut query = con.prepare_cached(if stat == Caption::None {
+            "insert into descriptions (dir, fname, description, mtime) values (?1, ?2, ?3, ?4)"
         } else {
-            con.prepare_cached("update descriptions set description = ?3, mtime = ?4
-                               where dir = ?1 and fname = ?2").unwrap()
-        };
+            "update descriptions set description = ?3, mtime = ?4 where dir = ?1 and fname = ?2"
+        }).unwrap();
         query.execute((dir, fname, desc, mtime)).unwrap();
     }
 
