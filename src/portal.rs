@@ -15,10 +15,13 @@ use std::{
     sync::{Arc,Mutex},
 };
 use rusqlite;
-use tokio::sync::mpsc::{
-    UnboundedReceiver as UReceiver,
-    UnboundedSender as USender,
-    unbounded_channel,
+use tokio::{
+    sync::mpsc::{
+        UnboundedReceiver as UReceiver,
+        UnboundedSender as USender,
+        unbounded_channel,
+    },
+    time,
 };
 
 #[derive(Default, Debug)]
@@ -32,63 +35,111 @@ enum Msg {
     Dirs(Vec<String>),
 }
 
-async fn index_loop(shtate: Arc<Mutex<Shtate>>,
-                    _cmd: String,
-                    _check: String,
-                    exts: Vec<&'static str>,
-                    mut chan: UReceiver<Msg>) {
-    let con = rusqlite::Connection::open("/tmp/pk_index.db").unwrap();
-    con.execute("create table if not exists descriptions
-                (fname text, dir text, description text, mtime real);", ()).unwrap();
-    let mut map = HashMap::<String,bool>::new();
+struct IdxManager {
+    shtate: Arc<Mutex<Shtate>>,
+    cmd: String,
+    check: String,
+    exts: Vec<&'static str>,
+    con: Arc<Mutex<rusqlite::Connection>>,
+}
+
+async fn index_loop(man: IdxManager, mut chan: UReceiver<Msg>) {
+    let mut dir_map = HashMap::<String,bool>::new();
+    let mut timeout = time::Instant::now();
+    let mut online = false;
     loop {
         let msg = chan.recv().await.unwrap();
+        let uptodate = timeout.cmp(&time::Instant::now()) == core::cmp::Ordering::Greater;
+        if !uptodate {
+            timeout = timeout.checked_add(time::Duration::from_secs(60)).unwrap();
+            online = man.indexer_online().await;
+            if !online { eprintln!("indexer offline"); }
+        }
+        if !online {
+            continue;
+        }
         match msg {
             Msg::Start => {
                 eprintln!("Starting index");
-                shtate.lock().unwrap().idx_running = true;
-                while !shtate.lock().unwrap().picker_open {
-                    if let Some(dir) = map.iter().find(|v|!v.1) {
-                        update_dir(dir.0, &exts).await;
-                        map.entry(dir.0.to_string()).and_modify(|v| *v = true);
+                man.shtate.lock().unwrap().idx_running = true;
+                while !man.shtate.lock().unwrap().picker_open {
+                    if let Some(dir) = dir_map.iter().find(|v|!v.1) {
+                        man.update_dir(dir.0).await;
+                        dir_map.entry(dir.0.to_string()).and_modify(|v| *v = true);
                     } else {
-                        map.clear();
+                        dir_map.clear();
                         break;
                     }
                 }
-                shtate.lock().unwrap().idx_running = false;
+                man.shtate.lock().unwrap().idx_running = false;
             },
             Msg::Dirs(dirs) => {
-                eprintln!("got dirs: {:?}", dirs);
-                dirs.into_iter().for_each(|dir|{map.entry(dir).or_default();});
+                eprintln!("Got dirs");
+                dirs.into_iter().for_each(|dir|{dir_map.entry(dir).or_default();});
             },
         }
     }
 }
 
-async fn update_file(path: &Path) {
-    //let ext = path.extension().unwrap_or("".into());
-    eprintln!("PATH:{}", path.to_string_lossy());
-    //let md = path.metadata().unwrap();
-    //let date = md.mtime();
-}
-async fn update_dir(dir: &String, exts: &Vec<&'static str>) {
-    match std::fs::read_dir(dir) {
-        Ok(rd) => {
-            for f in rd {
-                let path = f.unwrap().path();
-                match path.extension() {
-                    Some(ext) => {
-                        if exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
-                            update_file(path.as_path()).await;
-                        }
-                    },
-                    None => {},
-                }
-            }
-        },
-        Err(e) => eprintln!("Error reading dir {}: {}", dir, e),
+impl IdxManager {
+
+    fn new(shtate: Arc<Mutex<Shtate>>, config: &mut Config) -> Self {
+        let con = rusqlite::Connection::open("/tmp/pk_index.db").unwrap();
+        con.execute("create table if not exists descriptions
+                (fname text, dir text, description text, mtime real);", ()).unwrap();
+        Self {
+            shtate,
+            cmd: take(&mut config.indexer_cmd),
+            check: take(&mut config.indexer_check),
+            exts: Box::new(take(&mut config.indexer_exts)).leak().split(',').collect(),
+            con: Arc::new(Mutex::new(con)),
+        }
     }
+
+    async fn indexer_online(self: &Self) -> bool {
+        match tokio::process::Command::new("sh").arg("-c").arg(&self.check).output().await {
+            Ok(out) => out.status.success(),
+            Err(_) => false,
+        }
+    }
+
+    async fn update_file(self: &Self, path: &Path) {
+        let md = path.metadata().unwrap();
+        let date = md.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32();
+        let cmd = format!("{} {}", self.cmd, path.to_string_lossy());
+        eprintln!("PATH:{}", path.to_string_lossy());
+        match tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await {
+            Ok(out) => {
+                if !out.status.success() {
+                    eprintln!("CMD FAILED {}: {}", cmd, unsafe { std::str::from_utf8_unchecked(&out.stderr) });
+                } else {
+                    let description = unsafe { std::str::from_utf8_unchecked(&out.stdout).to_owned() };
+                    eprintln!("{:?} DESC:{}", path, description);
+                }
+            },
+            Err(e) => {eprintln!("Process error: {}", e)},
+        };
+    }
+
+    async fn update_dir(self: &Self, dir: &String) {
+        match std::fs::read_dir(dir) {
+            Ok(rd) => {
+                for f in rd {
+                    let path = f.unwrap().path();
+                    match path.extension() {
+                        Some(ext) => {
+                            if self.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
+                                self.update_file(path.as_path()).await;
+                            }
+                        },
+                        None => {},
+                    }
+                }
+            },
+            Err(e) => eprintln!("Error reading dir {}: {}", dir, e),
+        }
+    }
+
 }
 
 struct Indexer {
@@ -336,13 +387,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut config = Config::new();
     let sht = Arc::new(Mutex::new(Shtate::default()));
     let (tx, rx) = unbounded_channel::<Msg>();
-    tokio::spawn(index_loop(sht.clone(),
-                            take(&mut config.indexer_cmd),
-                            take(&mut config.indexer_check),
-                            Box::new(take(&mut config.indexer_exts)).leak().split(',').collect(),
-                            rx));
     let picker = FilePicker::new(&mut config, sht.clone(), tx.clone());
     let indexer = Indexer::new(tx);
+    let manager = IdxManager::new(sht.clone(), &mut config);
+    tokio::spawn(index_loop(manager, rx));
     eprintln!("Running {:#?}", picker);
     let _conn = connection::Builder::session()?
         .name("org.freedesktop.impl.portal.desktop.pikeru")?
