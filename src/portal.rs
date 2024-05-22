@@ -81,6 +81,13 @@ async fn index_loop(man: IdxManager, mut chan: UReceiver<Msg>) {
     }
 }
 
+fn shquote(s: &str) -> String {
+    if s.contains("\"") {
+        return format!("'{}'", s);
+    }
+    return format!("\"{}\"", s);
+}
+
 impl IdxManager {
 
     fn new(shtate: Arc<Mutex<Shtate>>, config: &mut Config) -> Self {
@@ -103,18 +110,42 @@ impl IdxManager {
         }
     }
 
-    async fn update_file(self: &Self, path: &Path) {
-        let md = path.metadata().unwrap();
-        let date = md.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32();
-        let cmd = format!("{} {}", self.cmd, path.to_string_lossy());
-        eprintln!("PATH:{}", path.to_string_lossy());
+    fn already_done(self: &Self, dir: &String, fname: &str, mtime: f32) -> bool {
+        let con = self.con.lock().unwrap();
+        let mut query = con.prepare_cached("select mtime from descriptions where dir = ?1 and fname = ?2").unwrap();
+        match query.query([dir.as_str(), fname.as_ref()]).unwrap().next().unwrap() {
+            Some(r) => {
+                let prev_time: f32 = r.get(0).unwrap();
+                eprintln!("PT:{}, MT:{}", prev_time, mtime);
+                return prev_time == mtime;
+            },
+            None => {},
+        }
+        false
+    }
+
+    fn save(self: &Self, dir: &String, fname: &str, desc: &str, mtime: f32) {
+        let con = self.con.lock().unwrap();
+        let mut query = con.prepare_cached("insert into descriptions (dir, fname, description, mtime)
+                                           values (?1, ?2, ?3, ?4)").unwrap();
+        query.execute((dir, fname, desc, mtime)).unwrap();
+    }
+
+    async fn update_file(self: &Self, path: &Path, dir: &String) {
+        let mtime = path.metadata().unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32();
+        let fname = path.file_name().unwrap().to_string_lossy();
+        if self.already_done(dir, &fname, mtime) {
+            return
+        }
+        let cmd = format!("{} {}", self.cmd, shquote(path.to_string_lossy().as_ref()));
         match tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await {
             Ok(out) => {
                 if !out.status.success() {
                     eprintln!("CMD FAILED {}: {}", cmd, unsafe { std::str::from_utf8_unchecked(&out.stderr) });
                 } else {
-                    let description = unsafe { std::str::from_utf8_unchecked(&out.stdout).to_owned() };
+                    let description = unsafe { std::str::from_utf8_unchecked(&out.stdout) };
                     eprintln!("{:?} DESC:{}", path, description);
+                    self.save(dir, &fname, &description, mtime);
                 }
             },
             Err(e) => {eprintln!("Process error: {}", e)},
@@ -129,7 +160,7 @@ impl IdxManager {
                     match path.extension() {
                         Some(ext) => {
                             if self.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
-                                self.update_file(path.as_path()).await;
+                                self.update_file(path.as_path(), dir).await;
                             }
                         },
                         None => {},
