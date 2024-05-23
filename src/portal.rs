@@ -89,7 +89,7 @@ fn shquote(s: &str) -> String {
 }
 
 #[derive(PartialEq)]
-enum Caption {
+enum Entry {
     None,
     Old,
     Done,
@@ -117,25 +117,25 @@ impl IdxManager {
         }
     }
 
-    fn already_done(self: &Self, dir: &String, fname: &str, mtime: f32) -> Caption {
+    fn already_done(self: &Self, dir: &String, fname: &str, mtime: f32) -> Entry {
         let con = self.con.lock().unwrap();
         let mut query = con.prepare_cached("select mtime from descriptions where dir = ?1 and fname = ?2").unwrap();
         let ret = match query.query([dir.as_str(), fname.as_ref()]).unwrap().next().unwrap() {
             Some(r) => {
                 let prev_time: f32 = r.get(0).unwrap();
                 match prev_time == mtime {
-                    true => Caption::Done,
-                    false => Caption::Old,
+                    true => Entry::Done,
+                    false => Entry::Old,
                 }
             },
-            None => Caption::None,
+            None => Entry::None,
         };
         ret
     }
 
-    fn save(self: &Self, dir: &String, fname: &str, desc: &str, mtime: f32, stat: Caption) {
+    fn save(self: &Self, dir: &String, fname: &str, desc: &str, mtime: f32, stat: Entry) {
         let con = self.con.lock().unwrap();
-        let mut query = con.prepare_cached(if stat == Caption::None {
+        let mut query = con.prepare_cached(if stat == Entry::None {
             "insert into descriptions (dir, fname, description, mtime) values (?1, ?2, ?3, ?4)"
         } else {
             "update descriptions set description = ?3, mtime = ?4 where dir = ?1 and fname = ?2"
@@ -147,7 +147,7 @@ impl IdxManager {
         let mtime = path.metadata().unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32();
         let fname = path.file_name().unwrap().to_string_lossy();
         let stat = self.already_done(dir, &fname, mtime);
-        if stat == Caption::Done {
+        if stat == Entry::Done {
             return;
         }
         let cmd = format!("{} {}", self.cmd, shquote(path.to_string_lossy().as_ref()));
@@ -188,18 +188,24 @@ impl IdxManager {
 
 struct Indexer {
     tx: USender<Msg>,
+    shtate: Arc<Mutex<Shtate>>,
 }
 #[interface(name = "org.freedesktop.impl.portal.SearchIndexer")]
 impl Indexer {
     async fn update(&self, dirs: Vec<String>) -> () {
         self.tx.send(Msg::Dirs(dirs)).unwrap(); 
+        let st = self.shtate.lock().unwrap();
+        if !st.idx_running && !st.picker_open {
+            self.tx.send(Msg::Start).unwrap();
+        }
     }
 
 }
 impl Indexer {
-    fn new(tx: USender<Msg>) -> Self {
+    fn new(tx: USender<Msg>, shtate: Arc<Mutex<Shtate>>) -> Self {
         Self {
             tx,
+            shtate,
         }
     }
 }
@@ -286,7 +292,6 @@ impl Config {
                                         "cmd" => fp_cmd = v.to_string(),
                                         "default_dir" => def_save_dir = v.to_string(),
                                         "postprocess_dir" => postproc_dir = v.to_string(),
-                                        "indexer" => indexer_cmd = v.to_string(),
                                         _ => eprintln!("Unknown filechooser config value:{}", line),
                                     }
                                 },
@@ -432,7 +437,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let sht = Arc::new(Mutex::new(Shtate::default()));
     let (tx, rx) = unbounded_channel::<Msg>();
     let picker = FilePicker::new(&mut config, sht.clone(), tx.clone());
-    let indexer = Indexer::new(tx);
+    let indexer = Indexer::new(tx, sht.clone());
     let manager = IdxManager::new(sht.clone(), &mut config);
     tokio::spawn(index_loop(manager, rx));
     eprintln!("Running {:#?}", picker);

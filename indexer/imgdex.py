@@ -12,5 +12,8 @@ with open(file, "rb") as image_file:
 headers = {'accept': 'application/json', 'Content-Type': 'application/json'}
 data = {'image': img, 'model': 'clip'}
 response = requests.post(url, headers=headers, json=data)
+if response.status_code > 299:
+    print(response.text, file=sys.stderr)
+    quit(1)
 response_dict: dict = json.loads(response.text)
 print(response_dict.get('caption',''))

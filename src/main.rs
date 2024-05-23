@@ -174,6 +174,10 @@ impl Config {
                 },
             }
         }
+        let cpath = Path::new(&cache_dir);
+        if let Err(_) = cpath.metadata() {
+            std::fs::create_dir_all(cpath).unwrap();
+        };
 
         Config {
             mode: Mode::from(matches.opt_str("m")),
@@ -1286,17 +1290,36 @@ impl FItem {
 
     async fn prepare_cached_thumbnail(self: &Self, path: &str, vid: bool, thumbsize: u32, icons: Arc<Icons>) -> Option<Handle> {
         let mut hasher = Md5::new();
+        let p = Path::new(path);
+        let fmetadata = p.metadata().unwrap();
+        let fmtime = fmetadata.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let fsize = fmetadata.len();
+        let fdir = p.parent().unwrap_or(Path::new(""));
         hasher.update(path.as_bytes());
-        let cache_dir = Path::new(&icons.cache_dir).join(format!("{:x}{}.webp", hasher.finalize(), thumbsize));
-        if cache_dir.is_file() {
-            let mut file = File::open(cache_dir).await.unwrap();
+        hasher.update(fmtime.to_le_bytes());
+        hasher.update(fsize.to_le_bytes());
+        let cache_path = Path::new(&icons.cache_dir).join(format!("{:x}{}.webp", hasher.finalize(), thumbsize));
+        let cmtime = match cache_path.metadata() {
+            Ok(md) => md.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            Err(_) => 0,
+        };
+        if cache_path.is_file() && cmtime >= fmtime {
+            let mut file = File::open(cache_path).await.unwrap();
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer).await.unwrap_or(0);
             let img = load_from_memory(buffer.as_ref()).unwrap();
             let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
             Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+        } else if fdir.to_string_lossy() == icons.cache_dir {
+            let mut buffer = Vec::new();
+            let mut file = File::open(self.path.as_str()).await.unwrap();
+            file.read_to_end(&mut buffer).await.unwrap_or(0);
+            let img = load_from_memory(buffer.as_ref()).unwrap();
+            let thumb = img.thumbnail(thumbsize, thumbsize);
+            let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
+            Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
         } else if vid {
-            vid_frame(&path, Some(thumbsize), Some(&cache_dir))
+            vid_frame(&path, Some(thumbsize), Some(&cache_path))
         } else {
             let file = File::open(self.path.as_str()).await;
             match file {
@@ -1308,7 +1331,7 @@ impl FItem {
                         Ok(img) => {
                             let thumb = img.thumbnail(thumbsize, thumbsize);
                             let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
-                            let mut file = std::fs::File::create_new(cache_dir).unwrap();
+                            let mut file = std::fs::File::create_new(cache_path).unwrap();
                             let encoder = WebPEncoder::new_lossless(&mut file);
                             encoder.encode(rgba.as_ref(), w, h, img::ExtendedColorType::Rgba8).unwrap();
                             Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
