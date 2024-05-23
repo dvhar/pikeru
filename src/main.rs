@@ -1766,14 +1766,12 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USende
         },
         (_,"db") => {
             let con = rusqlite::Connection::open(&index).unwrap();
-            let mut query = con.prepare_cached("select dir, fname, description from descriptions").unwrap();
+            let mut query = con.prepare_cached("select concat(dir, '/', fname), description from descriptions").unwrap();
             query.query_map([], |r| {
                 struct Desc { path: String, desc: String, }
-                let dir: String = r.get(0).unwrap();
-                let fname: String = r.get(1).unwrap();
                 Ok(Desc{
-                    path: Path::new(&dir).join(&fname).to_string_lossy().to_string(),
-                    desc: r.get(2).unwrap()
+                    path: r.get(0).unwrap(),
+                    desc: r.get(1).unwrap()
                 })
             }).unwrap()
             .filter_map(|r| match r { Ok(d) => Some(d), _ => None})
