@@ -97,16 +97,17 @@ enum Entry {
 
 impl IdxManager {
 
-    fn new(shtate: Arc<Mutex<Shtate>>, config: &mut Config) -> Self {
-        let con = rusqlite::Connection::open("/tmp/pk_index.db").unwrap();
-        con.execute("create table if not exists descriptions
+    fn new(shtate: Arc<Mutex<Shtate>>,
+           config: &mut Config,
+           con: Arc<Mutex<rusqlite::Connection>>) -> Self {
+        con.lock().unwrap().execute("create table if not exists descriptions
                 (fname text, dir text, description text, mtime real);", ()).unwrap();
         Self {
             shtate,
             cmd: take(&mut config.indexer_cmd),
             check: take(&mut config.indexer_check),
             exts: Box::new(take(&mut config.indexer_exts)).leak().split(',').collect(),
-            con: Arc::new(Mutex::new(con)),
+            con,
         }
     }
 
@@ -189,23 +190,39 @@ impl IdxManager {
 struct Indexer {
     tx: USender<Msg>,
     shtate: Arc<Mutex<Shtate>>,
+    con: Arc<Mutex<rusqlite::Connection>>,
 }
 #[interface(name = "org.freedesktop.impl.portal.SearchIndexer")]
 impl Indexer {
-    async fn update(&self, dirs: Vec<String>) -> () {
+    async fn update(&self, dirs: Vec<String>, get: bool) -> Vec<(String,String)> {
+        let ret = if get {
+            let con = self.con.lock().unwrap();
+            let qs = dirs.iter().enumerate().fold(String::new(),|acc,(i,_)|format!("{}{}?{}", acc,if i>0{","}else{""},i+1));
+            let qtext = format!("select concat(dir, '/', fname), description from descriptions where dir in ({})", qs);
+            let mut query = con.prepare_cached(qtext.as_str()).unwrap();
+            query.query_map(rusqlite::params_from_iter(dirs.iter()), |row|{
+                Ok((row.get(0).unwrap(), row.get(1).unwrap()))
+            }).unwrap().map(|r|r.unwrap()).collect()
+        } else {
+            Vec::new()
+        };
         self.tx.send(Msg::Dirs(dirs)).unwrap(); 
         let st = self.shtate.lock().unwrap();
         if !st.idx_running && !st.picker_open {
             self.tx.send(Msg::Start).unwrap();
         }
+        ret
     }
 
 }
 impl Indexer {
-    fn new(tx: USender<Msg>, shtate: Arc<Mutex<Shtate>>) -> Self {
+    fn new(tx: USender<Msg>,
+           shtate: Arc<Mutex<Shtate>>,
+           con: Arc<Mutex<rusqlite::Connection>>) -> Self {
         Self {
             tx,
             shtate,
+            con,
         }
     }
 }
@@ -437,8 +454,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let sht = Arc::new(Mutex::new(Shtate::default()));
     let (tx, rx) = unbounded_channel::<Msg>();
     let picker = FilePicker::new(&mut config, sht.clone(), tx.clone());
-    let indexer = Indexer::new(tx, sht.clone());
-    let manager = IdxManager::new(sht.clone(), &mut config);
+    let con = Arc::new(Mutex::new(rusqlite::Connection::open("/tmp/pk_index.db").unwrap()));
+    let indexer = Indexer::new(tx, sht.clone(), con.clone());
+    let manager = IdxManager::new(sht.clone(), &mut config, con);
     tokio::spawn(index_loop(manager, rx));
     eprintln!("Running {:#?}", picker);
     let _conn = connection::Builder::session()?

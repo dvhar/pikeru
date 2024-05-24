@@ -49,6 +49,7 @@ use std::{
     process::{self, Command as OsCmd},
     sync::Arc,
     time::{Instant,Duration},
+    cell::RefCell,
 };
 use video_rs::{Decoder, Location, DecoderBuilder, Resize};
 use ndarray;
@@ -270,6 +271,7 @@ enum SearchEvent {
     AddItems(Vec<String>),
     NewView(Vec<usize>),
     AddView(Vec<usize>),
+    AddSemantics(Vec<(String,String)>),
     Results(Vec<(usize, i64)>, u8, usize, String),
     Search(String),
 }
@@ -412,10 +414,11 @@ enum RecState {
     default_path = "/org/freedesktop/portal/desktop"
 )]
 trait Indexer {
-   async fn update(&mut self, path: Vec<&str>) -> Result<()>;
+   async fn update(&mut self, path: Vec<&str>, get: bool) -> Result<Vec<(String,String)>>;
 }
 struct IndexProxy<'a> {
     proxy: Option<IndexerProxy<'a>>,
+    done: HashSet<String>,
 }
 impl<'a> IndexProxy<'a> {
     async fn new() -> Self {
@@ -424,18 +427,26 @@ impl<'a> IndexProxy<'a> {
             let prox = IndexerProxy::new(&conn).await.ok()?;
             Some(prox)
         }.await;
-        Self { proxy }
+        Self {
+            proxy,
+            done: HashSet::new(),
+        }
     }
-    async fn update(&mut self, paths: &Vec<String>) {
-        if paths.is_empty() { return; }
+    async fn update(&mut self, paths: &Vec<String>) -> Vec<(String,String)> {
+        if paths.is_empty() { return Vec::new(); }
         if let Some(ref mut prox) = self.proxy {
-            match prox.update(paths.iter().map(|s|s.as_str()).collect()).await {
-                Ok(_) => {},
+            match prox.update(paths.iter().filter(|p|{
+                self.done.insert(p.to_string())
+            }).map(|s|s.as_str()).collect(), true).await {
+                Ok(semantics) => semantics,
                 Err(e) => {
                     eprintln!("{}", e);
                     self.proxy = None;
+                    Vec::new()
                 },
             }
+        } else {
+            Vec::new()
         }
     }
 }
@@ -668,10 +679,10 @@ impl Application for FilePicker {
                 let (txsrch, search_cmds) = unbounded_channel::<SearchEvent>();
                 let (txrec, recurse_cmds) = unbounded_channel::<RecMsg>();
                 tokio::spawn(watch_inotify(watch_cmds, inochan));
-                self.search_commander = Some(txsrch);
+                self.search_commander = Some(txsrch.clone());
                 self.ino_updater = Some(txino);
                 self.thumb_sender = Some(fichan);
-                tokio::spawn(recursive_add(recurse_cmds, more_files, txrec.clone()));
+                tokio::spawn(recursive_add(recurse_cmds, more_files, txrec.clone(), txsrch));
                 self.recurse_updater = Some(txrec);
                 tokio::spawn(search_loop(search_cmds, search_res, mem::take(&mut self.conf.index_file)));
                 return self.update(Message::LoadDir);
@@ -1744,7 +1755,9 @@ fn vid_frame(src: &str, thumbnail: Option<u32>, savepath: Option<&PathBuf>) -> O
     }
 }
 
-async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USender<SearchEvent>, index: String) {
+async fn search_loop(mut commands: UReceiver<SearchEvent>,
+                     result_sender: USender<SearchEvent>,
+                     index: String) {
     let mut items = vec![];
     let mut displayed = vec![];
     let mut nav_id = 0;
@@ -1753,7 +1766,8 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USende
         Some(ext) => ext.to_string_lossy().to_string(),
         None => "".to_string(),
     };
-    let captions = match (index.as_str(), ext.as_str()) {
+    //let captions = RefCell::new(match (index.as_str(), ext.as_str()) {
+    let captions = RefCell::new(match (index.as_str(), "") {
         (_,"csv") => {
             let rdr = csv::Reader::from_path(index).ok();
             match rdr {
@@ -1767,16 +1781,11 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USende
         (_,"db") => {
             let con = rusqlite::Connection::open(&index).unwrap();
             let mut query = con.prepare_cached("select concat(dir, '/', fname), description from descriptions").unwrap();
-            query.query_map([], |r| {
-                struct Desc { path: String, desc: String, }
-                Ok(Desc{
-                    path: r.get(0).unwrap(),
-                    desc: r.get(1).unwrap()
-                })
-            }).unwrap()
-            .filter_map(|r| match r { Ok(d) => Some(d), _ => None})
+            query.query_map([], |row| {
+                Ok((row.get(0).unwrap(), row.get(1).unwrap()))
+            }).unwrap().map(|r|r.unwrap())
             .fold(HashMap::new(), |mut acc,desc| {
-                acc.insert(desc.path, desc.desc);
+                acc.insert(desc.0, desc.1);
                 acc
             })
         },
@@ -1785,21 +1794,27 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USende
             eprintln!("Error: index file must be csv with format 'path,description' or sqlite file created by the pikeru xdg portaal.");
             Default::default()
         },
-    };
+    });
     let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
     loop {
         match commands.recv().await {
             Some(SearchEvent::NewItems(paths, nid)) => items = paths.into_iter().map(|path| {
                 nav_id = nid;
-                let data = captions.get(&path).map(|x|x.as_str());
+                let cap = captions.borrow();
+                let data = cap.get(&path).map(|x|{
+                    unsafe{std::str::from_utf8_unchecked(std::slice::from_raw_parts(x.as_ptr(),x.len()))}
+                });
                 FileIdx {
                     path,
                     data,
                 }
             }).collect(),
             Some(SearchEvent::AddItems(paths)) => {
+                let cap = captions.borrow();
                 let mut new_items = paths.into_iter().map(|path| {
-                    let data = captions.get(&path).map(|x|x.as_str());
+                    let data = cap.get(&path).map(|x|{
+                        unsafe{std::str::from_utf8_unchecked(std::slice::from_raw_parts(x.as_ptr(),x.len()))}
+                    });
                     FileIdx {
                         path,
                         data,
@@ -1813,6 +1828,10 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>, result_sender: USende
             Some(SearchEvent::AddView(mut didxs)) => {
                 displayed.append(&mut didxs);
             }
+            Some(SearchEvent::AddSemantics(sem)) => {
+                let mut cap = captions.borrow_mut();
+                sem.into_iter().for_each(|ps|{cap.insert(ps.0, ps.1);});
+            },
             Some(SearchEvent::Search(term)) => {
                 let results = displayed.iter().filter_map(|i| {
                     let item = &items[*i];
@@ -1841,7 +1860,10 @@ enum RecMsg {
     NextItems(Vec<FItem>, u8),
 }
 
-async fn recursive_add(mut updates: UReceiver<RecMsg>, results: USender<RecMsg>, selfy: USender<RecMsg>) {
+async fn recursive_add(mut updates: UReceiver<RecMsg>,
+                       results: USender<RecMsg>,
+                       selfy: USender<RecMsg>,
+                       semchan: USender<SearchEvent>) {
     let mut nav_id = 0;
     let mut dirs = vec![];
     let mut indexer = IndexProxy::new().await;
@@ -1858,7 +1880,10 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>, results: USender<RecMsg>,
                 }
                 let mut new_items = vec![];
                 let mut next_dirs = vec![];
-                indexer.update(&dirs).await;
+                let semantics = indexer.update(&dirs).await;
+                if !semantics.is_empty() {
+                    semchan.send(SearchEvent::AddSemantics(semantics)).unwrap();
+                }
                 for dir in dirs.iter() {
                     match std::fs::read_dir(dir.as_str()) {
                         Ok(rd) => {
