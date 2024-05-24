@@ -46,6 +46,7 @@ use std::{
     collections::{HashMap,HashSet},
     fs, str, mem,
     path::{PathBuf,Path},
+    borrow::Cow,
     process::{self, Command as OsCmd},
     sync::Arc,
     time::{Instant,Duration},
@@ -77,6 +78,14 @@ fn main() -> iced::Result {
     conf.update(false);
     video_rs::init().unwrap();
     FilePicker::run(iced::Settings::with_flags(conf))
+}
+
+fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
+    if dir.contains('~') {
+        let expanded = dir.replace("~", &home);
+        return Cow::from(expanded)
+    }
+    Cow::from(dir)
 }
 
 struct Config {
@@ -187,7 +196,7 @@ impl Config {
         if let Err(_) = cpath.metadata() {
             std::fs::create_dir_all(cpath).unwrap();
         };
-
+        let home = std::env::var("HOME").unwrap();
         Config {
             mode: Mode::from(matches.opt_str("m")),
             path: matches.opt_str("p").unwrap_or(pwd),
@@ -198,8 +207,8 @@ impl Config {
             thumb_size,
             window_size,
             dark_theme,
-            cache_dir,
-            index_file,
+            cache_dir: tilda(&home, cache_dir.as_str()).to_string(),
+            index_file: tilda(&home, index_file.as_str()).to_string(),
             dpi_scale: dpi_scale.into(),
             gitignore,
             respect_gitignore,

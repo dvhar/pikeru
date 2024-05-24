@@ -1,4 +1,22 @@
-[filechooser]
+[filepicker]
 cmd=/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
 default_save_dir=~/Downloads
-postprocess_dir=~/.cache/pikeru/postproc
+postprocess_dir=/tmp/pk_postprocess
+
+
+[indexer]
+# this section tells xdg-desktop-portal-pikeru how to build an index for semantic search.
+# The example values here are for a stable-diffusion-webui server running on localhost that
+# is used to generate searchable text for image files.
+
+enable = false
+index_file = ~/.config/pk_index.db
+
+# 'cmd' is a shell command that will be given an additional filepath arg and prints the searchable text on stdout.
+cmd = python ~/git/pikeru/indexer/imgdex.py http://127.0.0.1:7860/sdapi/v1/interrogate
+
+# 'check' is a shell command that returns status code zero when the indexer is online and non-zero when offline.
+check = curl http://127.0.0.1:7860/sdapi/v1/interrogate
+
+# 'extensions' is a comma-separate list of file types that 'cmd' can process.
+extensions = png,jpg,gif,webp,tiff,bmp

@@ -43,12 +43,13 @@ struct IdxManager {
     con: Arc<Mutex<rusqlite::Connection>>,
 }
 
-async fn index_loop(man: IdxManager, mut chan: UReceiver<Msg>) {
+async fn index_loop(man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
     let mut dir_map = HashMap::<String,bool>::new();
     let mut timeout = time::Instant::now();
     let mut online = false;
     loop {
         let msg = chan.recv().await.unwrap();
+        if !enabled { continue; }
         let uptodate = timeout.cmp(&time::Instant::now()) == core::cmp::Ordering::Greater;
         if !uptodate {
             timeout = timeout.checked_add(time::Duration::from_secs(60)).unwrap();
@@ -154,7 +155,7 @@ impl IdxManager {
         let cmd = format!("{} {}", self.cmd, shquote(path.to_string_lossy().as_ref()));
         match tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await {
             Ok(out) => {
-                if !out.status.success() {
+                if !out.status.success() || out.stdout.len() == 0 {
                     eprintln!("CMD FAILED {}: {}", cmd, unsafe { std::str::from_utf8_unchecked(&out.stderr) });
                     return self.indexer_online().await;
                 } else {
@@ -239,7 +240,6 @@ impl Indexer {
     }
 }
 
-#[derive(Debug)]
 struct FilePicker {
     prev_path: String,
     postproc_dir: String,
@@ -262,6 +262,7 @@ fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
     Cow::from(dir)
 }
 
+#[derive(Debug)]
 struct Config {
     home: String,
     prev_path: String,
@@ -271,6 +272,8 @@ struct Config {
     indexer_cmd: String,
     indexer_check: String,
     indexer_exts: String,
+    indexer_enabled: bool,
+    index_file: String,
 }
 impl Config {
     fn new() -> Self {
@@ -292,6 +295,8 @@ impl Config {
         let mut indexer_cmd = "".to_string();
         let mut indexer_check = "".to_string();
         let mut indexer_exts = "".to_string();
+        let mut indexer_enabled = false;
+        let mut index_file = "~/.config/pk_index.db".to_string();
         for dir in [&xdg_home, &conf_home, &sysconf] {
             for file in &filenames {
                 let cpath = Path::new(dir).join("xdg-desktop-portal-pikeru").join(&file);
@@ -302,7 +307,7 @@ impl Config {
                 let mut section = Section::Other;
                 for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
                     match line {
-                        "[filechooser]" => section = Section::FileChooser,
+                        "[filepicker]" => section = Section::FileChooser,
                         "[indexer]" => section = Section::Indexer,
                         _ => {
                             let (k, v) = str::split_once(line, '=').unwrap();
@@ -313,13 +318,15 @@ impl Config {
                                         "cmd" => indexer_cmd = v.to_string(),
                                         "check" => indexer_check = v.to_string(),
                                         "extensions" => indexer_exts = v.to_string(),
+                                        "index_file" => index_file = v.to_string(),
+                                        "enable" => indexer_enabled = v.parse().unwrap(),
                                         _ => eprintln!("Unknown indexer config value:{}", line),
                                     }
                                 },
                                 Section::FileChooser => {
                                     match k {
                                         "cmd" => fp_cmd = v.to_string(),
-                                        "default_dir" => def_save_dir = v.to_string(),
+                                        "default_save_dir" => def_save_dir = v.to_string(),
                                         "postprocess_dir" => postproc_dir = v.to_string(),
                                         _ => eprintln!("Unknown filechooser config value:{}", line),
                                     }
@@ -342,8 +349,10 @@ impl Config {
             def_save_dir: tilda(&home, &def_save_dir).to_string(),
             filecmd: tilda(&home, &fp_cmd).to_string(),
             indexer_cmd: tilda(&home, &indexer_cmd).to_string(),
-            indexer_check,
+            indexer_check: tilda(&home, &indexer_check).to_string(),
             indexer_exts,
+            indexer_enabled,
+            index_file: tilda(&home, &index_file).to_string(),
             home,
         }
     }
@@ -463,14 +472,14 @@ impl FilePicker {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let mut config = Config::new();
+    eprintln!("Running {:#?}", config);
     let sht = Arc::new(Mutex::new(Shtate::default()));
     let (tx, rx) = unbounded_channel::<Msg>();
     let picker = FilePicker::new(&mut config, sht.clone(), tx.clone());
-    let con = Arc::new(Mutex::new(rusqlite::Connection::open("/tmp/pk_index.db").unwrap()));
+    let con = Arc::new(Mutex::new(rusqlite::Connection::open(&config.index_file).unwrap()));
     let indexer = Indexer::new(tx, sht.clone(), con.clone());
     let manager = IdxManager::new(sht.clone(), &mut config, con);
-    tokio::spawn(index_loop(manager, rx));
-    eprintln!("Running {:#?}", picker);
+    tokio::spawn(index_loop(manager, rx, config.indexer_enabled));
     let _conn = connection::Builder::session()?
         .name("org.freedesktop.impl.portal.desktop.pikeru")?
         .serve_at("/org/freedesktop/portal/desktop", picker)?
