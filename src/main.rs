@@ -1781,9 +1781,10 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>,
         let con = rusqlite::Connection::open(&index).unwrap();
         let mut query = con.prepare_cached("select concat(dir, '/', fname), description from descriptions").unwrap();
         query.query_map([], |row| {
-            Ok((row.get(0).unwrap(), row.get(1).unwrap()))
+            let desc: String = row.get(1).unwrap();
+            Ok((row.get(0).unwrap(), Box::leak(desc.into_boxed_str())))
         }).unwrap().map(|r|r.unwrap())
-        .fold(HashMap::<String,String>::new(), |mut acc,desc| {
+        .fold(HashMap::<String,&'static str>::new(), |mut acc,desc| {
             acc.insert(desc.0, desc.1);
             acc
         })
@@ -1794,9 +1795,7 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>,
             Some(SearchEvent::NewItems(paths, nid)) => items = paths.into_iter().map(|path| {
                 nav_id = nid;
                 let cap = captions.borrow();
-                let data = cap.get(&path).map(|x|{
-                    unsafe{std::str::from_utf8_unchecked(std::slice::from_raw_parts(x.as_ptr(),x.len()))}
-                });
+                let data = cap.get(&path).copied();
                 FileIdx {
                     path,
                     data,
@@ -1805,9 +1804,7 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>,
             Some(SearchEvent::AddItems(paths)) => {
                 let cap = captions.borrow();
                 let mut new_items = paths.into_iter().map(|path| {
-                    let data = cap.get(&path).map(|x|{
-                        unsafe{std::str::from_utf8_unchecked(std::slice::from_raw_parts(x.as_ptr(),x.len()))}
-                    });
+                    let data = cap.get(&path).copied();
                     FileIdx {
                         path,
                         data,
@@ -1823,7 +1820,7 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>,
             }
             Some(SearchEvent::AddSemantics(sem)) => {
                 let mut cap = captions.borrow_mut();
-                sem.into_iter().for_each(|ps|{cap.insert(ps.0, ps.1);});
+                sem.into_iter().for_each(|ps|{cap.insert(ps.0, Box::leak(ps.1.into_boxed_str()));});
             },
             Some(SearchEvent::Search(term)) => {
                 let results = displayed.iter().filter_map(|i| {
