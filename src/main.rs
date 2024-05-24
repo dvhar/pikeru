@@ -62,7 +62,6 @@ use iced_aw::{
 };
 use md5::{Md5,Digest};
 use fuzzy_matcher::{self, FuzzyMatcher};
-use csv;
 use zbus::{Result,proxy,Connection};
 use ignore::{gitignore,Match};
 
@@ -94,6 +93,8 @@ struct Config {
     cache_dir: String,
     need_update: bool,
     index_file: String,
+    gitignore: String,
+    respect_gitignore: bool,
 }
 
 impl Config {
@@ -120,33 +121,39 @@ impl Config {
         let home = std::env::var("HOME").unwrap();
         let confpath = Path::new(&home).join(".config").join("pikeru.conf").to_string_lossy().to_string();
         let mut cache_dir = Path::new(&home).join(".cache").join("pikeru").to_string_lossy().to_string();
-        let txt = std::fs::read_to_string(confpath).unwrap();
-        enum S { Commands, Settings, Bookmarks }
+        let txt = std::fs::read_to_string(confpath).unwrap_or("".to_string());
+        #[derive(PartialEq)]
+        enum S { Commands, Settings, Bookmarks, Ignore }
         let mut section = S::Commands;
         let mut bookmarks = vec![];
         let mut cmds = vec![];
+        let mut respect_gitignore = true;
+        let mut gitignore = ".git/\n".to_string();
         let mut sort_by = 1;
         let mut thumb_size = 160.0;
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dark_theme = true;
         let mut dpi_scale: f32 = 1.0;
-        let mut opts_missing = 7;
-        let mut index_file = "/tmp/captions.csv".to_string();
+        let mut opts_missing = 8;
+        let mut index_file = "/tmp/pk_index.db".to_string();
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
             match line {
                 "[Commands]" => section = S::Commands,
                 "[Settings]" => section = S::Settings,
                 "[Bookmarks]" => section = S::Bookmarks,
+                "[SearchIgnore]" => { section = S::Ignore; gitignore.clear(); },
                 _ => {
-                    let (k, v) = str::split_once(line, '=').unwrap();
+                    let (k, v) = str::split_once(line, '=').unwrap_or(("",""));
                     let (k, v) = (k.trim(), v.trim());
                     match section {
                         S::Commands => cmds.push(Cmd::new(k, v)),
                         S::Bookmarks => bookmarks.push(Bookmark::new(k,v)),
+                        S::Ignore => {gitignore += line; gitignore += "\n"; },
                         S::Settings => match k {
                             "thumbnail_size" => { opts_missing -= 1; thumb_size = v.parse().unwrap() },
                             "index_file" => { opts_missing -= 1; index_file = v.into() },
                             "dpi_scale" => { opts_missing -= 1; dpi_scale = v.parse().unwrap() },
+                            "respect_gitignore" => { opts_missing -= 1; respect_gitignore = v.parse().unwrap() },
                             "theme" => { opts_missing -= 1; dark_theme = v == "dark" },
                             "cache_dir" => { opts_missing -= 1; cache_dir = v.to_string() },
                             "window_size" => {
@@ -194,6 +201,8 @@ impl Config {
             cache_dir,
             index_file,
             dpi_scale: dpi_scale.into(),
+            gitignore,
+            respect_gitignore,
             need_update: opts_missing > 0,
         }
     }
@@ -217,7 +226,8 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\ntheme = {}\nsort_by = {}\ncache_dir = {}\nindex_file= {}\n",
+                concat!("dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\ntheme = {}\nsort_by = {}\n",
+                "cache_dir = {}\nindex_file = {}\nrespect_gitignore = true\n"),
                 self.dpi_scale as i32,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
@@ -226,6 +236,9 @@ impl Config {
                 self.cache_dir,
                 self.index_file
                 ).as_str());
+        conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
+# The respect_gitignore setting only toggles .gitignore files, not this section.\n[SearchIgnore]\n");
+        conf.push_str(self.gitignore.as_str());
         conf.push_str("\n[Bookmarks]\n");
         self.bookmarks.iter().for_each(|bm| {
             conf.push_str(&bm.label);
@@ -683,7 +696,8 @@ impl Application for FilePicker {
                 self.search_commander = Some(txsrch.clone());
                 self.ino_updater = Some(txino);
                 self.thumb_sender = Some(fichan);
-                tokio::spawn(recursive_add(recurse_cmds, more_files, txrec.clone(), txsrch));
+                tokio::spawn(recursive_add(recurse_cmds, more_files, txrec.clone(), txsrch,
+                                           mem::take(&mut self.conf.gitignore), self.conf.respect_gitignore));
                 self.recurse_updater = Some(txrec);
                 tokio::spawn(search_loop(search_cmds, search_res, mem::take(&mut self.conf.index_file)));
                 return self.update(Message::LoadDir);
@@ -1762,39 +1776,17 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>,
     let mut items = vec![];
     let mut displayed = vec![];
     let mut nav_id = 0;
-    let ext = Path::new(&index).extension();
-    let ext = match ext {
-        Some(ext) => ext.to_string_lossy().to_string(),
-        None => "".to_string(),
-    };
-    //let captions = RefCell::new(match (index.as_str(), ext.as_str()) {
-    let captions = RefCell::new(match (index.as_str(), "") {
-        (_,"csv") => {
-            let rdr = csv::Reader::from_path(index).ok();
-            match rdr {
-                Some(mut rdr) => rdr.records().filter_map(|r|r.ok()).fold(HashMap::new(), |mut acc,rec| {
-                    acc.insert(rec[0].to_string(), rec[1].to_string());
-                    acc
-                }),
-                None => Default::default(),
-            }
-        },
-        (_,"db") => {
-            let con = rusqlite::Connection::open(&index).unwrap();
-            let mut query = con.prepare_cached("select concat(dir, '/', fname), description from descriptions").unwrap();
-            query.query_map([], |row| {
-                Ok((row.get(0).unwrap(), row.get(1).unwrap()))
-            }).unwrap().map(|r|r.unwrap())
-            .fold(HashMap::new(), |mut acc,desc| {
-                acc.insert(desc.0, desc.1);
-                acc
-            })
-        },
-        ("",_) => Default::default(),
-        (_,_) => {
-            eprintln!("Error: index file must be csv with format 'path,description' or sqlite file created by the pikeru xdg portaal.");
-            Default::default()
-        },
+    //TODO: don't use this when using portal
+    let captions = RefCell::new({
+        let con = rusqlite::Connection::open(&index).unwrap();
+        let mut query = con.prepare_cached("select concat(dir, '/', fname), description from descriptions").unwrap();
+        query.query_map([], |row| {
+            Ok((row.get(0).unwrap(), row.get(1).unwrap()))
+        }).unwrap().map(|r|r.unwrap())
+        .fold(HashMap::<String,String>::new(), |mut acc,desc| {
+            acc.insert(desc.0, desc.1);
+            acc
+        })
     });
     let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
     loop {
@@ -1864,13 +1856,15 @@ enum RecMsg {
 async fn recursive_add(mut updates: UReceiver<RecMsg>,
                        results: USender<RecMsg>,
                        selfy: USender<RecMsg>,
-                       semchan: USender<SearchEvent>) {
+                       semchan: USender<SearchEvent>,
+                       gitignore_txt: String,
+                       respect_gitignore: bool) {
     let mut nav_id = 0;
     let mut dirs = vec![];
     let mut ignores: Vec<Vec<Arc<gitignore::Gitignore>>> = vec![];
     let mut indexer = IndexProxy::new().await;
     let mut ig_builder = gitignore::GitignoreBuilder::new("");
-    ig_builder.add_line(None, ".git/").unwrap();
+    gitignore_txt.lines().for_each(|line|{ig_builder.add_line(None, line).unwrap();});
     let top_ignore = Arc::new(ig_builder.build().unwrap());
     loop {
         match updates.recv().await {
@@ -1894,9 +1888,11 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                 for (i, dir) in dirs.iter().enumerate() {
                     match std::fs::read_dir(dir.as_str()) {
                         Ok(rd) => {
-                            let local_ignore = Path::new(&dir).join(".gitignore");
-                            if local_ignore.is_file() {
-                                ignores[i].push(Arc::new(gitignore::Gitignore::new(local_ignore).0));
+                            if respect_gitignore {
+                                let local_ignore = Path::new(&dir).join(".gitignore");
+                                if local_ignore.is_file() {
+                                    ignores[i].push(Arc::new(gitignore::Gitignore::new(local_ignore).0));
+                                }
                             }
                             rd.map(|f| f.unwrap().path()).for_each(|path| {
                                 let ignored = ignores[i].iter().any(|g|match g.matched(&path, path.is_dir()) {
