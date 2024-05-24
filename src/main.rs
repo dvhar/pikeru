@@ -64,6 +64,7 @@ use md5::{Md5,Digest};
 use fuzzy_matcher::{self, FuzzyMatcher};
 use csv;
 use zbus::{Result,proxy,Connection};
+use ignore::{gitignore,Match};
 
 macro_rules! die {
     ($($arg:tt)*) => {{
@@ -1866,11 +1867,16 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                        semchan: USender<SearchEvent>) {
     let mut nav_id = 0;
     let mut dirs = vec![];
+    let mut ignores: Vec<Vec<Arc<gitignore::Gitignore>>> = vec![];
     let mut indexer = IndexProxy::new().await;
+    let mut ig_builder = gitignore::GitignoreBuilder::new("");
+    ig_builder.add_line(None, ".git/").unwrap();
+    let top_ignore = Arc::new(ig_builder.build().unwrap());
     loop {
         match updates.recv().await {
             Some(RecMsg::NewNav(new_dirs, nid)) => {
                 dirs = new_dirs;
+                ignores = dirs.iter().map(|_|vec![top_ignore.clone()]).collect();
                 nav_id = nid;
                 selfy.send(RecMsg::FetchMore(nid, false)).unwrap();
             }
@@ -1880,16 +1886,29 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                 }
                 let mut new_items = vec![];
                 let mut next_dirs = vec![];
+                let mut next_ignores = vec![];
                 let semantics = indexer.update(&dirs).await;
                 if !semantics.is_empty() {
                     semchan.send(SearchEvent::AddSemantics(semantics)).unwrap();
                 }
-                for dir in dirs.iter() {
+                for (i, dir) in dirs.iter().enumerate() {
                     match std::fs::read_dir(dir.as_str()) {
                         Ok(rd) => {
+                            let local_ignore = Path::new(&dir).join(".gitignore");
+                            if local_ignore.is_file() {
+                                ignores[i].push(Arc::new(gitignore::Gitignore::new(local_ignore).0));
+                            }
                             rd.map(|f| f.unwrap().path()).for_each(|path| {
+                                let ignored = ignores[i].iter().any(|g|match g.matched(&path, path.is_dir()) {
+                                    Match::Ignore(_) => true,
+                                    _ => false,
+                                });
+                                if ignored {
+                                    return;
+                                }
                                 if path.is_dir() {
                                     next_dirs.push(path.to_string_lossy().to_string());
+                                    next_ignores.push(ignores[i].clone());
                                 }
                                 if get_items {
                                     let mut item = FItem::new(path.into(), nid);
@@ -1902,6 +1921,7 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                     }
                 }
                 dirs = next_dirs;
+                ignores = next_ignores;
                 if !new_items.is_empty() {
                     results.send(RecMsg::NextItems(new_items, nid)).unwrap();
                 }
