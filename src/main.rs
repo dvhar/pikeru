@@ -227,14 +227,15 @@ impl Config {
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
                 concat!("dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\ntheme = {}\nsort_by = {}\n",
-                "cache_dir = {}\nindex_file = {}\nrespect_gitignore = true\n"),
+                "cache_dir = {}\nindex_file = {}\nrespect_gitignore = {}\n"),
                 self.dpi_scale as i32,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
                 if self.dark_theme { "dark" } else { "light" },
                 match self.sort_by { 1=>"name_asc", 2=>"name_desc", 3=>"time_asc", 4=>"time_desc", _=>"" },
                 self.cache_dir,
-                self.index_file
+                self.index_file,
+                self.respect_gitignore,
                 ).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
 # The respect_gitignore setting only toggles .gitignore files, not this section.\n[SearchIgnore]\n");

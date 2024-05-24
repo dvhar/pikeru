@@ -144,26 +144,29 @@ impl IdxManager {
         query.execute((dir, fname, desc, mtime)).unwrap();
     }
 
-    async fn update_file(self: &Self, path: &Path, dir: &String) {
+    async fn update_file(self: &Self, path: &Path, dir: &String) -> bool {
         let mtime = path.metadata().unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32();
         let fname = path.file_name().unwrap().to_string_lossy();
         let stat = self.already_done(dir, &fname, mtime);
         if stat == Entry::Done {
-            return;
+            return true;
         }
         let cmd = format!("{} {}", self.cmd, shquote(path.to_string_lossy().as_ref()));
         match tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await {
             Ok(out) => {
                 if !out.status.success() {
                     eprintln!("CMD FAILED {}: {}", cmd, unsafe { std::str::from_utf8_unchecked(&out.stderr) });
+                    return self.indexer_online().await;
                 } else {
                     let description = unsafe { std::str::from_utf8_unchecked(&out.stdout) };
                     eprintln!("{:?} DESC:{}", path, description);
                     self.save(dir, &fname, &description, mtime, stat);
+                    return true;
                 }
             },
             Err(e) => {eprintln!("Process error: {}", e)},
         };
+        return self.indexer_online().await;
     }
 
     async fn update_dir(self: &Self, dir: &String) {
@@ -174,7 +177,16 @@ impl IdxManager {
                     match path.extension() {
                         Some(ext) => {
                             if self.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
-                                self.update_file(path.as_path(), dir).await;
+                                let mut online = true;
+                                loop {
+                                    if online && self.update_file(path.as_path(), dir).await {
+                                        break;
+                                    } else {
+                                        eprintln!("Retrying {:?} in a minute...", path);
+                                        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+                                        online = self.indexer_online().await;
+                                    }
+                                };
                             }
                         },
                         None => {},
