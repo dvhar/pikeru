@@ -30,4 +30,5 @@ fuzzy-matcher = "0.3.7"
 zbus = { version = "<=4.1.2", features = ["tokio"] }
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 ignore = "0.4.22"
+log = "0.4.21"
 

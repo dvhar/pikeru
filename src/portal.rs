@@ -24,6 +24,8 @@ use tokio::{
     time,
 };
 
+use log::{info,trace,error,debug,warn,Record,Level,Metadata,LevelFilter};
+
 #[derive(Default, Debug)]
 struct Shtate {
     idx_running: bool,
@@ -54,14 +56,14 @@ async fn index_loop(man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
         if !uptodate {
             timeout = timeout.checked_add(time::Duration::from_secs(60)).unwrap();
             online = man.indexer_online().await;
-            if !online { eprintln!("indexer offline"); }
+            if !online { info!("indexer offline"); }
         }
         if !online {
             continue;
         }
         match msg {
             Msg::Start => {
-                eprintln!("Starting index");
+                info!("Starting index");
                 man.shtate.lock().unwrap().idx_running = true;
                 while !man.shtate.lock().unwrap().picker_open {
                     if let Some(dir) = dir_map.iter().find(|v|!v.1) {
@@ -75,7 +77,7 @@ async fn index_loop(man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
                 man.shtate.lock().unwrap().idx_running = false;
             },
             Msg::Dirs(dirs) => {
-                eprintln!("Got dirs");
+                debug!("Got dirs");
                 dirs.into_iter().for_each(|dir|{dir_map.entry(dir).or_default();});
             },
         }
@@ -156,16 +158,16 @@ impl IdxManager {
         match tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await {
             Ok(out) => {
                 if !out.status.success() || out.stdout.len() == 0 {
-                    eprintln!("CMD FAILED {}: {}", cmd, unsafe { std::str::from_utf8_unchecked(&out.stderr) });
+                    error!("CMD FAILED {}: {}", cmd, unsafe { std::str::from_utf8_unchecked(&out.stderr) });
                     return self.indexer_online().await;
                 } else {
                     let description = unsafe { std::str::from_utf8_unchecked(&out.stdout) };
-                    eprintln!("{:?} DESC:{}", path, description);
+                    trace!("{:?} DESC:{}", path, description);
                     self.save(dir, &fname, &description, mtime, stat);
                     return true;
                 }
             },
-            Err(e) => {eprintln!("Process error: {}", e)},
+            Err(e) => {error!("Process error: {}", e)},
         };
         return self.indexer_online().await;
     }
@@ -183,7 +185,7 @@ impl IdxManager {
                                     if online && self.update_file(path.as_path(), dir).await {
                                         break;
                                     } else {
-                                        eprintln!("Retrying {:?} in a minute...", path);
+                                        warn!("Retrying {:?} in a minute...", path);
                                         tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
                                         online = self.indexer_online().await;
                                     }
@@ -194,7 +196,7 @@ impl IdxManager {
                     }
                 }
             },
-            Err(e) => eprintln!("Error reading dir {}: {}", dir, e),
+            Err(e) => error!("Error reading dir {}: {}", dir, e),
         }
     }
 
@@ -252,7 +254,7 @@ struct FilePicker {
 enum Section {
     FileChooser,
     Indexer,
-    Other,
+    Base,
 }
 fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
     if dir.contains('~') {
@@ -297,6 +299,7 @@ impl Config {
         let mut indexer_exts = "".to_string();
         let mut indexer_enabled = false;
         let mut index_file = "~/.config/pk_index.db".to_string();
+        let mut log_level = LevelFilter::Info;
         for dir in [&xdg_home, &conf_home, &sysconf] {
             for file in &filenames {
                 let cpath = Path::new(dir).join("xdg-desktop-portal-pikeru").join(&file);
@@ -304,7 +307,7 @@ impl Config {
                     continue;
                 }
                 let txt = std::fs::read_to_string(cpath).unwrap();
-                let mut section = Section::Other;
+                let mut section = Section::Base;
                 for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
                     match line {
                         "[filepicker]" => section = Section::FileChooser,
@@ -331,7 +334,20 @@ impl Config {
                                         _ => eprintln!("Unknown filechooser config value:{}", line),
                                     }
                                 },
-                                Section::Other => {},
+                                Section::Base => {
+                                    match k {
+                                        "log_level" => log_level = match v {
+                                            "off" => LevelFilter::Off,
+                                            "error" => LevelFilter::Error,
+                                            "warn" => LevelFilter::Warn,
+                                            "info" => LevelFilter::Info,
+                                            "debug" => LevelFilter::Debug,
+                                            "trace" => LevelFilter::Trace,
+                                            _ => { eprintln!("Unknown log level:{}", v); LevelFilter::Info },
+                                        },
+                                        _ => eprintln!("Unknown base config value:{}", line),
+                                    }
+                                },
                             }
                         }
                     }
@@ -339,6 +355,7 @@ impl Config {
                 break;
             }
         }
+        log_init(log_level);
         if !Path::new(&fp_cmd).is_file() {
             eprintln!("No filepicker executable found: {}", fp_cmd);
             std::process::exit(1);
@@ -382,11 +399,11 @@ impl FilePicker {
             format!("POSTPROCESS_DIR=\"{}\" {} {} {} {} \"{}\"",
                     self.postproc_dir, self.cmd, multi, dir, savenum, tilda(&self.home,&self.prev_path))
         };
-        eprintln!("CMD:{}", cmd);
+        debug!("CMD:{}", cmd);
         self.shtate.lock().unwrap().picker_open = true;
         let output = match tokio::process::Command::new("sh").arg("-c").arg(cmd).output().await {
             Ok(out) => {
-                eprintln!("{}", unsafe { std::str::from_utf8_unchecked(&out.stderr) });
+                error!("{}", unsafe { std::str::from_utf8_unchecked(&out.stderr) });
                 unsafe { std::str::from_utf8_unchecked(&out.stdout).to_owned() }
             },
             Err(e) => {eprintln!("Process error: {}", e); "".to_owned()},
@@ -436,11 +453,11 @@ impl FilePicker {
                  _title: &str, options: HashMap<&str, Value<'_>>) -> (u32, HashMap<String, OwnedValue>) {
         let dir = match options.get("directory").unwrap_or(&Value::Bool(false)) {
             &Value::Bool(b) => b,
-            _ => { eprintln!("DIR type error"); false},
+            _ => { error!("DIR type error"); false},
         };
         let multi = match options.get("multiple").unwrap_or(&Value::Bool(false)) {
             &Value::Bool(b) => b,
-            _ => { eprintln!("MULTI type error"); false},
+            _ => { error!("MULTI type error"); false},
         };
         self.select_files(multi, dir, false, "/").await
     }
@@ -453,7 +470,7 @@ impl FilePicker {
                 match std::str::from_utf8(&b[4..b.len()-1]) {
                     Ok(s) => s.to_string(),
                     Err(e) => {
-                        eprintln!("Error reading dir:{}", e);
+                        error!("Error reading dir:{}", e);
                         self.def_save_dir.clone()
                     },
                 }
@@ -469,10 +486,26 @@ impl FilePicker {
     }
 }
 
+struct SimpleLogger;
+impl log::Log for SimpleLogger {
+    fn enabled(&self, metadata: &Metadata) -> bool { metadata.level() <= Level::Info }
+    fn log(&self, record: &Record) {
+        if self.enabled(record.metadata()) {
+            println!("{} - {}", record.level(), record.args());
+        }
+    }
+    fn flush(&self) {}
+}
+static LOGGER: SimpleLogger = SimpleLogger;
+pub fn log_init(level: LevelFilter) {
+    log::set_logger(&LOGGER)
+        .map(|()| log::set_max_level(level)).unwrap()
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let mut config = Config::new();
-    eprintln!("Running {:#?}", config);
+    eprintln!("IRunning {:#?}", config);
     let sht = Arc::new(Mutex::new(Shtate::default()));
     let (tx, rx) = unbounded_channel::<Msg>();
     let picker = FilePicker::new(&mut config, sht.clone(), tx.clone());

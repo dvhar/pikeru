@@ -1,3 +1,6 @@
+# off, error, warn, info, debug, trace
+log_level = info
+
 [filepicker]
 cmd=/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
 default_save_dir=~/Downloads
