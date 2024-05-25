@@ -23,7 +23,9 @@ use tokio::{
     },
     time,
 };
-use log::{info,trace,error,debug,warn,Record,Level,Metadata,LevelFilter};
+use log::{info,trace,error,debug,warn,LevelFilter};
+use env_logger::Builder;
+
 
 #[derive(Default, Debug)]
 struct Shtate {
@@ -208,6 +210,7 @@ struct Indexer {
 }
 #[interface(name = "org.freedesktop.impl.portal.SearchIndexer")]
 impl Indexer {
+    async fn online(&self) -> bool { true }
     async fn update(&self, dirs: Vec<String>, get: bool) -> Vec<(String,String)> {
         let ret = if get {
             let con = self.con.lock().unwrap();
@@ -354,7 +357,8 @@ impl Config {
                 break;
             }
         }
-        log_init(log_level);
+        Builder::new().filter_level(log_level).init();
+        eprintln!("Log level: {}", log_level);
         if !Path::new(&fp_cmd).is_file() {
             eprintln!("No filepicker executable found: {}", fp_cmd);
             std::process::exit(1);
@@ -485,26 +489,10 @@ impl FilePicker {
     }
 }
 
-struct SimpleLogger;
-impl log::Log for SimpleLogger {
-    fn enabled(&self, metadata: &Metadata) -> bool { metadata.level() <= Level::Info }
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            println!("{} - {}", record.level(), record.args());
-        }
-    }
-    fn flush(&self) {}
-}
-static LOGGER: SimpleLogger = SimpleLogger;
-pub fn log_init(level: LevelFilter) {
-    log::set_logger(&LOGGER)
-        .map(|()| log::set_max_level(level)).unwrap()
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let mut config = Config::new();
-    eprintln!("IRunning {:#?}", config);
+    eprintln!("Running {:#?}", config);
     let sht = Arc::new(Mutex::new(Shtate::default()));
     let (tx, rx) = unbounded_channel::<Msg>();
     let picker = FilePicker::new(&mut config, sht.clone(), tx.clone());

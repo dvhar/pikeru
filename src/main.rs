@@ -439,6 +439,7 @@ enum RecState {
 )]
 trait Indexer {
    async fn update(&mut self, path: Vec<&str>, get: bool) -> Result<Vec<(String,String)>>;
+   async fn online(&mut self) -> Result<bool>;
 }
 struct IndexProxy<'a> {
     proxy: Option<IndexerProxy<'a>>,
@@ -455,6 +456,19 @@ impl<'a> IndexProxy<'a> {
             proxy,
             done: HashSet::new(),
         }
+    }
+    async fn online(&mut self) -> bool {
+        if let Some(ref mut prox) = self.proxy {
+            match prox.online().await {
+                Ok(yes) => return yes,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    self.proxy = None;
+                    return false;
+                },
+            }
+        }
+        return false;
     }
     async fn update(&mut self, paths: &Vec<String>) -> Vec<(String,String)> {
         if paths.is_empty() { return Vec::new(); }
@@ -707,9 +721,10 @@ impl Application for FilePicker {
                 self.ino_updater = Some(txino);
                 self.thumb_sender = Some(fichan);
                 tokio::spawn(recursive_add(recurse_cmds, more_files, txrec.clone(), txsrch,
-                                           mem::take(&mut self.conf.gitignore), self.conf.respect_gitignore));
+                                           mem::take(&mut self.conf.gitignore), self.conf.respect_gitignore,
+                                           mem::take(&mut self.conf.index_file)));
                 self.recurse_updater = Some(txrec);
-                tokio::spawn(search_loop(search_cmds, search_res, mem::take(&mut self.conf.index_file)));
+                tokio::spawn(search_loop(search_cmds, search_res));
                 return self.update(Message::LoadDir);
             },
             Message::Scrolled(viewport) => self.scroll_offset = viewport.absolute_offset(),
@@ -1781,24 +1796,12 @@ fn vid_frame(src: &str, thumbnail: Option<u32>, savepath: Option<&PathBuf>) -> O
 }
 
 async fn search_loop(mut commands: UReceiver<SearchEvent>,
-                     result_sender: USender<SearchEvent>,
-                     index: String) {
+                     result_sender: USender<SearchEvent>) {
     let mut items = vec![];
     let mut displayed = vec![];
     let mut nav_id = 0;
     //TODO: don't use this when using portal
-    let captions = RefCell::new({
-        let con = rusqlite::Connection::open(&index).unwrap();
-        let mut query = con.prepare_cached("select concat(dir, '/', fname), description from descriptions").unwrap();
-        query.query_map([], |row| {
-            let desc: String = row.get(1).unwrap();
-            Ok((row.get(0).unwrap(), Box::leak(desc.into_boxed_str())))
-        }).unwrap().map(|r|r.unwrap())
-        .fold(HashMap::<String,&'static str>::new(), |mut acc,desc| {
-            acc.insert(desc.0, desc.1);
-            acc
-        })
-    });
+    let captions = RefCell::new(HashMap::<String,&'static str>::new());
     let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
     loop {
         match commands.recv().await {
@@ -1865,7 +1868,8 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                        selfy: USender<RecMsg>,
                        semchan: USender<SearchEvent>,
                        gitignore_txt: String,
-                       respect_gitignore: bool) {
+                       respect_gitignore: bool,
+                       index_file: String) {
     let mut nav_id = 0;
     let mut dirs = vec![];
     let mut ignores: Vec<Vec<Arc<gitignore::Gitignore>>> = vec![];
@@ -1873,6 +1877,14 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
     let mut ig_builder = gitignore::GitignoreBuilder::new("");
     gitignore_txt.lines().for_each(|line|{ig_builder.add_line(None, line).unwrap();});
     let top_ignore = Arc::new(ig_builder.build().unwrap());
+    if !indexer.online().await {
+        let con = rusqlite::Connection::open(&index_file).unwrap();
+        let mut query = con.prepare_cached("select concat(dir, '/', fname), description from descriptions").unwrap();
+        let sem_vec = query.query_map([], |row| {
+            Ok((row.get(0).unwrap(), row.get(1).unwrap()))
+        }).unwrap().map(|r|r.unwrap()).collect();
+        semchan.send(SearchEvent::AddSemantics(sem_vec)).unwrap();
+    }
     loop {
         match updates.recv().await {
             Some(RecMsg::NewNav(new_dirs, nid)) => {
