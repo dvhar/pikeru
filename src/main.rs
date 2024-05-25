@@ -438,7 +438,7 @@ enum RecState {
     default_path = "/org/freedesktop/portal/desktop"
 )]
 trait Indexer {
-   async fn update(&mut self, path: Vec<&str>, get: bool) -> Result<Vec<(String,String)>>;
+   async fn update(&mut self, path: &Vec<&str>) -> Result<()>;
    async fn online(&mut self) -> Result<bool>;
 }
 struct IndexProxy<'a> {
@@ -453,38 +453,41 @@ impl<'a> IndexProxy<'a> {
             let prox = IndexerProxy::new(&conn).await.ok()?;
             Some(prox)
         }.await;
-        let dbcon = if let Some(_) = proxy {
-            None
-        } else {
-            match rusqlite::Connection::open(&index_file) {
-                Ok(con) => Some(con),
-                Err(_) => None,
-            }
+        let sql = match rusqlite::Connection::open(&index_file) {
+            Ok(con) => Some(con),
+            Err(_) => None,
         };
         Self {
             proxy,
             done: HashSet::new(),
-            sql: dbcon,
+            sql,
         }
     }
     async fn update(&mut self, dirs: &Vec<String>) -> Vec<(String,String)> {
-        if dirs.is_empty() { return Vec::new(); }
+        let mut placeholders = String::new();
+        let filtered = dirs.iter().enumerate().filter(|(i,p)|{
+                let needed = self.done.insert(p.to_string());
+                match (needed, &self.sql) {
+                    (true, Some(_)) => placeholders = format!("{}{}?{}", placeholders, if *i>0 {","} else {""}, i+1),
+                    (_,_) => {},
+                }
+                needed
+            }).map(|s|s.1.as_str()).collect::<Vec::<&str>>();
+        if filtered.is_empty() { return Vec::new(); }
+
         if let Some(ref mut prox) = self.proxy {
-            match prox.update(dirs.iter().filter(|p|{
-                self.done.insert(p.to_string())
-            }).map(|s|s.as_str()).collect(), true).await {
-                Ok(semantics) => semantics,
+            match prox.update(&filtered).await {
+                Ok(_) => {},
                 Err(e) => {
                     eprintln!("{}", e);
                     self.proxy = None;
-                    Vec::new()
                 },
             }
-        } else if let Some(con) = &self.sql {
-            let qs = dirs.iter().enumerate().fold(String::new(),|acc,(i,_)|format!("{}{}?{}", acc,if i>0{","}else{""},i+1));
-            let qtext = format!("select concat(dir, '/', fname), description from descriptions where dir in ({})", qs);
-            let mut query = con.prepare_cached(qtext.as_str()).unwrap();
-            query.query_map(rusqlite::params_from_iter(dirs.iter()), |row|{
+        } 
+        if let Some(sql) = &self.sql {
+            let qtext = format!("select concat(dir, '/', fname), description from descriptions where dir in ({})", placeholders);
+            let mut query = sql.prepare(qtext.as_str()).unwrap();
+            query.query_map(rusqlite::params_from_iter(filtered.iter()), |row|{
                 Ok((row.get(0).unwrap(), row.get(1).unwrap()))
             }).unwrap().map(|r|r.unwrap()).collect()
         } else {
