@@ -444,36 +444,33 @@ trait Indexer {
 struct IndexProxy<'a> {
     proxy: Option<IndexerProxy<'a>>,
     done: HashSet<String>,
+    sql: Option<rusqlite::Connection>,
 }
 impl<'a> IndexProxy<'a> {
-    async fn new() -> Self {
+    async fn new(index_file: String) -> Self {
         let proxy = async {
             let conn = Connection::session().await.ok()?;
             let prox = IndexerProxy::new(&conn).await.ok()?;
             Some(prox)
         }.await;
+        let dbcon = if let Some(_) = proxy {
+            None
+        } else {
+            match rusqlite::Connection::open(&index_file) {
+                Ok(con) => Some(con),
+                Err(_) => None,
+            }
+        };
         Self {
             proxy,
             done: HashSet::new(),
+            sql: dbcon,
         }
     }
-    async fn online(&mut self) -> bool {
+    async fn update(&mut self, dirs: &Vec<String>) -> Vec<(String,String)> {
+        if dirs.is_empty() { return Vec::new(); }
         if let Some(ref mut prox) = self.proxy {
-            match prox.online().await {
-                Ok(yes) => return yes,
-                Err(e) => {
-                    eprintln!("{}", e);
-                    self.proxy = None;
-                    return false;
-                },
-            }
-        }
-        return false;
-    }
-    async fn update(&mut self, paths: &Vec<String>) -> Vec<(String,String)> {
-        if paths.is_empty() { return Vec::new(); }
-        if let Some(ref mut prox) = self.proxy {
-            match prox.update(paths.iter().filter(|p|{
+            match prox.update(dirs.iter().filter(|p|{
                 self.done.insert(p.to_string())
             }).map(|s|s.as_str()).collect(), true).await {
                 Ok(semantics) => semantics,
@@ -483,6 +480,13 @@ impl<'a> IndexProxy<'a> {
                     Vec::new()
                 },
             }
+        } else if let Some(con) = &self.sql {
+            let qs = dirs.iter().enumerate().fold(String::new(),|acc,(i,_)|format!("{}{}?{}", acc,if i>0{","}else{""},i+1));
+            let qtext = format!("select concat(dir, '/', fname), description from descriptions where dir in ({})", qs);
+            let mut query = con.prepare_cached(qtext.as_str()).unwrap();
+            query.query_map(rusqlite::params_from_iter(dirs.iter()), |row|{
+                Ok((row.get(0).unwrap(), row.get(1).unwrap()))
+            }).unwrap().map(|r|r.unwrap()).collect()
         } else {
             Vec::new()
         }
@@ -1873,18 +1877,10 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
     let mut nav_id = 0;
     let mut dirs = vec![];
     let mut ignores: Vec<Vec<Arc<gitignore::Gitignore>>> = vec![];
-    let mut indexer = IndexProxy::new().await;
+    let mut indexer = IndexProxy::new(index_file).await;
     let mut ig_builder = gitignore::GitignoreBuilder::new("");
     gitignore_txt.lines().for_each(|line|{ig_builder.add_line(None, line).unwrap();});
     let top_ignore = Arc::new(ig_builder.build().unwrap());
-    if !indexer.online().await {
-        let con = rusqlite::Connection::open(&index_file).unwrap();
-        let mut query = con.prepare_cached("select concat(dir, '/', fname), description from descriptions").unwrap();
-        let sem_vec = query.query_map([], |row| {
-            Ok((row.get(0).unwrap(), row.get(1).unwrap()))
-        }).unwrap().map(|r|r.unwrap()).collect();
-        semchan.send(SearchEvent::AddSemantics(sem_vec)).unwrap();
-    }
     loop {
         match updates.recv().await {
             Some(RecMsg::NewNav(new_dirs, nid)) => {

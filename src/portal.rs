@@ -210,7 +210,6 @@ struct Indexer {
 }
 #[interface(name = "org.freedesktop.impl.portal.SearchIndexer")]
 impl Indexer {
-    async fn online(&self) -> bool { true }
     async fn update(&self, dirs: Vec<String>, get: bool) -> Vec<(String,String)> {
         let ret = if get {
             let con = self.con.lock().unwrap();
