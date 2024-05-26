@@ -465,14 +465,18 @@ impl<'a> IndexProxy<'a> {
     }
     async fn update(&mut self, dirs: &Vec<String>) -> Vec<(String,String)> {
         let mut placeholders = String::new();
-        let filtered = dirs.iter().enumerate().filter(|(i,p)|{
+        let mut i = 0;
+        let filtered = dirs.iter().filter(|p|{
                 let needed = self.done.insert(p.to_string());
                 match (needed, &self.sql) {
-                    (true, Some(_)) => placeholders = format!("{}{}?{}", placeholders, if *i>0 {","} else {""}, i+1),
+                    (true, Some(_)) => {
+                        i += 1;
+                        placeholders = format!("{}{}?{}", placeholders, if i>1 {","} else {""}, i);
+                    },
                     (_,_) => {},
                 }
                 needed
-            }).map(|s|s.1.as_str()).collect::<Vec::<&str>>();
+            }).map(|s|s.as_str()).collect::<Vec::<&str>>();
         if filtered.is_empty() { return Vec::new(); }
 
         if let Some(ref mut prox) = self.proxy {

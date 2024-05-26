@@ -50,6 +50,7 @@ async fn index_loop(man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
     let mut dir_map = HashMap::<String,bool>::new();
     let mut timeout = time::Instant::now();
     let mut online = false;
+    info!("indexer {}", if man.indexer_online().await {"online"} else {"offline"});
     loop {
         let msg = chan.recv().await.unwrap();
         if !enabled { continue; }
@@ -57,7 +58,7 @@ async fn index_loop(man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
         if !uptodate {
             timeout = timeout.checked_add(time::Duration::from_secs(60)).unwrap();
             online = man.indexer_online().await;
-            if !online { info!("indexer offline"); }
+            if !online { warn!("indexer offline"); }
         }
         if !online {
             continue;
@@ -234,7 +235,7 @@ impl Indexer {
 }
 
 struct FilePicker {
-    prev_path: String,
+    prev_path: Mutex<String>,
     postproc_dir: String,
     def_save_dir: String,
     cmd: String,
@@ -371,7 +372,7 @@ impl FilePicker {
 
     fn new(conf: &mut Config, shtate: Arc<Mutex<Shtate>>, tx: USender<Msg>) -> Self {
         Self {
-            prev_path: take(&mut conf.prev_path),
+            prev_path: Mutex::new(take(&mut conf.prev_path)),
             postproc_dir: take(&mut conf.postproc_dir),
             def_save_dir: take(&mut conf.def_save_dir),
             cmd: take(&mut conf.filecmd),
@@ -381,7 +382,7 @@ impl FilePicker {
         }
     }
 
-    async fn select_files(self: &mut Self, multi: bool, dir: bool, save: bool, path: &str) -> (u32, HashMap<String, OwnedValue>) {
+    async fn select_files(self: &Self, multi: bool, dir: bool, save: bool, path: &str) -> (u32, HashMap<String, OwnedValue>) {
         let dir = if dir   { 1 } else { 0 };
         let multi = if multi { 1 } else { 0 };
         let savenum = if save  { 1 } else { 0 };
@@ -389,13 +390,15 @@ impl FilePicker {
             format!("{} {} {} {} \"{}\"", self.cmd, multi, dir, savenum, tilda(&self.home,path))
         } else {
             format!("POSTPROCESS_DIR=\"{}\" {} {} {} {} \"{}\"",
-                    self.postproc_dir, self.cmd, multi, dir, savenum, tilda(&self.home,&self.prev_path))
+                    self.postproc_dir, self.cmd, multi, dir, savenum, tilda(&self.home,&self.prev_path.lock().unwrap()))
         };
         debug!("CMD:{}", cmd);
         self.shtate.lock().unwrap().picker_open = true;
         let output = match tokio::process::Command::new("sh").arg("-c").arg(cmd).output().await {
             Ok(out) => {
-                error!("{}", unsafe { std::str::from_utf8_unchecked(&out.stderr) });
+                if out.stderr.len() > 0 {
+                    error!("{}", unsafe { std::str::from_utf8_unchecked(&out.stderr) });
+                }
                 unsafe { std::str::from_utf8_unchecked(&out.stdout).to_owned() }
             },
             Err(e) => {eprintln!("Process error: {}", e); "".to_owned()},
@@ -414,7 +417,7 @@ impl FilePicker {
             if !gotfirst {
                 gotfirst = true;
                 if let Some(par_dir) = self.get_dir(line) {
-                    self.prev_path = par_dir;
+                   *self.prev_path.lock().unwrap() = par_dir;
                 }
             }
             format!("file://{}",line)
@@ -441,7 +444,7 @@ impl FilePicker {
 
 #[interface(name = "org.freedesktop.impl.portal.FileChooser")]
 impl FilePicker {
-    async fn open_file(&mut self, _ob: ObjectPath<'_>, _caller: &str, _parent: &str,
+    async fn open_file(&self, _ob: ObjectPath<'_>, _caller: &str, _parent: &str,
                  _title: &str, options: HashMap<&str, Value<'_>>) -> (u32, HashMap<String, OwnedValue>) {
         let dir = match options.get("directory").unwrap_or(&Value::Bool(false)) {
             &Value::Bool(b) => b,
@@ -454,7 +457,7 @@ impl FilePicker {
         self.select_files(multi, dir, false, "/").await
     }
 
-    async fn save_file(&mut self, _ob: ObjectPath<'_>, _caller: &str, _parent: &str,
+    async fn save_file(&self, _ob: ObjectPath<'_>, _caller: &str, _parent: &str,
                  _title: &str, options: HashMap<&str, Value<'_>>) -> (u32, HashMap<String, OwnedValue>) {
         let dir = match options.get("current_folder").unwrap_or(&Value::from(&self.def_save_dir)) {
             Value::Array(s) => {

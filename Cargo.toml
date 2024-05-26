@@ -27,7 +27,7 @@ iced_aw = { version = "0.8.0", features = ["menu"] }
 inotify = "0.10.2"
 md-5 = "0.10.6"
 fuzzy-matcher = "0.3.7"
-zbus = { version = "<=4.1.2", features = ["tokio"] }
+zbus = { version = "4.2.2", features = ["tokio"] }
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 ignore = "0.4.22"
 log = "0.4.21"

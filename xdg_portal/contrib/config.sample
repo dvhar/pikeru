@@ -13,7 +13,7 @@ postprocess_dir=/tmp/pk_postprocess
 # is used to generate searchable text for image files.
 
 enable = false
-index_file = ~/.config/pk_index.db
+index_file = ~/.cache/pk_index.db
 
 # 'cmd' is a shell command that will be given an additional filepath arg and prints the searchable text on stdout.
 cmd = python ~/git/pikeru/indexer/imgdex.py http://127.0.0.1:7860/sdapi/v1/interrogate
