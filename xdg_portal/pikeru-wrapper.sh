@@ -42,6 +42,7 @@ else
     mode=file
 fi
 
+#TODO: move postprocessing here
 pikerudir="$(dirname "$(readlink -f "$0")")"
 cmd="$pikerudir/../../target/release/pikeru -m $mode -t 'File Picker' -p \"$path\""
 echo "$cmd" >> /tmp/pk.log
