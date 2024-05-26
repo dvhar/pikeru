@@ -2,14 +2,14 @@
 
 # dest
 unitdir=$(pkg-config --variable systemduserunitdir systemd)
-portalbin=/usr/local/libexec/xdg-desktop-portal-pikeru
+portalbin=/usr/lib/xdg-desktop-portal-pikeru
 bindir=/usr/local/bin
 sharedir=/usr/local/share
 dbusdir1=/usr/local/share/dbus-1/services
 dbusdir2=/usr/share/dbus-1/services
 mandir=/usr/local/share/man/man5
 portalfile=/usr/share/xdg-desktop-portal/portals/pikeru.portal
-portal_conf=$HOME/.config/xdg-desktop-portal-pikeru/config
+confdir=$HOME/.config/xdg-desktop-portal-pikeru/config
 
 # src
 dbus_svc=xdg_portal/org.freedesktop.impl.portal.desktop.pikeru.service
@@ -18,6 +18,12 @@ manpage=xdg_portal/xdg-desktop-portal-pikeru.5.scd
 wrapper=xdg_portal/pikeru-wrapper.sh
 sd_svc=xdg_portal/xdg-desktop-portal-pikeru.service
 sample_conf=xdg_portal/config.sample
+
+get_desktop(){
+	[ -z "$XDG_CURRENT_DESKTOP" ] && return
+	tail -n1 xdg_portal/pikeru.portal.in|grep -q $XDG_CURRENT_DESKTOP && return
+	echo ";$XDG_CURRENT_DESKTOP"
+}
 
 if [[ $(whoami) = root ]]; then
 	set -x
@@ -29,12 +35,13 @@ if [[ $(whoami) = root ]]; then
 	cp $dbus_svc $dbusdir2
 	cp $sd_svc $unitdir
 	scdoc < $manpage > $mandir/xdg-desktop-portal-pikeru.5
-	sed "s/@cur_desktop@/$(sh xdg_portal/add_desktop.sh)/" \
+	sed "s/@cur_desktop@/$(get_desktop)/" \
 		xdg_portal/pikeru.portal.in > $portalfile
 else
 	cargo build -r
 	cargo build -r --bin portal
-	[[ -r "$portal_conf" ]] || cp $sample_conf $portal_conf
+	mkdir -p $confdir
+	[[ -r "$confdir/config" ]] || cp $sample_conf $confdir/config
 	sudo "$0"
 	set -x
 	systemctl --user daemon-reload
