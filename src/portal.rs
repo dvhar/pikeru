@@ -1,5 +1,6 @@
 //https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.FileChooser.html
 //https://docs.rs/zbus/latest/zbus/index.html
+use getopts::Options;
 use zbus::{
     connection, interface,
     zvariant::{Value,OwnedValue,ObjectPath,
@@ -25,6 +26,7 @@ use tokio::{
 };
 use log::{info,trace,error,debug,warn,LevelFilter};
 use env_logger::Builder;
+use ctrlc;
 
 
 #[derive(Default, Debug)]
@@ -113,6 +115,14 @@ impl IdxManager {
            },
            Err(e) => eprintln!("{}", e),
         }
+        let con2 = con.clone();
+        ctrlc::set_handler(move || {
+            if let Err(e) = con2.lock().unwrap().cache_flush() {
+                eprintln!("failed to flush index db:{}", e);
+            }
+            eprintln!("Portal closing");
+            std::process::exit(0);
+        }).expect("Error setting Ctrl-C handler");
         Self {
             shtate,
             cmd: take(&mut config.indexer_cmd),
@@ -253,7 +263,7 @@ struct FilePicker {
 enum Section {
     FileChooser,
     Indexer,
-    Base,
+    Global,
 }
 fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
     if dir.contains('~') {
@@ -276,8 +286,10 @@ struct Config {
     indexer_enabled: bool,
     index_file: String,
 }
+
 impl Config {
-    fn new() -> Self {
+
+    fn find_config() -> String {
         let home = std::env::var("HOME").unwrap();
         let xdg_home = std::env::var("XDG_CONFIG_HOME").unwrap_or("".to_string());
         let conf_home = Path::new(&home).join(".config").to_string_lossy().to_string();
@@ -286,6 +298,34 @@ impl Config {
         let cdt = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("Gnome".to_string());
         let mut filenames = cdt.split(':').collect::<Vec<&str>>();
         filenames.push("config");
+        for dir in [&xdg_home, &conf_home, &sysconf] {
+            for file in &filenames {
+                let cpath = Path::new(dir).join("xdg-desktop-portal-pikeru").join(&file);
+                if !cpath.is_file() {
+                    continue;
+                }
+                return cpath.to_string_lossy().to_string();
+            }
+        }
+        eprintln!("No config file");
+        String::new()
+    }
+
+    fn new() -> Self {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let mut opts = Options::new();
+        opts.optopt("c", "config", "Path to config file", "PATH");
+        opts.optopt("l", "log", "Log level", "[off error warn info debug trace]");
+        let matches = match opts.parse(args) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("Bad args: {}", e);
+                std::process::exit(1);
+            }
+        };
+        let conf_path = matches.opt_str("c").unwrap_or(Config::find_config());
+        eprintln!("Conf path:{}", conf_path);
+        let home = std::env::var("HOME").unwrap();
         let mut postproc_dir = "/tmp/pk_postprocess".to_string();
         let mut def_save_dir = Path::new(&home).join("Downloads").to_string_lossy().to_string();
         let fp_cmds = ["/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
@@ -298,64 +338,56 @@ impl Config {
         let mut indexer_exts = "".to_string();
         let mut indexer_enabled = false;
         let mut cache_dir = "~/.config/pikeru".to_string();
-        let mut log_level = LevelFilter::Info;
-        for dir in [&xdg_home, &conf_home, &sysconf] {
-            for file in &filenames {
-                let cpath = Path::new(dir).join("xdg-desktop-portal-pikeru").join(&file);
-                if !cpath.is_file() {
-                    continue;
-                }
-                let txt = std::fs::read_to_string(cpath).unwrap();
-                let mut section = Section::Base;
-                for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
-                    match line {
-                        "[filepicker]" => section = Section::FileChooser,
-                        "[indexer]" => section = Section::Indexer,
-                        _ => {
-                            let (k, v) = str::split_once(line, '=').unwrap();
-                            let (k, v) = (k.trim(), v.trim());
-                            match section {
-                                Section::Indexer => {
-                                    match k {
-                                        "cmd" => indexer_cmd = v.to_string(),
-                                        "check" => indexer_check = v.to_string(),
-                                        "extensions" => indexer_exts = v.to_string(),
-                                        "cache_dir" => cache_dir = v.to_string(),
-                                        "enable" => indexer_enabled = v.parse().unwrap(),
-                                        _ => eprintln!("Unknown indexer config value:{}", line),
-                                    }
-                                },
-                                Section::FileChooser => {
-                                    match k {
-                                        "cmd" => fp_cmd = v.to_string(),
-                                        "default_save_dir" => def_save_dir = v.to_string(),
-                                        "postprocess_dir" => postproc_dir = v.to_string(),
-                                        _ => eprintln!("Unknown filechooser config value:{}", line),
-                                    }
-                                },
-                                Section::Base => {
-                                    match k {
-                                        "log_level" => log_level = match v {
-                                            "off" => LevelFilter::Off,
-                                            "error" => LevelFilter::Error,
-                                            "warn" => LevelFilter::Warn,
-                                            "info" => LevelFilter::Info,
-                                            "debug" => LevelFilter::Debug,
-                                            "trace" => LevelFilter::Trace,
-                                            _ => { eprintln!("Unknown log level:{}", v); LevelFilter::Info },
-                                        },
-                                        _ => eprintln!("Unknown base config value:{}", line),
-                                    }
-                                },
+        let mut log_level = "info".to_string();
+        let txt = std::fs::read_to_string(conf_path).unwrap();
+        let mut section = Section::Global;
+        for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
+            match line {
+                "[filepicker]" => section = Section::FileChooser,
+                "[indexer]" => section = Section::Indexer,
+                _ => {
+                    let (k, v) = str::split_once(line, '=').unwrap();
+                    let (k, v) = (k.trim(), v.trim());
+                    match section {
+                        Section::Indexer => {
+                            match k {
+                                "cmd" => indexer_cmd = v.to_string(),
+                                "check" => indexer_check = v.to_string(),
+                                "extensions" => indexer_exts = v.to_string(),
+                                "cache_dir" => cache_dir = v.to_string(),
+                                "enable" => indexer_enabled = v.parse().unwrap(),
+                                _ => eprintln!("Unknown indexer config value:{}", line),
                             }
-                        }
+                        },
+                        Section::FileChooser => {
+                            match k {
+                                "cmd" => fp_cmd = v.to_string(),
+                                "default_save_dir" => def_save_dir = v.to_string(),
+                                "postprocess_dir" => postproc_dir = v.to_string(),
+                                _ => eprintln!("Unknown filechooser config value:{}", line),
+                            }
+                        },
+                        Section::Global => {
+                            match k {
+                                "log_level" => log_level = v.to_string(),
+                                _ => {},
+                            }
+                        },
                     }
                 }
-                break;
             }
         }
-        Builder::new().filter_level(log_level).init();
-        eprintln!("Log level: {}", log_level);
+        let ll = match log_level.as_str() {
+            "off" => LevelFilter::Off,
+            "error" => LevelFilter::Error,
+            "warn" => LevelFilter::Warn,
+            "info" => LevelFilter::Info,
+            "debug" => LevelFilter::Debug,
+            "trace" => LevelFilter::Trace,
+            _ => { eprintln!("Unknown log level:{}. Defaulting to 'info'", log_level); LevelFilter::Info },
+        };
+        Builder::new().filter_level(ll).init();
+        eprintln!("Log level: {}", ll);
         if !Path::new(&fp_cmd).is_file() {
             eprintln!("No filepicker executable found: {}", fp_cmd);
             std::process::exit(1);

@@ -66,13 +66,6 @@ use fuzzy_matcher::{self, FuzzyMatcher};
 use zbus::{Result,proxy,Connection,blocking};
 use ignore::{gitignore,Match};
 
-macro_rules! die {
-    ($($arg:tt)*) => {{
-        eprintln!($($arg)*);
-        std::process::exit(1);
-    }};
-}
-
 fn main() -> iced::Result {
     let conf = Config::new();
     conf.update(false);
@@ -128,8 +121,11 @@ impl Config {
         opts.optopt("p", "path", "Initial path", "PATH");
         opts.optflag("k", "kill", "kill the portal after flushing any new index entries to disk");
         let matches = match opts.parse(args) {
-            Ok(m) => { m },
-            Err(e) => die!("bad args:{}", e),
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("Bad args: {}", e);
+                std::process::exit(1);
+            }
         };
 
         let home = std::env::var("HOME").unwrap();
