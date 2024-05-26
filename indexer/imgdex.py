@@ -1,8 +1,5 @@
 #!/usr/bin/env python
-import base64
-import requests
-import json
-import sys
+import base64, requests, json, sys
 
 if len(sys.argv) < 3:
     quit(1)

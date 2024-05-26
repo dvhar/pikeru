@@ -63,7 +63,7 @@ use iced_aw::{
 };
 use md5::{Md5,Digest};
 use fuzzy_matcher::{self, FuzzyMatcher};
-use zbus::{Result,proxy,Connection};
+use zbus::{Result,proxy,Connection,blocking};
 use ignore::{gitignore,Match};
 
 macro_rules! die {
@@ -88,6 +88,11 @@ fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
     Cow::from(dir)
 }
 
+fn kill_portal() {
+    IndexProxy::kill();
+    std::process::exit(0);
+}
+
 struct Config {
     title: String,
     path: String,
@@ -99,9 +104,8 @@ struct Config {
     dpi_scale: f64,
     window_size: Size,
     dark_theme: bool,
-    cache_dir: String,
+    thumb_dir: String,
     need_update: bool,
-    index_file: String,
     gitignore: String,
     respect_gitignore: bool,
 }
@@ -122,6 +126,7 @@ impl Config {
         opts.optopt("t", "title", "Title of the filepicker window", "NAME");
         opts.optopt("m", "mode", "Mode of file selection. Default is files", "[file, files, save, dir]");
         opts.optopt("p", "path", "Initial path", "PATH");
+        opts.optflag("k", "kill", "kill the portal after flushing any new index entries to disk");
         let matches = match opts.parse(args) {
             Ok(m) => { m },
             Err(e) => die!("bad args:{}", e),
@@ -143,8 +148,7 @@ impl Config {
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dark_theme = true;
         let mut dpi_scale: f32 = 1.0;
-        let mut opts_missing = 8;
-        let mut index_file = "/tmp/pk_index.db".to_string();
+        let mut opts_missing = 7;
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
             match line {
                 "[Commands]" => section = S::Commands,
@@ -160,7 +164,6 @@ impl Config {
                         S::Ignore => {gitignore += line; gitignore += "\n"; },
                         S::Settings => match k {
                             "thumbnail_size" => { opts_missing -= 1; thumb_size = v.parse().unwrap() },
-                            "index_file" => { opts_missing -= 1; index_file = v.into() },
                             "dpi_scale" => { opts_missing -= 1; dpi_scale = v.parse().unwrap() },
                             "respect_gitignore" => { opts_missing -= 1; respect_gitignore = v.parse().unwrap() },
                             "theme" => { opts_missing -= 1; dark_theme = v == "dark" },
@@ -192,11 +195,14 @@ impl Config {
                 },
             }
         }
-        let cpath = Path::new(&cache_dir);
+        if matches.opt_present("k") {
+            kill_portal();
+        }
+        let cpath = Path::new(&cache_dir).join("thumbnails");
         if let Err(_) = cpath.metadata() {
-            std::fs::create_dir_all(cpath).unwrap();
+            std::fs::create_dir_all(&cpath).unwrap();
         };
-        let home = std::env::var("HOME").unwrap();
+        let thumb_dir= tilda(&home, &cpath.to_string_lossy().as_ref()).to_string();
         Config {
             mode: Mode::from(matches.opt_str("m")),
             path: matches.opt_str("p").unwrap_or(pwd),
@@ -207,8 +213,7 @@ impl Config {
             thumb_size,
             window_size,
             dark_theme,
-            cache_dir: tilda(&home, cache_dir.as_str()).to_string(),
-            index_file: tilda(&home, index_file.as_str()).to_string(),
+            thumb_dir,
             dpi_scale: dpi_scale.into(),
             gitignore,
             respect_gitignore,
@@ -236,14 +241,13 @@ impl Config {
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
                 concat!("dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\ntheme = {}\nsort_by = {}\n",
-                "cache_dir = {}\nindex_file = {}\nrespect_gitignore = {}\n"),
+                "cache_dir = {}\nrespect_gitignore = {}\n"),
                 self.dpi_scale as i32,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
                 if self.dark_theme { "dark" } else { "light" },
                 match self.sort_by { 1=>"name_asc", 2=>"name_desc", 3=>"time_asc", 4=>"time_desc", _=>"" },
-                self.cache_dir,
-                self.index_file,
+                self.thumb_dir,
                 self.respect_gitignore,
                 ).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
@@ -390,7 +394,7 @@ struct Icons {
     doc: Handle,
     unknown: Handle,
     error: Handle,
-    cache_dir: String,
+    thumb_dir: String,
 }
 
 struct Bookmark {
@@ -439,7 +443,7 @@ enum RecState {
 )]
 trait Indexer {
    async fn update(&mut self, path: &Vec<&str>) -> Result<()>;
-   async fn online(&mut self) -> Result<bool>;
+   async fn kill(&mut self) -> Result<()>;
 }
 struct IndexProxy<'a> {
     proxy: Option<IndexerProxy<'a>>,
@@ -447,6 +451,7 @@ struct IndexProxy<'a> {
     sql: Option<rusqlite::Connection>,
 }
 impl<'a> IndexProxy<'a> {
+
     async fn new(index_file: String) -> Self {
         let proxy = async {
             let conn = Connection::session().await.ok()?;
@@ -463,6 +468,13 @@ impl<'a> IndexProxy<'a> {
             sql,
         }
     }
+
+    fn kill() {
+        let conn = blocking::Connection::session().unwrap();
+        let mut prox = IndexerProxyBlocking::new(&conn).unwrap();
+        let _ = prox.kill();
+    }
+
     async fn update(&mut self, dirs: &Vec<String>) -> Vec<(String,String)> {
         let mut placeholders = String::new();
         let mut i = 0;
@@ -565,7 +577,7 @@ impl Application for FilePicker {
             Mode::Save => "Save",
             Mode::Dir => "Selecct",
         }.to_string();
-        let cache_dir = conf.cache_dir.clone();
+        let thumb_dir = conf.thumb_dir.clone();
         (
             Self {
                 conf,
@@ -581,7 +593,7 @@ impl Application for FilePicker {
                 searchbar: String::new(),
                 search_running: false,
                 recurse_state: RecState::Stop,
-                icons: Arc::new(Icons::new(ts, cache_dir)),
+                icons: Arc::new(Icons::new(ts, thumb_dir)),
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
                 ctrl_pressed: false,
                 shift_pressed: false,
@@ -733,7 +745,7 @@ impl Application for FilePicker {
                 self.thumb_sender = Some(fichan);
                 tokio::spawn(recursive_add(recurse_cmds, more_files, txrec.clone(), txsrch,
                                            mem::take(&mut self.conf.gitignore), self.conf.respect_gitignore,
-                                           mem::take(&mut self.conf.index_file)));
+                                           Path::new(&self.conf.thumb_dir).parent().unwrap().join("index.db").to_string_lossy().to_string()));
                 self.recurse_updater = Some(txrec);
                 tokio::spawn(search_loop(search_cmds, search_res));
                 return self.update(Message::LoadDir);
@@ -1360,7 +1372,7 @@ impl FItem {
         hasher.update(path.as_bytes());
         hasher.update(fmtime.to_le_bytes());
         hasher.update(fsize.to_le_bytes());
-        let cache_path = Path::new(&icons.cache_dir).join(format!("{:x}{}.webp", hasher.finalize(), thumbsize));
+        let cache_path = Path::new(&icons.thumb_dir).join(format!("{:x}{}.webp", hasher.finalize(), thumbsize));
         let cmtime = match cache_path.metadata() {
             Ok(md) => md.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
             Err(_) => 0,
@@ -1372,7 +1384,7 @@ impl FItem {
             let img = load_from_memory(buffer.as_ref()).unwrap();
             let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
             Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
-        } else if fdir.to_string_lossy() == icons.cache_dir {
+        } else if fdir.to_string_lossy() == icons.thumb_dir {
             let mut buffer = Vec::new();
             let mut file = File::open(self.path.as_str()).await.unwrap();
             file.read_to_end(&mut buffer).await.unwrap_or(0);
@@ -1697,13 +1709,13 @@ impl FilePicker {
 }
 
 impl Icons {
-    fn new(thumbsize: f32, cache_dir: String) -> Self {
+    fn new(thumbsize: f32, thumb_dir: String) -> Self {
         Self {
             folder: Self::init(include_bytes!("../assets/folder.png"), thumbsize),
             unknown:  Self::init(include_bytes!("../assets/unknown.png"), thumbsize),
             doc:  Self::init(include_bytes!("../assets/document.png"), thumbsize),
             error:  Self::init(include_bytes!("../assets/error.png"), thumbsize),
-            cache_dir,
+            thumb_dir,
         }
     }
     fn init(img_bytes: &[u8], thumbsize: f32) -> Handle {

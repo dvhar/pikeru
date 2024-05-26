@@ -32,4 +32,3 @@ rusqlite = { version = "0.31.0", features = ["bundled"] }
 ignore = "0.4.22"
 log = "0.4.21"
 env_logger = "0.11.3"
-

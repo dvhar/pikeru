@@ -13,13 +13,15 @@ postprocess_dir=/tmp/pk_postprocess
 # is used to generate searchable text for image files.
 
 enable = false
-index_file = ~/.cache/pk_index.db
 
-# 'cmd' is a shell command that will be given an additional filepath arg and prints the searchable text on stdout.
+# make sure this is the same as cache_dir in pikeru.conf
+cache_dir = ~/.cache/pikeru
+
+# shell command that will be given an additional filepath arg and prints the searchable text on stdout.
 cmd = python ~/git/pikeru/indexer/imgdex.py http://127.0.0.1:7860/sdapi/v1/interrogate
 
-# 'check' is a shell command that returns status code zero when the indexer is online and non-zero when offline.
+# shell command that only returns status code 0 when the indexer is online
 check = curl http://127.0.0.1:7860/sdapi/v1/interrogate
 
-# 'extensions' is a comma-separate list of file types that 'cmd' can process.
+# comma-separate list of file types that 'cmd' can process.
 extensions = png,jpg,gif,webp,tiff,bmp

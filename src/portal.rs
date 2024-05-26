@@ -47,10 +47,10 @@ struct IdxManager {
 }
 
 async fn index_loop(man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
-    let mut dir_map = HashMap::<String,bool>::new();
-    let mut timeout = time::Instant::now();
-    let mut online = false;
-    info!("indexer {}", if man.indexer_online().await {"online"} else {"offline"});
+    let mut done_map = HashMap::<String,bool>::new();
+    let mut timeout = time::Instant::now().checked_add(time::Duration::from_secs(60)).unwrap();
+    let mut online = man.indexer_online().await;
+    info!("indexer {}", if online {"online"} else {"offline"});
     loop {
         let msg = chan.recv().await.unwrap();
         if !enabled { continue; }
@@ -68,11 +68,11 @@ async fn index_loop(man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
                 debug!("Starting index");
                 man.shtate.lock().unwrap().idx_running = true;
                 while !man.shtate.lock().unwrap().picker_open {
-                    if let Some(dir) = dir_map.iter().find(|v|!v.1) {
+                    if let Some(dir) = done_map.iter().find(|v|!v.1) {
                         man.update_dir(dir.0).await;
-                        dir_map.entry(dir.0.to_string()).and_modify(|v| *v = true);
+                        done_map.entry(dir.0.to_string()).and_modify(|v| *v = true);
                     } else {
-                        dir_map.clear();
+                        done_map.clear();
                         break;
                     }
                 }
@@ -80,7 +80,7 @@ async fn index_loop(man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
             },
             Msg::Dirs(dirs) => {
                 debug!("Got dirs");
-                dirs.into_iter().for_each(|dir|{dir_map.entry(dir).or_default();});
+                dirs.into_iter().for_each(|dir|{done_map.entry(dir).or_default();});
             },
         }
     }
@@ -213,9 +213,15 @@ impl IdxManager {
 struct Indexer {
     tx: USender<Msg>,
     shtate: Arc<Mutex<Shtate>>,
+    con: Arc<Mutex<rusqlite::Connection>>,
 }
 #[interface(name = "org.freedesktop.impl.portal.SearchIndexer")]
 impl Indexer {
+    async fn kill(&self) {
+        self.con.lock().unwrap().cache_flush().unwrap();
+        eprintln!("Killed by dbus signal");
+        std::process::exit(0);
+    }
     async fn update(&self, dirs: Vec<String>) -> () {
         self.tx.send(Msg::Dirs(dirs)).unwrap(); 
         let st = self.shtate.lock().unwrap();
@@ -226,10 +232,11 @@ impl Indexer {
 
 }
 impl Indexer {
-    fn new(tx: USender<Msg>, shtate: Arc<Mutex<Shtate>>) -> Self {
+    fn new(tx: USender<Msg>, shtate: Arc<Mutex<Shtate>>, con: Arc<Mutex<rusqlite::Connection>>) -> Self {
         Self {
             tx,
             shtate,
+            con,
         }
     }
 }
@@ -290,7 +297,7 @@ impl Config {
         let mut indexer_check = "".to_string();
         let mut indexer_exts = "".to_string();
         let mut indexer_enabled = false;
-        let mut index_file = "~/.config/pk_index.db".to_string();
+        let mut cache_dir = "~/.config/pikeru".to_string();
         let mut log_level = LevelFilter::Info;
         for dir in [&xdg_home, &conf_home, &sysconf] {
             for file in &filenames {
@@ -313,7 +320,7 @@ impl Config {
                                         "cmd" => indexer_cmd = v.to_string(),
                                         "check" => indexer_check = v.to_string(),
                                         "extensions" => indexer_exts = v.to_string(),
-                                        "index_file" => index_file = v.to_string(),
+                                        "cache_dir" => cache_dir = v.to_string(),
                                         "enable" => indexer_enabled = v.parse().unwrap(),
                                         _ => eprintln!("Unknown indexer config value:{}", line),
                                     }
@@ -362,7 +369,7 @@ impl Config {
             indexer_check: tilda(&home, &indexer_check).to_string(),
             indexer_exts,
             indexer_enabled,
-            index_file: tilda(&home, &index_file).to_string(),
+            index_file: Path::new(tilda(&home, &cache_dir).as_ref()).join("index.db").to_string_lossy().to_string(),
             home,
         }
     }
@@ -389,8 +396,9 @@ impl FilePicker {
         let cmd = if save {
             format!("{} {} {} {} \"{}\"", self.cmd, multi, dir, savenum, tilda(&self.home,path))
         } else {
-            format!("POSTPROCESS_DIR=\"{}\" {} {} {} {} \"{}\"",
-                    self.postproc_dir, self.cmd, multi, dir, savenum, tilda(&self.home,&self.prev_path.lock().unwrap()))
+            format!("POSTPROCESS_DIR=\"{}\" {} {} {} {} {}",
+                    self.postproc_dir, self.cmd, multi, dir, savenum,
+                    shquote(tilda(&self.home,&self.prev_path.lock().unwrap()).as_ref()))
         };
         debug!("CMD:{}", cmd);
         self.shtate.lock().unwrap().picker_open = true;
@@ -489,7 +497,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (tx, rx) = unbounded_channel::<Msg>();
     let picker = FilePicker::new(&mut config, sht.clone(), tx.clone());
     let con = Arc::new(Mutex::new(rusqlite::Connection::open(&config.index_file).unwrap()));
-    let indexer = Indexer::new(tx, sht.clone());
+    let indexer = Indexer::new(tx, sht.clone(), con.clone());
     let manager = IdxManager::new(sht.clone(), &mut config, con);
     tokio::spawn(index_loop(manager, rx, config.indexer_enabled));
     let _conn = connection::Builder::session()?
