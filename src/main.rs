@@ -66,6 +66,36 @@ use fuzzy_matcher::{self, FuzzyMatcher};
 use zbus::{Result,proxy,Connection,blocking};
 use ignore::{gitignore,Match};
 
+macro_rules! die {
+    ($($arg:tt)*) => {{
+        eprintln!($($arg)*);
+        std::process::exit(1);
+    }};
+}
+
+fn cli(flags: &getopts::Matches) {
+    if flags.opt_present("k") {
+        IndexProxy::kill();
+        println!("Killed portal");
+    }
+    let cmd = if flags.opt_present("d") {
+        include_str!("../xdg_portal/unsetconfig.sh")
+    } else if flags.opt_present("e") {
+        include_str!("../xdg_portal/setconfig.sh")
+    } else { "" };
+    if !cmd.is_empty() {
+        let res = std::process::Command::new("bash").arg("-c").arg(cmd).output();
+        match res {
+            Ok(out) if out.status.success() => println!("{}", unsafe{std::str::from_utf8_unchecked(&out.stdout)}),
+            Ok(out) => unsafe {die!("Error:{}\n{}",
+                std::str::from_utf8_unchecked(&out.stdout),
+                std::str::from_utf8_unchecked(&out.stderr))},
+            Err(e) => die!("Command failed:{}", e),
+        }
+    }
+    std::process::exit(0);
+}
+
 fn main() -> iced::Result {
     let conf = Config::new();
     conf.update(false);
@@ -79,11 +109,6 @@ fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
         return Cow::from(expanded)
     }
     Cow::from(dir)
-}
-
-fn kill_portal() {
-    IndexProxy::kill();
-    std::process::exit(0);
 }
 
 struct Config {
@@ -120,12 +145,11 @@ impl Config {
         opts.optopt("m", "mode", "Mode of file selection. Default is files", "[file, files, save, dir]");
         opts.optopt("p", "path", "Initial path", "PATH");
         opts.optflag("k", "kill", "kill the portal after flushing any new index entries to disk");
+        opts.optflag("d", "disable", "Don't use pikeru as your system filepicker");
+        opts.optflag("e", "disable", "Don't use pikeru as your system filepicker");
         let matches = match opts.parse(args) {
             Ok(m) => m,
-            Err(e) => {
-                eprintln!("Bad args: {}", e);
-                std::process::exit(1);
-            }
+            Err(e) => die!("Bad args: {}", e),
         };
 
         let home = std::env::var("HOME").unwrap();
@@ -191,9 +215,7 @@ impl Config {
                 },
             }
         }
-        if matches.opt_present("k") {
-            kill_portal();
-        }
+        cli(&matches);
         let cpath = Path::new(&cache_dir).join("thumbnails");
         if let Err(_) = cpath.metadata() {
             std::fs::create_dir_all(&cpath).unwrap();
