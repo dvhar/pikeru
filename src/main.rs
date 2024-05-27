@@ -243,7 +243,7 @@ impl Config {
                 self.thumb_size as i32,
                 if self.dark_theme { "dark" } else { "light" },
                 match self.sort_by { 1=>"name_asc", 2=>"name_desc", 3=>"time_asc", 4=>"time_desc", _=>"" },
-                self.thumb_dir,
+                Path::new(&self.thumb_dir).parent().unwrap().to_string_lossy(),
                 self.respect_gitignore,
                 ).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
