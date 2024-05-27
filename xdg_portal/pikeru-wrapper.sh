@@ -53,6 +53,7 @@ cmd="/usr/local/bin/pikeru -m $mode -t 'File Picker' -p \"$path\""
 echo "$cmd" >> /tmp/pk.log
 output="$(eval "$cmd")"
 if [ $? = 139 ] && [ ! -r "$HOME/.cache/pikeru/no_gpu" ]; then
+    echo "Iced GUI gpu library crashed. Fixing now..." >> /tmp/pk.log
     touch "$HOME/.cache/pikeru/no_gpu"
     export ICED_BACKEND=tiny-skia
     output="$(eval "$cmd")"

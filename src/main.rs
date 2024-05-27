@@ -163,7 +163,7 @@ impl Config {
                             "dpi_scale" => { opts_missing -= 1; dpi_scale = v.parse().unwrap() },
                             "respect_gitignore" => { opts_missing -= 1; respect_gitignore = v.parse().unwrap() },
                             "theme" => { opts_missing -= 1; dark_theme = v == "dark" },
-                            "cache_dir" => { opts_missing -= 1; cache_dir = v.to_string() },
+                            "cache_dir" => { opts_missing -= 1; cache_dir = tilda(&home, v).to_string() },
                             "window_size" => {
                                 opts_missing -= 1;
                                 if !match str::split_once(v, 'x') {
@@ -199,6 +199,12 @@ impl Config {
             std::fs::create_dir_all(&cpath).unwrap();
         };
         let thumb_dir= tilda(&home, &cpath.to_string_lossy().as_ref()).to_string();
+        if bookmarks.is_empty() {
+            bookmarks.push(Bookmark::new("Home", &home));
+            bookmarks.push(Bookmark::new("Downloads", Path::new(&home).join("Downloads").to_string_lossy().as_ref()));
+            bookmarks.push(Bookmark::new("Documents", Path::new(&home).join("Documents").to_string_lossy().as_ref()));
+            bookmarks.push(Bookmark::new("Pictures", Path::new(&home).join("Pictures").to_string_lossy().as_ref()));
+        }
         Config {
             mode: Mode::from(matches.opt_str("m")),
             path: matches.opt_str("p").unwrap_or(pwd),
