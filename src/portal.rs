@@ -157,10 +157,10 @@ impl IdxManager {
 
     fn save(self: &Self, dir: &String, fname: &str, desc: &str, mtime: f32, stat: Entry) {
         let con = self.con.lock().unwrap();
-        let mut query = con.prepare_cached(if stat == Entry::None {
-            "insert into descriptions (dir, fname, description, mtime) values (?1, ?2, ?3, ?4)"
-        } else {
-            "update descriptions set description = ?3, mtime = ?4 where dir = ?1 and fname = ?2"
+        let mut query = con.prepare_cached(match stat {
+            Entry::None => "insert into descriptions (dir, fname, description, mtime) values (?1, ?2, ?3, ?4)",
+            Entry::Old => "update descriptions set description = ?3, mtime = ?4 where dir = ?1 and fname = ?2",
+            Entry::Done => unreachable!(),
         }).unwrap();
         query.execute((dir, fname, desc, mtime)).unwrap();
     }
@@ -254,6 +254,7 @@ impl Indexer {
 struct FilePicker {
     prev_path: Mutex<String>,
     postproc_dir: String,
+    postprocessor: String,
     def_save_dir: String,
     cmd: String,
     home: String,
@@ -278,6 +279,7 @@ struct Config {
     home: String,
     prev_path: String,
     postproc_dir: String,
+    postprocessor: String,
     def_save_dir: String,
     filecmd: String,
     indexer_cmd: String,
@@ -333,6 +335,7 @@ impl Config {
                     "/opt/pikeru/xdg_portal/contrib/pikeru-wrapper.sh"];
         let mut fp_cmd = fp_cmds.iter().find_map(|c|if Path::new(c).is_file() {Some(*c)} else {None})
             .unwrap_or(fp_cmds[0]).to_string();
+        let mut postprocessor = "".to_string();
         let mut indexer_cmd = "".to_string();
         let mut indexer_check = "".to_string();
         let mut indexer_exts = "".to_string();
@@ -364,6 +367,7 @@ impl Config {
                                 "cmd" => fp_cmd = v.to_string(),
                                 "default_save_dir" => def_save_dir = v.to_string(),
                                 "postprocess_dir" => postproc_dir = v.to_string(),
+                                "postprocessor" => postprocessor = v.to_string(),
                                 _ => eprintln!("Unknown filechooser config value:{}", line),
                             }
                         },
@@ -395,6 +399,7 @@ impl Config {
         Self {
             prev_path: home.clone(),
             postproc_dir: tilda(&home, &postproc_dir).to_string(),
+            postprocessor: tilda(&home, &postprocessor).to_string(),
             def_save_dir: tilda(&home, &def_save_dir).to_string(),
             filecmd: tilda(&home, &fp_cmd).to_string(),
             indexer_cmd: tilda(&home, &indexer_cmd).to_string(),
@@ -413,6 +418,7 @@ impl FilePicker {
         Self {
             prev_path: Mutex::new(take(&mut conf.prev_path)),
             postproc_dir: take(&mut conf.postproc_dir),
+            postprocessor: take(&mut conf.postprocessor),
             def_save_dir: take(&mut conf.def_save_dir),
             cmd: take(&mut conf.filecmd),
             home: take(&mut conf.home),
@@ -428,8 +434,8 @@ impl FilePicker {
         let cmd = if save {
             format!("{} {} {} {} \"{}\"", self.cmd, multi, dir, savenum, tilda(&self.home,path))
         } else {
-            format!("POSTPROCESS_DIR=\"{}\" {} {} {} {} {}",
-                    self.postproc_dir, self.cmd, multi, dir, savenum,
+            format!("POSTPROCESS_DIR=\"{}\" POSTPROCESSOR=\"{}\" {} {} {} {} {}",
+                    self.postproc_dir, self.postprocessor, self.cmd, multi, dir, savenum,
                     shquote(tilda(&self.home,&self.prev_path.lock().unwrap()).as_ref()))
         };
         debug!("CMD:{}", cmd);

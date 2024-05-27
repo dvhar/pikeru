@@ -5,6 +5,9 @@ log_level = info
 cmd=/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
 default_save_dir=~/Downloads
 postprocess_dir=/tmp/pk_postprocess
+# Point to postprocess.example.sh or similar script to automatically process files before upload.
+# Useful for common file conversions, resizing, compressing, etc
+postprocessor=
 
 
 [indexer]

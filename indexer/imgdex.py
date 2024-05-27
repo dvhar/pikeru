@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 # Example indexer works with stable-diffusion-webui to generate searchable text for images.
 # This is called by xdg-desktop-portal-pikeru to build a semantic search index, see usage info in its config file.
-# Args: <url> <image path>
-# Example url: http://your_ai_server:7860/sdapi/v1/interrogate
 import base64, requests, json, sys
 
 if len(sys.argv) < 3:
