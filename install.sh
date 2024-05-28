@@ -17,6 +17,7 @@ sharedir2=/usr/share/xdg-desktop-portal-pikeru
 dbusdir1=/usr/local/share/dbus-1/services
 dbusdir2=/usr/share/dbus-1/services
 mandir=/usr/local/share/man/man5
+portaldir=/usr/share/xdg-desktop-portal/portals
 portalfile=/usr/share/xdg-desktop-portal/portals/pikeru.portal
 confdir=$HOME/.config/xdg-desktop-portal-pikeru
 
@@ -36,7 +37,7 @@ get_desktop(){
 
 if [[ $(whoami) = root ]]; then
 	set -x
-	mkdir -p $mandir $dbusdir1 $dbusdir2 $sharedir1 $sharedir2
+	mkdir -p $mandir $dbusdir1 $dbusdir2 $sharedir1 $sharedir2 $portaldir
 	mv -u target/release/pikeru $bindir
 	mv -u target/release/portal $portalbin
 	cp -u $wrapper $sharedir1

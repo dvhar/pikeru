@@ -34,7 +34,9 @@ sudo apt install build-essential libsystemd-dev meson ninja-build scdoc python3-
 
 ### Arch:
 ```
-sudo pacman -S base-devel meson ninja scdoc libsystemd tk libinih xdg-desktop-portal
+sudo pacman -S scdoc xdg-desktop-portal ffmpeg clang
+
+
 ```
 
 ## License
