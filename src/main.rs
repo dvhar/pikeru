@@ -77,6 +77,7 @@ fn cli(flags: &getopts::Matches) {
     if flags.opt_present("k") {
         IndexProxy::kill();
         println!("Killed portal");
+        std::process::exit(0);
     }
     let cmd = if flags.opt_present("d") {
         include_str!("../xdg_portal/unsetconfig.sh")
@@ -92,8 +93,8 @@ fn cli(flags: &getopts::Matches) {
                 std::str::from_utf8_unchecked(&out.stderr))},
             Err(e) => die!("Command failed:{}", e),
         }
+        std::process::exit(0);
     }
-    std::process::exit(0);
 }
 
 fn main() -> iced::Result {
