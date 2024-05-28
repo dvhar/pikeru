@@ -534,6 +534,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let sht = Arc::new(Mutex::new(Shtate::default()));
     let (tx, rx) = unbounded_channel::<Msg>();
     let picker = FilePicker::new(&mut config, sht.clone(), tx.clone());
+    std::fs::create_dir_all(Path::new(&config.index_file).parent().unwrap()).unwrap();
     let con = Arc::new(Mutex::new(rusqlite::Connection::open(&config.index_file).unwrap()));
     let indexer = Indexer::new(tx, sht.clone(), con.clone());
     let manager = IdxManager::new(sht.clone(), &mut config, con);
