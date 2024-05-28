@@ -29,13 +29,12 @@ First install the dependencies at the bottom of the readme
 
 ### Ubuntu:
 ```
-sudo apt install build-essential libsystemd-dev meson ninja-build scdoc python3-tk python3-venv libinih-dev cmake pkg-config
+sudo apt install build-essential scdoc pkg-config libavutil-dev libavformat-dev libavfilter-dev libavdevice-dev libclang-dev
 ```
 
 ### Arch:
 ```
 sudo pacman -S scdoc xdg-desktop-portal ffmpeg clang
-
 
 ```
 
