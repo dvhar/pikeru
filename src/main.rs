@@ -467,8 +467,8 @@ enum RecState {
     default_path = "/org/freedesktop/portal/desktop"
 )]
 trait Indexer {
-   async fn update(&mut self, path: &Vec<&str>) -> Result<()>;
-   async fn kill(&mut self) -> Result<()>;
+    async fn update(&mut self, path: &Vec<&str>) -> Result<()>;
+    async fn kill(&mut self) -> Result<()>;
 }
 struct IndexProxy<'a> {
     proxy: Option<IndexerProxy<'a>>,
@@ -863,7 +863,7 @@ impl Application for FilePicker {
                 while di < self.displayed.len() && max_load > 0 {
                     let ii = self.displayed[di];
                     if self.items[ii].not_loaded() {
-                        let mut item = mem::take(&mut self.items[ii]);
+                        let mut item = mem::replace(&mut self.items[ii], FItem::placeholder(ii, di));
                         item.view_id = self.view_id;
                         tokio::spawn(item.load(
                                     self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
@@ -876,19 +876,19 @@ impl Application for FilePicker {
             Message::NextItem(doneitem) => {
                 if doneitem.nav_id == self.nav_id {
                     if doneitem.view_id == self.view_id {
-                        let mut prev = self.last_loaded;
-                        while prev < self.displayed.len() {
-                            let i = self.dtoi(prev);
+                        let mut prev_di = self.last_loaded;
+                        while prev_di < self.displayed.len() {
+                            let i = self.dtoi(prev_di);
                             if self.items[i].not_loaded() {
-                                let mut nextitem = mem::take(&mut self.items[i]);
+                                let mut nextitem = mem::replace(&mut self.items[i], FItem::placeholder(i, prev_di));
                                 nextitem.view_id = self.view_id;
                                 tokio::spawn(nextitem.load(
                                         self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
                                 break;
                             }
-                            prev += 1;
+                            prev_di += 1;
                         }
-                        self.last_loaded = prev + 1;
+                        self.last_loaded = prev_di + 1;
                     }
                     let j = doneitem.items_idx;
                     self.items[j] = doneitem;
@@ -1336,6 +1336,13 @@ impl FItem {
             },
             _ => None,
         }
+    }
+
+    fn placeholder(ii: usize, di: usize) -> Self {
+        let mut ret = FItem(Box::new(Default::default()));
+        ret.items_idx = ii;
+        ret.display_idx = di;
+        ret
     }
 
     fn new(pth: PathBuf, nav_id: u8) -> Self {
@@ -1848,7 +1855,6 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>,
     let mut items = vec![];
     let mut displayed = vec![];
     let mut nav_id = 0;
-    //TODO: don't use this when using portal
     let captions = RefCell::new(HashMap::<String,&'static str>::new());
     let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
     loop {
