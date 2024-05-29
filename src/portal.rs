@@ -312,7 +312,6 @@ struct Config {
     indexer_check: String,
     indexer_exts: String,
     indexer_enabled: bool,
-    index_file: String,
 }
 
 impl Config {
@@ -366,7 +365,6 @@ impl Config {
         let mut indexer_check = "".to_string();
         let mut indexer_exts = "".to_string();
         let mut indexer_enabled = false;
-        let mut cache_dir = "~/.config/pikeru".to_string();
         let mut log_level = "info".to_string();
         let txt = std::fs::read_to_string(conf_path).unwrap();
         let mut section = Section::Global;
@@ -383,7 +381,6 @@ impl Config {
                                 "cmd" => indexer_cmd = v.to_string(),
                                 "check" => indexer_check = v.to_string(),
                                 "extensions" => indexer_exts = v.to_string(),
-                                "cache_dir" => cache_dir = v.to_string(),
                                 "enable" => indexer_enabled = v.parse().unwrap(),
                                 _ => eprintln!("Unknown indexer config value:{}", line),
                             }
@@ -432,7 +429,6 @@ impl Config {
             indexer_check: tilda(&home, &indexer_check).to_string(),
             indexer_exts,
             indexer_enabled,
-            index_file: Path::new(tilda(&home, &cache_dir).as_ref()).join("index.db").to_string_lossy().to_string(),
             home,
         }
     }
@@ -557,11 +553,12 @@ impl FilePicker {
 async fn main() -> Result<(), Box<dyn Error>> {
     let mut config = Config::new();
     eprintln!("Running {:#?}", config);
+    let idxfile = Path::new(&config.home).join(".cache").join("pikeru").join("index.db");
     let sht = Arc::new(Mutex::new(Shtate::default()));
     let (tx, rx) = unbounded_channel::<Msg>();
     let picker = FilePicker::new(&mut config, sht.clone(), tx.clone());
-    std::fs::create_dir_all(Path::new(&config.index_file).parent().unwrap()).unwrap();
-    let con = Arc::new(Mutex::new(rusqlite::Connection::open(&config.index_file).unwrap()));
+    std::fs::create_dir_all(idxfile.parent().unwrap()).unwrap();
+    let con = Arc::new(Mutex::new(rusqlite::Connection::open(idxfile).unwrap()));
     let indexer = Indexer::new(tx, sht.clone(), con.clone());
     let manager = IdxManager::new(sht.clone(), &mut config, con);
     tokio::spawn(index_loop(manager, rx, config.indexer_enabled));

@@ -46,7 +46,6 @@ use std::{
     collections::{HashMap,HashSet},
     fs, str, mem,
     path::{PathBuf,Path},
-    borrow::Cow,
     process::{self, Command as OsCmd},
     sync::Arc,
     time::{Instant,Duration},
@@ -104,14 +103,6 @@ fn main() -> iced::Result {
     FilePicker::run(iced::Settings::with_flags(conf))
 }
 
-fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
-    if dir.contains('~') {
-        let expanded = dir.replace("~", &home);
-        return Cow::from(expanded)
-    }
-    Cow::from(dir)
-}
-
 struct Config {
     title: String,
     path: String,
@@ -123,7 +114,6 @@ struct Config {
     dpi_scale: f64,
     window_size: Size,
     dark_theme: bool,
-    thumb_dir: String,
     need_update: bool,
     gitignore: String,
     respect_gitignore: bool,
@@ -155,7 +145,6 @@ impl Config {
 
         let home = std::env::var("HOME").unwrap();
         let confpath = Path::new(&home).join(".config").join("pikeru.conf").to_string_lossy().to_string();
-        let mut cache_dir = Path::new(&home).join(".cache").join("pikeru").to_string_lossy().to_string();
         let txt = std::fs::read_to_string(confpath).unwrap_or("".to_string());
         #[derive(PartialEq)]
         enum S { Commands, Settings, Bookmarks, Ignore }
@@ -169,7 +158,7 @@ impl Config {
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dark_theme = true;
         let mut dpi_scale: f32 = 1.0;
-        let mut opts_missing = 7;
+        let mut opts_missing = 6;
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
             match line {
                 "[Commands]" => section = S::Commands,
@@ -188,7 +177,6 @@ impl Config {
                             "dpi_scale" => { opts_missing -= 1; dpi_scale = v.parse().unwrap() },
                             "respect_gitignore" => { opts_missing -= 1; respect_gitignore = v.parse().unwrap() },
                             "theme" => { opts_missing -= 1; dark_theme = v == "dark" },
-                            "cache_dir" => { opts_missing -= 1; cache_dir = tilda(&home, v).to_string() },
                             "window_size" => {
                                 opts_missing -= 1;
                                 if !match str::split_once(v, 'x') {
@@ -217,11 +205,10 @@ impl Config {
             }
         }
         cli(&matches);
-        let cpath = Path::new(&cache_dir).join("thumbnails");
-        if let Err(_) = cpath.metadata() {
-            std::fs::create_dir_all(&cpath).unwrap();
+        let tpath = Path::new(&home).join(".cache").join("pikeru").join("thumbnails");
+        if let Err(_) = tpath.metadata() {
+            std::fs::create_dir_all(&tpath).unwrap();
         };
-        let thumb_dir= tilda(&home, &cpath.to_string_lossy().as_ref()).to_string();
         if bookmarks.is_empty() {
             bookmarks.push(Bookmark::new("Home", &home));
             bookmarks.push(Bookmark::new("Downloads", Path::new(&home).join("Downloads").to_string_lossy().as_ref()));
@@ -238,7 +225,6 @@ impl Config {
             thumb_size,
             window_size,
             dark_theme,
-            thumb_dir,
             dpi_scale: dpi_scale.into(),
             gitignore,
             respect_gitignore,
@@ -265,16 +251,13 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                concat!("dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\ntheme = {}\nsort_by = {}\n",
-                "cache_dir = {}\nrespect_gitignore = {}\n"),
+                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\ntheme = {}\nsort_by = {}\nrespect_gitignore = {}\n",
                 self.dpi_scale as i32,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
                 if self.dark_theme { "dark" } else { "light" },
                 match self.sort_by { 1=>"name_asc", 2=>"name_desc", 3=>"time_asc", 4=>"time_desc", _=>"" },
-                Path::new(&self.thumb_dir).parent().unwrap().to_string_lossy(),
-                self.respect_gitignore,
-                ).as_str());
+                self.respect_gitignore).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
 # The respect_gitignore setting only toggles .gitignore files, not this section.\n[SearchIgnore]\n");
         conf.push_str(self.gitignore.as_str());
@@ -478,13 +461,15 @@ struct IndexProxy<'a> {
 }
 impl<'a> IndexProxy<'a> {
 
-    async fn new(index_file: String) -> Self {
+    async fn new() -> Self {
         let proxy = async {
             let conn = Connection::session().await.ok()?;
             let prox = IndexerProxy::new(&conn).await.ok()?;
             Some(prox)
         }.await;
-        let sql = match rusqlite::Connection::open(&index_file) {
+        let home = std::env::var("HOME").unwrap();
+        let idxfile = Path::new(&home).join(".cache").join("pikeru").join("index.db");
+        let sql = match rusqlite::Connection::open(&idxfile) {
             Ok(con) => Some(con),
             Err(_) => None,
         };
@@ -615,7 +600,6 @@ impl Application for FilePicker {
             Mode::Save => "Save",
             Mode::Dir => "Selecct",
         }.to_string();
-        let thumb_dir = conf.thumb_dir.clone();
         (
             Self {
                 conf,
@@ -631,7 +615,7 @@ impl Application for FilePicker {
                 searchbar: String::new(),
                 search_running: false,
                 recurse_state: RecState::Stop,
-                icons: Arc::new(Icons::new(ts, thumb_dir)),
+                icons: Arc::new(Icons::new(ts)),
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
                 ctrl_pressed: false,
                 shift_pressed: false,
@@ -782,8 +766,7 @@ impl Application for FilePicker {
                 self.ino_updater = Some(txino);
                 self.thumb_sender = Some(fichan);
                 tokio::spawn(recursive_add(recurse_cmds, more_files, txrec.clone(), txsrch,
-                                           mem::take(&mut self.conf.gitignore), self.conf.respect_gitignore,
-                                           Path::new(&self.conf.thumb_dir).parent().unwrap().join("index.db").to_string_lossy().to_string()));
+                                           mem::take(&mut self.conf.gitignore), self.conf.respect_gitignore));
                 self.recurse_updater = Some(txrec);
                 tokio::spawn(search_loop(search_cmds, search_res));
                 return self.update(Message::LoadDir);
@@ -1754,13 +1737,15 @@ impl FilePicker {
 }
 
 impl Icons {
-    fn new(thumbsize: f32, thumb_dir: String) -> Self {
+    fn new(thumbsize: f32) -> Self {
+        let home = std::env::var("HOME").unwrap();
+        let tpath = Path::new(&home).join(".cache").join("pikeru").join("thumbnails");
         Self {
             folder: Self::init(include_bytes!("../assets/folder.png"), thumbsize),
             unknown:  Self::init(include_bytes!("../assets/unknown.png"), thumbsize),
             doc:  Self::init(include_bytes!("../assets/document.png"), thumbsize),
             error:  Self::init(include_bytes!("../assets/error.png"), thumbsize),
-            thumb_dir,
+            thumb_dir: tpath.to_string_lossy().to_string(),
         }
     }
     fn init(img_bytes: &[u8], thumbsize: f32) -> Handle {
@@ -1938,12 +1923,11 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                        selfy: USender<RecMsg>,
                        semchan: USender<SearchEvent>,
                        gitignore_txt: String,
-                       respect_gitignore: bool,
-                       index_file: String) {
+                       respect_gitignore: bool) {
     let mut nav_id = 0;
     let mut dirs = vec![];
     let mut ignores: Vec<Vec<Arc<gitignore::Gitignore>>> = vec![];
-    let mut indexer = IndexProxy::new(index_file).await;
+    let mut indexer = IndexProxy::new().await;
     indexer.configure(respect_gitignore, gitignore_txt.as_str()).await;
     let mut ig_builder = gitignore::GitignoreBuilder::new("");
     gitignore_txt.lines().for_each(|line|{ig_builder.add_line(None, line).unwrap();});

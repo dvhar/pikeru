@@ -38,8 +38,7 @@ if [[ $(whoami) = root ]]; then
 	cp -u $dbus_svc $dbusdir2
 	cp -u $sd_svc $unitdir
 	scdoc < $manpage > $mandir/xdg-desktop-portal-pikeru.5
-	sed "s/@cur_desktop@/$(get_desktop)/" \
-		xdg_portal/pikeru.portal.in > $portalfile
+	sed "s/@cur_desktop@/$(get_desktop)/" xdg_portal/pikeru.portal.in > $portalfile
 else
 	if ! command -v cargo &> /dev/null; then
 		echo -e "Cargo is not installed. Enter 'y' to install it now\n(then press enter when prompted use default location)"

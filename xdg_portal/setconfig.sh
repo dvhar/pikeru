@@ -34,8 +34,8 @@ portalfile="$xdir/portals.conf"
 mkdir -p "$xdir"
 
 if [ -f "$portalfile" ] && ! grep -q pikeru "$portalfile" ; then
-	mv "$portalfile" "${portalfile}.orig"
 	origconf="${portalfile}.orig"
+	mv "$portalfile" "$origconf"
 else
 	origconf="$(findconf)"
 fi

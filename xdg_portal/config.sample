@@ -17,9 +17,6 @@ postprocess_dir=/tmp/pk_postprocess
 
 enable = false
 
-# make sure this is the same as cache_dir in ~/.config/pikeru.conf
-cache_dir = ~/.cache/pikeru
-
 # bash command that will be given an additional filepath arg and prints searchable text to stdout.
 cmd = python ~/git/pikeru/indexer/img_indexer.py http://127.0.0.1:7860/sdapi/v1/interrogate
 
