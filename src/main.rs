@@ -809,9 +809,8 @@ impl Application for FilePicker {
             },
             Message::SearchResult(res) => {
                 let mut still_running = false;
-                if let SearchEvent::Results(mut res, nav_id, num_items, term) = *res {
+                if let SearchEvent::Results(res, nav_id, num_items, term) = *res {
                     if nav_id == self.nav_id && !self.searchbar.is_empty() {
-                        res.sort_by(|a,b|b.1.cmp(&a.1));
                         self.displayed = res[..1000.min(res.len())].into_iter().enumerate().map(|(i,r)|{
                             self.items[r.0].display_idx = i;
                             r.0
@@ -886,7 +885,7 @@ impl Application for FilePicker {
                 }
                 self.last_loaded = di;
             },
-            Message::NextItem(doneitem) => {
+            Message::NextItem(mut doneitem) => {
                 if doneitem.nav_id == self.nav_id {
                     if doneitem.view_id == self.view_id {
                         let mut prev_di = self.last_loaded;
@@ -904,6 +903,7 @@ impl Application for FilePicker {
                         self.last_loaded = prev_di + 1;
                     }
                     let j = doneitem.items_idx;
+                    doneitem.display_idx = self.items[j].display_idx;
                     self.items[j] = doneitem;
                 }
             },
@@ -1905,7 +1905,7 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>,
                 sem.into_iter().for_each(|ps|{cap.insert(ps.0, Box::leak(ps.1.into_boxed_str()));});
             },
             Some(SearchEvent::Search(term)) => {
-                let results = displayed.iter().filter_map(|i| {
+                let mut results = displayed.iter().filter_map(|i| {
                     let item = &items[*i];
                     let name_match = matcher.fuzzy_match(item.path.as_str(), term.as_str());
                     let data_match = match item.data {
@@ -1919,6 +1919,7 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>,
                         (None, None) => None,
                     }
                 }).collect::<Vec<_>>();
+                results.sort_by(|a,b|b.1.cmp(&a.1));
                 result_sender.send(SearchEvent::Results(results, nav_id, items.len(), term)).unwrap();
             },
             _ => unreachable!(),
