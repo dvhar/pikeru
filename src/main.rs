@@ -469,6 +469,7 @@ enum RecState {
 trait Indexer {
     async fn update(&mut self, path: &Vec<&str>) -> Result<()>;
     async fn kill(&mut self) -> Result<()>;
+    async fn configure(&mut self, respect_gitignore: bool, ignore: &str) -> Result<()>;
 }
 struct IndexProxy<'a> {
     proxy: Option<IndexerProxy<'a>>,
@@ -498,6 +499,18 @@ impl<'a> IndexProxy<'a> {
         let conn = blocking::Connection::session().unwrap();
         let mut prox = IndexerProxyBlocking::new(&conn).unwrap();
         let _ = prox.kill();
+    }
+
+    async fn configure(&mut self, respect_gitignore: bool, ignore: &str) {
+        if let Some(ref mut prox) = self.proxy {
+            match prox.configure(respect_gitignore, ignore).await {
+                Ok(_) => {},
+                Err(e) => {
+                    eprintln!("{}", e);
+                    self.proxy = None;
+                },
+            }
+        } 
     }
 
     async fn update(&mut self, dirs: &Vec<String>) -> Vec<(String,String)> {
@@ -1633,15 +1646,15 @@ impl FilePicker {
         Command::none()
     }
 
-    fn click_item(self: &mut Self, iidx: usize, shift: bool, ctrl: bool, always_sel: bool) {
+    fn click_item(self: &mut Self, ii: usize, shift: bool, ctrl: bool, always_sel: bool) {
 
-        let isdir = self.items[iidx].isdir();
+        let isdir = self.items[ii].isdir();
         self.last_clicked = LastClicked{
             new: true,
-            iidx,
-            didx: self.items[iidx].display_idx,
+            iidx: ii,
+            didx: self.items[ii].display_idx,
             size: if isdir { None } else {
-                let bytes = self.items[iidx].size as f64;
+                let bytes = self.items[ii].size as f64;
                 Some(if bytes > 1073741824.0 { format!("{:.2}GB", bytes/1073741824.0 ) }
                 else if bytes > 1048576.0 { format!("{:.1}MB", bytes/1048576.0 ) }
                 else if bytes > 1024.0 { format!("{:.0}KB", bytes/1024.0 ) }
@@ -1654,7 +1667,7 @@ impl FilePicker {
             if prevdir != isdir {
                 break;
             }
-            let mut lo = self.items[iidx].display_idx;
+            let mut lo = self.items[ii].display_idx;
             let mut hi = lo;
             prevsel.iter().for_each(|j| {
                 lo = lo.min(self.items[*j].display_idx);
@@ -1665,16 +1678,16 @@ impl FilePicker {
             }
             return;
         }
-        if always_sel || !self.items[iidx].sel {
-            self.items[iidx].sel = true;
+        if always_sel || !self.items[ii].sel {
+            self.items[ii].sel = true;
         } else if prevsel.len() == 1 || ctrl {
-            self.items[iidx].sel = false;
+            self.items[ii].sel = false;
         }
-        prevsel.into_iter().filter(|j|*j != iidx).for_each(|j| {
+        prevsel.into_iter().filter(|j|*j != ii).for_each(|j| {
             if !(ctrl && (self.conf.multi()||isdir)) || self.items[j].isdir() != isdir { self.items[j].sel = false; }
         });
-        self.pathbar = if self.items[iidx].sel {
-            self.items[iidx].path.clone()
+        self.pathbar = if self.items[ii].sel {
+            self.items[ii].path.clone()
         } else {
             self.dirs[0].clone()
         };
@@ -1859,15 +1872,17 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>,
     let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
     loop {
         match commands.recv().await {
-            Some(SearchEvent::NewItems(paths, nid)) => items = paths.into_iter().map(|path| {
-                nav_id = nid;
-                let cap = captions.borrow();
-                let data = cap.get(&path).copied();
-                FileIdx {
-                    path,
-                    data,
-                }
-            }).collect(),
+            Some(SearchEvent::NewItems(paths, nid)) => {
+                items = paths.into_iter().map(|path| {
+                    nav_id = nid;
+                    let cap = captions.borrow();
+                    let data = cap.get(&path).copied();
+                    FileIdx {
+                        path,
+                        data,
+                    }
+                }).collect();
+            },
             Some(SearchEvent::AddItems(paths)) => {
                 let cap = captions.borrow();
                 let mut new_items = paths.into_iter().map(|path| {
@@ -1928,6 +1943,7 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
     let mut dirs = vec![];
     let mut ignores: Vec<Vec<Arc<gitignore::Gitignore>>> = vec![];
     let mut indexer = IndexProxy::new(index_file).await;
+    indexer.configure(respect_gitignore, gitignore_txt.as_str()).await;
     let mut ig_builder = gitignore::GitignoreBuilder::new("");
     gitignore_txt.lines().for_each(|line|{ig_builder.add_line(None, line).unwrap();});
     let top_ignore = Arc::new(ig_builder.build().unwrap());

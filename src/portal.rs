@@ -27,6 +27,7 @@ use tokio::{
 use log::{info,trace,error,debug,warn,LevelFilter};
 use env_logger::Builder;
 use ctrlc;
+use ignore::{gitignore,Match};
 
 
 #[derive(Default, Debug)]
@@ -38,6 +39,7 @@ struct Shtate {
 enum Msg {
     Start,
     Dirs(Vec<String>),
+    Ignore(String),
 }
 
 struct IdxManager {
@@ -46,9 +48,11 @@ struct IdxManager {
     check: String,
     exts: Vec<&'static str>,
     con: Arc<Mutex<rusqlite::Connection>>,
+    ignore: gitignore::Gitignore,
+    igtxt: String,
 }
 
-async fn index_loop(man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
+async fn index_loop(mut man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
     let mut done_map = HashMap::<String,bool>::new();
     let mut timeout = time::Instant::now().checked_add(time::Duration::from_secs(60)).unwrap();
     let mut online = man.indexer_online().await;
@@ -84,6 +88,9 @@ async fn index_loop(man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
                 debug!("Got dirs");
                 dirs.into_iter().for_each(|dir|{done_map.entry(dir).or_default();});
             },
+            Msg::Ignore(txt) => {
+                man.update_ignore(txt);
+            }
         }
     }
 }
@@ -129,7 +136,19 @@ impl IdxManager {
             check: take(&mut config.indexer_check),
             exts: Box::new(take(&mut config.indexer_exts)).leak().split(',').collect(),
             con,
+            ignore: gitignore::Gitignore::new("").0,
+            igtxt: String::new(),
         }
+    }
+
+    fn update_ignore(self: &mut Self, txt: String) {
+        if txt == self.igtxt {
+            return
+        }
+        let mut builder = gitignore::GitignoreBuilder::new("");
+        txt.lines().for_each(|line|{builder.add_line(None, line).unwrap();});
+        self.ignore = builder.build().unwrap();
+        self.igtxt = txt;
     }
 
     async fn indexer_online(self: &Self) -> bool {
@@ -198,6 +217,10 @@ impl IdxManager {
                     match path.extension() {
                         Some(ext) => {
                             if self.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
+                                match self.ignore.matched(&path, path.is_dir()) {
+                                    Match::Ignore(_) => continue,
+                                    _ => {},
+                                }
                                 let mut online = true;
                                 loop {
                                     if online && self.update_file(path.as_path(), dir).await {
@@ -232,12 +255,15 @@ impl Indexer {
         eprintln!("Killed by dbus signal");
         std::process::exit(0);
     }
-    async fn update(&self, dirs: Vec<String>) -> () {
+    async fn update(&self, dirs: Vec<String>) {
         self.tx.send(Msg::Dirs(dirs)).unwrap(); 
         let st = self.shtate.lock().unwrap();
         if !st.idx_running && !st.picker_open {
             self.tx.send(Msg::Start).unwrap();
         }
+    }
+    async fn configure(&mut self, respect_gitignore: bool, ignore: String) {
+        self.tx.send(Msg::Ignore(ignore)).unwrap();
     }
 
 }
