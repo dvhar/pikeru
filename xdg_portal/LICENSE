@@ -1,3 +1,8 @@
+Some of this work is based on these:
+- https://github.com/GermainZ/xdg-desktop-portal-termfilechooser
+- https://github.com/flatpak/xdg-desktop-portal
+- https://github.com/emersion/xdg-desktop-portal-wlr
+
 MIT License
 
 Copyright (c) 2018 emersion

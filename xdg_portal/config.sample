@@ -6,7 +6,6 @@ cmd=/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
 default_save_dir=~/Downloads
 
 # Point postprocessor to postprocess.example.sh or similar script to automatically process files before upload.
-# Useful for common file conversions, resizing, compressing, etc
 postprocessor=
 postprocess_dir=/tmp/pk_postprocess
 
@@ -22,10 +21,10 @@ enable = false
 cache_dir = ~/.cache/pikeru
 
 # bash command that will be given an additional filepath arg and prints searchable text to stdout.
-cmd = python ~/git/pikeru/indexer/imgdex.py http://127.0.0.1:7860/sdapi/v1/interrogate
+cmd = python ~/git/pikeru/indexer/img_indexer.py http://127.0.0.1:7860/sdapi/v1/interrogate
 
 # bash command that only returns status code 0 when the indexer is online
 check = curl http://127.0.0.1:7860/sdapi/v1/interrogate
 
 # comma-separate list of file types that 'cmd' can process.
-extensions = png,jpg,gif,webp,tiff,bmp
+extensions = png,jpg,jpeg,gif,webp,tiff,bmp

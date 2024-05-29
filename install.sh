@@ -42,7 +42,7 @@ if [[ $(whoami) = root ]]; then
 		xdg_portal/pikeru.portal.in > $portalfile
 else
 	if ! command -v cargo &> /dev/null; then
-		echo "Cargo is not installed. Enter 'y' to install it now:"
+		echo -e "Cargo is not installed. Enter 'y' to install it now\n(then press enter when prompted use default location)"
 		read ans
 		[ "$ans" = "y" ] || exit
 		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
