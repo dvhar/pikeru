@@ -113,7 +113,6 @@ struct Config {
     thumb_size: f32,
     dpi_scale: f64,
     window_size: Size,
-    dark_theme: bool,
     need_update: bool,
     gitignore: String,
     respect_gitignore: bool,
@@ -156,7 +155,6 @@ impl Config {
         let mut sort_by = 1;
         let mut thumb_size = 160.0;
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
-        let mut dark_theme = true;
         let mut dpi_scale: f32 = 1.0;
         let mut opts_missing = 6;
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
@@ -176,7 +174,6 @@ impl Config {
                             "thumbnail_size" => { opts_missing -= 1; thumb_size = v.parse().unwrap() },
                             "dpi_scale" => { opts_missing -= 1; dpi_scale = v.parse().unwrap() },
                             "respect_gitignore" => { opts_missing -= 1; respect_gitignore = v.parse().unwrap() },
-                            "theme" => { opts_missing -= 1; dark_theme = v == "dark" },
                             "window_size" => {
                                 opts_missing -= 1;
                                 if !match str::split_once(v, 'x') {
@@ -224,7 +221,6 @@ impl Config {
             sort_by,
             thumb_size,
             window_size,
-            dark_theme,
             dpi_scale: dpi_scale.into(),
             gitignore,
             respect_gitignore,
@@ -251,11 +247,10 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\ntheme = {}\nsort_by = {}\nrespect_gitignore = {}\n",
+                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\n",
                 self.dpi_scale as i32,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
-                if self.dark_theme { "dark" } else { "light" },
                 match self.sort_by { 1=>"name_asc", 2=>"name_desc", 3=>"time_asc", 4=>"time_desc", _=>"" },
                 self.respect_gitignore).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
@@ -341,6 +336,7 @@ enum Message {
     Sort(i32),
     ArrowKey(Named),
     ShowHidden(bool),
+    SetRecursive(bool),
     RunCmd(usize),
     InoDelete(String),
     InoCreate(String),
@@ -568,6 +564,7 @@ struct FilePicker {
     modal: FModal,
     dir_history: Vec<Vec<String>>,
     content_width: f32,
+    recursive_search: bool,
 }
 
 impl Application for FilePicker {
@@ -634,17 +631,14 @@ impl Application for FilePicker {
                 new_dir: String::new(),
                 dir_history: vec![],
                 content_width: 0.0,
+                recursive_search: true,
             },
             iced::window::resize(iced::window::Id::MAIN, window_size)
         )
     }
 
     fn theme(&self) -> iced::Theme {
-        if self.conf.dark_theme {
-            iced::Theme::Dark
-        } else {
-            iced::Theme::Light
-        }
+        iced::Theme::Dark
     }
 
     fn title(&self) -> String {
@@ -683,9 +677,22 @@ impl Application for FilePicker {
             },
             Message::RunCmd(i) => self.run_command(i),
             Message::Dummy => {},
+            Message::SetRecursive(rec) => {
+                self.recursive_search = rec;
+                self.recurse_updater.as_ref().unwrap().send(RecMsg::SetRecursive(rec)).unwrap();
+                if !rec { // reset searchable items in case already recursed
+                    let items = self.items[..self.end_idx].iter().map(|item|item.path.clone()).collect::<Vec<_>>();
+                    let iidxs = self.items[..self.end_idx].iter().map(|item|item.items_idx).collect::<Vec<_>>();
+                    if let Some(ref mut sender) = self.search_commander {
+                        sender.send(SearchEvent::NewItems(items, self.nav_id)).unwrap();
+                        sender.send(SearchEvent::NewView(iidxs)).unwrap();
+                    }
+                }
+            },
             Message::ShowHidden(show) => {
                 self.show_hidden = show;
-                let displayed = self.items.iter().enumerate().filter_map(|(i,item)| {
+                let end = if self.searchbar.is_empty() { self.end_idx } else { self.displayed.len() };
+                let displayed = self.items[..end].iter().enumerate().filter_map(|(i,item)| {
                     if show || !item.hidden { Some(i)
                     } else { None }
                 }).collect();
@@ -1122,6 +1129,7 @@ impl Application for FilePicker {
                                     (menu_button("Sort Newest first",Message::Sort(3)))
                                     (menu_button("Sort Oldest first",Message::Sort(4)))
                                     (checkbox("Show Hidden", self.show_hidden).on_toggle(Message::ShowHidden))
+                                    (checkbox("Recursive Search", self.recursive_search).on_toggle(Message::SetRecursive))
                                     (text("Thumbnail size"))
                                     (slider(50.0..=500.0, self.conf.thumb_size, Message::Thumbsize))
                                     )))
@@ -1916,6 +1924,7 @@ enum RecMsg {
     NewNav(Vec::<String>, u8),
     FetchMore(u8, bool),
     NextItems(Vec<FItem>, u8),
+    SetRecursive(bool),
 }
 
 async fn recursive_add(mut updates: UReceiver<RecMsg>,
@@ -1925,6 +1934,7 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                        gitignore_txt: String,
                        respect_gitignore: bool) {
     let mut nav_id = 0;
+    let mut recursive = true;
     let mut dirs = vec![];
     let mut ignores: Vec<Vec<Arc<gitignore::Gitignore>>> = vec![];
     let mut indexer = IndexProxy::new().await;
@@ -1934,6 +1944,9 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
     let top_ignore = Arc::new(ig_builder.build().unwrap());
     loop {
         match updates.recv().await {
+            Some(RecMsg::SetRecursive(rec)) => {
+                recursive = rec;
+            },
             Some(RecMsg::NewNav(new_dirs, nid)) => {
                 dirs = new_dirs;
                 ignores = dirs.iter().map(|_|vec![top_ignore.clone()]).collect();
@@ -1950,6 +1963,9 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                 let semantics = indexer.update(&dirs).await;
                 if !semantics.is_empty() {
                     semchan.send(SearchEvent::AddSemantics(semantics)).unwrap();
+                }
+                if !recursive {
+                    continue;
                 }
                 for (i, dir) in dirs.iter().enumerate() {
                     match std::fs::read_dir(dir.as_str()) {
