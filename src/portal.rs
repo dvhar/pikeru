@@ -217,6 +217,7 @@ impl IdxManager {
     }
 
     async fn update_dir(self: &Self, dir: &String) {
+        trace!("Updating dir:{}", dir);
         match std::fs::read_dir(dir) {
             Ok(rd) => {
                 for f in rd {
@@ -279,6 +280,7 @@ impl Indexer {
         }
     }
     async fn configure(&mut self, _respect_gitignore: bool, ignore: String) {
+        trace!("Got gitignore configure request");
         self.tx.send(Msg::Ignore(ignore)).unwrap();
     }
 
@@ -301,6 +303,7 @@ struct FilePicker {
     cmd: String,
     home: String,
     shtate: Arc<Mutex<Shtate>>,
+    db: Arc<Mutex<rusqlite::Connection>>,
     tx: USender<Msg>,
 }
 enum Section {
@@ -453,7 +456,7 @@ impl Config {
 
 impl FilePicker {
 
-    fn new(conf: &mut Config, shtate: Arc<Mutex<Shtate>>, tx: USender<Msg>) -> Self {
+    fn new(conf: &mut Config, shtate: Arc<Mutex<Shtate>>, tx: USender<Msg>, db: Arc<Mutex<rusqlite::Connection>>) -> Self {
         Self {
             prev_path: Mutex::new(take(&mut conf.prev_path)),
             postproc_dir: take(&mut conf.postproc_dir),
@@ -462,6 +465,7 @@ impl FilePicker {
             cmd: take(&mut conf.filecmd),
             home: take(&mut conf.home),
             shtate,
+            db,
             tx,
         }
     }
@@ -477,12 +481,18 @@ impl FilePicker {
                     self.postproc_dir, self.postprocessor, self.cmd, multi, dir, savenum,
                     shquote(tilda(&self.home,&self.prev_path.lock().unwrap()).as_ref()))
         };
+        self.db.lock().unwrap().cache_flush().unwrap();
         debug!("CMD:{}", cmd);
         self.shtate.lock().unwrap().picker_open = true;
         let output = match tokio::process::Command::new("sh").arg("-c").arg(cmd).output().await {
             Ok(out) => {
                 if out.stderr.len() > 0 {
-                    error!("{}", unsafe { std::str::from_utf8_unchecked(&out.stderr) });
+                    let txt = unsafe { std::str::from_utf8_unchecked(&out.stderr) };
+                    if out.status.success() {
+                        info!("From filepicker:{}", txt);
+                    } else {
+                        error!("From filepicker:{}", txt);
+                    }
                 }
                 unsafe { std::str::from_utf8_unchecked(&out.stdout).to_owned() }
             },
@@ -573,11 +583,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let idxfile = Path::new(&config.home).join(".cache").join("pikeru").join("index.db");
     let sht = Arc::new(Mutex::new(Shtate::default()));
     let (tx, rx) = unbounded_channel::<Msg>();
-    let picker = FilePicker::new(&mut config, sht.clone(), tx.clone());
     std::fs::create_dir_all(idxfile.parent().unwrap()).unwrap();
-    let con = Arc::new(Mutex::new(rusqlite::Connection::open(idxfile).unwrap()));
-    let indexer = Indexer::new(tx, sht.clone(), con.clone());
-    let manager = IdxManager::new(sht.clone(), &mut config, con);
+    let db = Arc::new(Mutex::new(rusqlite::Connection::open(idxfile).unwrap()));
+    let picker = FilePicker::new(&mut config, sht.clone(), tx.clone(), db.clone());
+    let indexer = Indexer::new(tx, sht.clone(), db.clone());
+    let manager = IdxManager::new(sht.clone(), &mut config, db);
     tokio::spawn(index_loop(manager, rx, config.indexer_enabled));
     let _conn = connection::Builder::session()?
         .name("org.freedesktop.impl.portal.desktop.pikeru")?

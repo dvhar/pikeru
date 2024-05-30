@@ -315,6 +315,7 @@ enum SearchEvent {
 enum Message {
     LoadDir,
     LoadBookmark(usize),
+    Goto,
     Select(SelType),
     OverWriteOK,
     Cancel,
@@ -573,6 +574,7 @@ struct FilePicker {
     dir_history: Vec<Vec<String>>,
     content_width: f32,
     recursive_search: bool,
+    show_goto: bool,
 }
 
 impl Application for FilePicker {
@@ -640,6 +642,7 @@ impl Application for FilePicker {
                 dir_history: vec![],
                 content_width: 0.0,
                 recursive_search: true,
+                show_goto: false,
             },
             iced::window::resize(iced::window::Id::MAIN, window_size)
         )
@@ -792,9 +795,14 @@ impl Application for FilePicker {
                 self.searchbar = txt;
                 if self.searchbar.is_empty() {
                     self.recurse_state = RecState::Stop;
+                    let mut have_sel = false;
                     self.displayed = self.items[..self.end_idx].iter().enumerate().filter_map(|(i,item)| {
-                        if self.show_hidden || !item.hidden { Some(i) } else {None}
+                        if self.show_hidden || !item.hidden {
+                            have_sel |= item.sel;
+                            Some(i)
+                        } else {None}
                     }).collect();
+                    self.show_goto = have_sel && self.dirs.len() > 1;
                     return self.update(Message::Sort(self.conf.sort_by));
                 } else if !self.search_running{
                     self.search_running = true;
@@ -809,9 +817,9 @@ impl Application for FilePicker {
                 let mut still_running = false;
                 if let SearchEvent::Results(res, nav_id, num_items, term) = *res {
                     if nav_id == self.nav_id && !self.searchbar.is_empty() {
-                        self.displayed = res[..1000.min(res.len())].into_iter().enumerate().map(|(i,r)|{
-                            self.items[r.0].display_idx = i;
-                            r.0
+                        self.displayed = res[..1000.min(res.len())].into_iter().enumerate().map(|(di,ii)|{
+                            self.items[ii.0].display_idx = di;
+                            ii.0
                         }).collect();
                         let _ = self.update(Message::LoadThumbs);
                         if term != self.searchbar || num_items != self.items.len() {
@@ -911,6 +919,13 @@ impl Application for FilePicker {
                 self.scroll_offset.y = 0.0;
                 return self.update(Message::LoadDir);
             },
+            Message::Goto => {
+                self.dir_history.push(mem::take(&mut self.dirs));
+                self.dirs = self.items.iter().filter(|item|item.sel).map(|item|
+                    Path::new(&item.path).parent().unwrap().to_string_lossy().to_string()).collect();
+                self.scroll_offset.y = 0.0;
+                return self.update(Message::LoadDir);
+            }
             Message::LoadDir => {
                 self.view_image = (0, None);
                 self.pathbar = match &self.save_filename {
@@ -918,6 +933,7 @@ impl Application for FilePicker {
                     None => self.dirs[0].clone(),
                 };
                 self.load_dir();
+                self.show_goto = false;
                 self.recurse_state = RecState::Stop;
                 self.recurse_updater.as_ref().unwrap().send(RecMsg::NewNav(self.dirs.clone(), self.nav_id)).unwrap();
                 let _ = self.update(Message::Sort(self.conf.sort_by));
@@ -973,7 +989,7 @@ impl Application for FilePicker {
                         self.view_image = (item.items_idx, item.preview());
                         self.click_item(iidx, false, false, true);
                     } else {
-                        self.click_item(iidx as usize, true, false, false);
+                        self.click_item(iidx, true, false, false);
                     }
                 } else {
                     self.view_image = (0, None);
@@ -1124,8 +1140,11 @@ impl Application for FilePicker {
                 |(i,cmd)|Item::new(menu_button(cmd.label.as_str(), Message::RunCmd(i)))).collect();
             let ctrlbar = column![
                 row![
-                    match &self.last_clicked.size {
-                        Some(size) => row![Text::new(size), horizontal_space()], None => row![]
+                    match (&self.last_clicked.size, self.show_goto) {
+                        (Some(size), true) => row![Text::new(size), horizontal_space(), top_button("Goto Dir", 80.0, Message::Goto)],
+                        (Some(size), false) => row![Text::new(size), horizontal_space()],
+                        (None, true) => row![horizontal_space(), top_button("Goto Dir", 80.0, Message::Goto)],
+                        (None, false) => row![]
                     },
                     menu_bar![
                         (top_button("Cmd", 80.0, Message::Dummy), 
@@ -1145,7 +1164,7 @@ impl Application for FilePicker {
                     top_button("New Dir", 80.0, Message::NewDir(false)),
                     top_button("Up Dir", 80.0, Message::UpDir),
                     top_button("Cancel", 100.0, Message::Cancel),
-                    top_button(&self.select_button, 100.0, Message::Select(SelType::Button))
+                    top_button(&self.select_button, 100.0, Message::Select(SelType::Button)),
                 ].spacing(1),
                 row![
                 TextInput::new("directory or file path", self.pathbar.as_str())
@@ -1517,7 +1536,7 @@ impl FItem {
 
 struct FileIdx<'a> {
     path: String,
-    data: Option<&'a str>,
+    text: Option<&'a str>,
 }
 
 enum Inochan {
@@ -1660,7 +1679,13 @@ impl FilePicker {
                 else { format!("{:.0}B", bytes) })
                 }
         };
-        let prevsel = self.items.iter().filter_map(|item| if item.sel { Some(item.items_idx) } else { None }).collect::<Vec<usize>>();
+        let prevsel = self.items.iter().filter_map(|item| {
+            if item.sel {
+                Some(item.items_idx)
+            } else {
+                None
+            }
+        }).collect::<Vec<usize>>();
         while (self.conf.multi() || isdir) && shift && prevsel.len() > 0 {
             let prevdir = self.items[prevsel[0]].isdir();
             if prevdir != isdir {
@@ -1672,18 +1697,30 @@ impl FilePicker {
                 lo = lo.min(self.items[*j].display_idx);
                 hi = hi.max(self.items[*j].display_idx);
             });
+            self.show_goto = false;
             for j in lo..=hi {
-                self.items[self.displayed[j]].sel = self.items[self.displayed[j]].isdir() == isdir;
+                let sel = self.items[self.displayed[j]].isdir() == isdir;
+                let item = &mut self.items[self.displayed[j]];
+                if sel && item.recursed {
+                    self.show_goto = true;
+                }
+                item.sel = sel;
             }
             return;
         }
+        self.show_goto = false;
         if always_sel || !self.items[ii].sel {
             self.items[ii].sel = true;
+            self.show_goto = self.items[ii].recursed || self.dirs.len() > 1;
         } else if prevsel.len() == 1 || ctrl {
             self.items[ii].sel = false;
         }
         prevsel.into_iter().filter(|j|*j != ii).for_each(|j| {
-            if !(ctrl && (self.conf.multi()||isdir)) || self.items[j].isdir() != isdir { self.items[j].sel = false; }
+            if !(ctrl && (self.conf.multi()||isdir)) || self.items[j].isdir() != isdir {
+                self.items[j].sel = false;
+            } else {
+                self.show_goto |= self.items[j].recursed || self.dirs.len() > 1;
+            }
         });
         self.pathbar = if self.items[ii].sel {
             self.items[ii].path.clone()
@@ -1869,28 +1906,28 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>,
     let mut items = vec![];
     let mut displayed = vec![];
     let mut nav_id = 0;
-    let captions = RefCell::new(HashMap::<String,&'static str>::new());
+    let semantics = RefCell::new(HashMap::<String,&'static str>::new());
     let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
     loop {
         match commands.recv().await {
             Some(SearchEvent::NewItems(paths, nid)) => {
                 items = paths.into_iter().map(|path| {
                     nav_id = nid;
-                    let cap = captions.borrow();
-                    let data = cap.get(&path).copied();
+                    let sem = semantics.borrow();
+                    let text = sem.get(&path).copied();
                     FileIdx {
                         path,
-                        data,
+                        text,
                     }
                 }).collect();
             },
             Some(SearchEvent::AddItems(paths)) => {
-                let cap = captions.borrow();
+                let sem = semantics.borrow();
                 let mut new_items = paths.into_iter().map(|path| {
-                    let data = cap.get(&path).copied();
+                    let text = sem.get(&path).copied();
                     FileIdx {
                         path,
-                        data,
+                        text,
                     }
                 }).collect::<Vec<FileIdx<'_>>>();
                 items.append(&mut new_items);
@@ -1901,19 +1938,24 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>,
             Some(SearchEvent::AddView(mut didxs)) => {
                 displayed.append(&mut didxs);
             }
-            Some(SearchEvent::AddSemantics(sem)) => {
-                let mut cap = captions.borrow_mut();
-                sem.into_iter().for_each(|ps|{cap.insert(ps.0, Box::leak(ps.1.into_boxed_str()));});
+            Some(SearchEvent::AddSemantics(new_sem)) => {
+                let mut sem = semantics.borrow_mut();
+                new_sem.into_iter().for_each(|ps|{sem.insert(ps.0, Box::leak(ps.1.into_boxed_str()));});
+                items.iter_mut().for_each(|item|{
+                    if item.text == None {
+                        item.text = sem.get(&item.path).copied();
+                    }
+                });
             },
             Some(SearchEvent::Search(term)) => {
                 let mut results = displayed.iter().filter_map(|i| {
                     let item = &items[*i];
                     let name_match = matcher.fuzzy_match(item.path.as_str(), term.as_str());
-                    let data_match = match item.data {
-                        Some(data) => matcher.fuzzy_match(data, term.as_str()),
+                    let sem_match = match item.text {
+                        Some(text) => matcher.fuzzy_match(text, term.as_str()),
                         None => None,
                     };
-                    match (name_match, data_match) {
+                    match (name_match, sem_match) {
                         (Some(a), Some(b)) => Some((*i, a.max(b))),
                         (Some(a), None) => Some((*i, a)),
                         (None, Some(b)) => Some((*i, b)),
