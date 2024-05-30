@@ -21,7 +21,7 @@ First install the dependencies at the bottom of the readme
 * If your chromium-based browser is not using xdg portal for whatever reason, you can still use pikeru by setting environment variable `XDG_CURRENT_DESKTOP=KDE` and putting the `kdialog` script in your path to trick the browser into thinking pikeru is kdialog.
 
 ### What if I want my old filepicker back?
-* pikeru's `-e` and `-d` flags configure xdg portal to enable and disable pikeru so it's easy to switch back to your old filepicker. Those flags are just wrappers for `setconfig.sh` and `unsetconfig.sh`.
+* Run `pikeru -d` to disable pikeru and restore your old filepicker, and `pikeru -e` to re-enable pikeru.
 
 ### How to enable semantic search
 * This is configured in `~/.config/xdg-desktop-portal-pikeru/config` in the `indexer` section.
@@ -31,6 +31,7 @@ First install the dependencies at the bottom of the readme
     * a list of file extensions the above command can handle
 * An example configuration using [stable diffusioni webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui)'s `interrogate` API to index your images is included, which uses the `indexer/img_indexer.py` script in this repo. You'll need to edit the filepath and url to use it.
 * Pikeru's xdg portal daemon uses the provided command to build a semantic search index of any directory opened or searched by the filepicker so that next time you search that directory, you can search files by semantic content instead of just file name.
+* You can pause the indexer with `pikeru -c` and resume it with `pikeru -b`.
 
 ## Install Dependencies
 

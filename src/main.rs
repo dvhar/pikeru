@@ -73,9 +73,12 @@ macro_rules! die {
 }
 
 fn cli(flags: &getopts::Matches) {
-    if flags.opt_present("k") {
-        IndexProxy::kill();
-        println!("Killed portal");
+    if flags.opt_present("c") {
+        IndexProxy::pause_resume(false);
+        std::process::exit(0);
+    }
+    if flags.opt_present("b") {
+        IndexProxy::pause_resume(true);
         std::process::exit(0);
     }
     let cmd = if flags.opt_present("d") {
@@ -134,9 +137,10 @@ impl Config {
         opts.optopt("t", "title", "Title of the filepicker window", "NAME");
         opts.optopt("m", "mode", "Mode of file selection. Default is files", "[file, files, save, dir]");
         opts.optopt("p", "path", "Initial path", "PATH");
-        opts.optflag("k", "kill", "kill the portal after flushing any new index entries to disk");
-        opts.optflag("d", "disable", "Don't use pikeru as your system filepicker");
-        opts.optflag("e", "disable", "Don't use pikeru as your system filepicker");
+        opts.optflag("c", "pause", "Paused the semantic search indexer");
+        opts.optflag("b", "resume", "Resume the semantic search indexer");
+        opts.optflag("d", "disable", "Configure xdg portal to not use pikeru as your system filepicker");
+        opts.optflag("e", "enable", "Configure xdg portal to use pikeru as your system filepicker");
         let matches = match opts.parse(args) {
             Ok(m) => m,
             Err(e) => die!("Bad args: {}", e),
@@ -156,7 +160,7 @@ impl Config {
         let mut thumb_size = 160.0;
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dpi_scale: f32 = 1.0;
-        let mut opts_missing = 6;
+        let mut opts_missing = 5;
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
             match line {
                 "[Commands]" => section = S::Commands,
@@ -447,7 +451,7 @@ enum RecState {
 )]
 trait Indexer {
     async fn update(&mut self, path: &Vec<&str>) -> Result<()>;
-    async fn kill(&mut self) -> Result<()>;
+    async fn pause_resume(&self, active: bool) -> Result<()>;
     async fn configure(&mut self, respect_gitignore: bool, ignore: &str) -> Result<()>;
 }
 struct IndexProxy<'a> {
@@ -476,10 +480,14 @@ impl<'a> IndexProxy<'a> {
         }
     }
 
-    fn kill() {
+    fn pause_resume(active: bool) {
         let conn = blocking::Connection::session().unwrap();
-        let mut prox = IndexerProxyBlocking::new(&conn).unwrap();
-        let _ = prox.kill();
+        let prox = IndexerProxyBlocking::new(&conn).unwrap();
+        match (active, prox.pause_resume(active)) {
+            (_,Err(e)) => eprintln!("Error:{}", e),
+            (false, Ok(())) => eprintln!("Paused indexer"),
+            (true, Ok(())) => eprintln!("Resumed indexer"),
+        }
     }
 
     async fn configure(&mut self, respect_gitignore: bool, ignore: &str) {

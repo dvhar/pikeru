@@ -23,6 +23,9 @@ use tokio::{
         unbounded_channel,
     },
     time,
+    time::sleep,
+    time::Duration,
+
 };
 use log::{info,trace,error,debug,warn,LevelFilter};
 use env_logger::Builder;
@@ -34,6 +37,7 @@ use ignore::{gitignore,Match};
 struct Shtate {
     idx_running: bool,
     picker_open: bool,
+    paused: bool,
 }
 
 enum Msg {
@@ -71,7 +75,9 @@ async fn index_loop(mut man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool
         }
         match msg {
             Msg::Start => {
-                debug!("Starting index");
+                if !man.shtate.lock().unwrap().paused {
+                    debug!("Starting index");
+                }
                 man.shtate.lock().unwrap().idx_running = true;
                 while !man.shtate.lock().unwrap().picker_open {
                     if let Some(dir) = done_map.iter().find(|v|!v.1) {
@@ -184,6 +190,7 @@ impl IdxManager {
         query.execute((dir, fname, desc, mtime)).unwrap();
     }
 
+    /// returns online status
     async fn update_file(self: &Self, path: &Path, dir: &String) -> bool {
         let mtime = path.metadata().unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32();
         let fname = path.file_name().unwrap().to_string_lossy();
@@ -223,11 +230,15 @@ impl IdxManager {
                                 }
                                 let mut online = true;
                                 loop {
+                                    if self.shtate.lock().unwrap().paused {
+                                        sleep(Duration::from_secs(60)).await;
+                                        continue;
+                                    }
                                     if online && self.update_file(path.as_path(), dir).await {
                                         break;
-                                    } else {
+                                    } else  {
                                         warn!("Retrying {:?} in a minute...", path);
-                                        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+                                        sleep(Duration::from_secs(60)).await;
                                         online = self.indexer_online().await;
                                     }
                                 };
@@ -243,17 +254,22 @@ impl IdxManager {
 
 }
 
+#[allow(dead_code)]
 struct Indexer {
     tx: USender<Msg>,
     shtate: Arc<Mutex<Shtate>>,
     con: Arc<Mutex<rusqlite::Connection>>,
 }
+
 #[interface(name = "org.freedesktop.impl.portal.SearchIndexer")]
 impl Indexer {
-    async fn kill(&self) {
-        self.con.lock().unwrap().cache_flush().unwrap();
-        eprintln!("Killed by dbus signal");
-        std::process::exit(0);
+    async fn pause_resume(&self, active: bool) {
+        if active {
+            eprintln!("Resumed indexer");
+        } else {
+            eprintln!("Paused indexer");
+        }
+        self.shtate.lock().unwrap().paused = !active;
     }
     async fn update(&self, dirs: Vec<String>) {
         self.tx.send(Msg::Dirs(dirs)).unwrap(); 
@@ -262,7 +278,7 @@ impl Indexer {
             self.tx.send(Msg::Start).unwrap();
         }
     }
-    async fn configure(&mut self, respect_gitignore: bool, ignore: String) {
+    async fn configure(&mut self, _respect_gitignore: bool, ignore: String) {
         self.tx.send(Msg::Ignore(ignore)).unwrap();
     }
 
@@ -404,6 +420,7 @@ impl Config {
                 }
             }
         }
+        matches.opt_str("l").map(|l|log_level = l);
         let ll = match log_level.as_str() {
             "off" => LevelFilter::Off,
             "error" => LevelFilter::Error,
