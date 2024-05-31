@@ -2,8 +2,8 @@ xdg-desktop-portal-pikeru(5)
 
 # NAME
 
-xdg-desktop-portal-pikeru - an xdg-desktop-portal backend to choose
-files with the Pikeru file picker
+xdg-desktop-portal-pikeru - an xdg-desktop-portal backend to pick
+files with the Pikeru file picker and create a searchable index for it
 
 # DESCRIPTION
 
@@ -20,12 +20,26 @@ with default settings:
 
 _$XDG_CONFIG_HOME_ defaults to _~/.config_.
 _$XDG_CURRENT_DESKTOP_ can be a colon seperated list. Each element of that list will be tried.
+The installer script for pikeru creates a config file for you at
+~/.config/xdg-desktop-portal-pikeru/config.
 
 The configuration files use the INI file format. Example:
 
 ```
-[filechooser]
+log_level = info
+
+[filepicker]
 cmd=/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
+default_save_dir=~/Downloads
+postprocess_dir=/tmp/pk_postprocess
+postprocessor=/opt/pikeru/postprocess.sh
+
+[indexer]
+enable = true
+cmd = python /opt/pikeru/indexer/img_indexer.py http://10.0.0.10:7860/sdapi/v1/interrogate
+check = curl http://10.0.0.10:7860/sdapi/v1/interrogate
+extensions = png,jpg,jpeg,gif,webp,tiff,bmp
+
 ```
 
 If no config is found, it will default to checking these locations for the
@@ -35,16 +49,23 @@ pikeru wrapper:
 - /usr/local/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
 - /opt/pikeru/xdg_portal/contrib/pikeru-wrapper.sh
 
-# FILECHOOSER OPTIONS
+# CONFIG FILE OPTIONS
 
-These options need to be placed under the **[filechooser]** section. The "~"
+## GLOBAL OPTION
+
+**log_level** = _off|error|warn|info|debug|trace_
+	The level of detail the portal will log.
+
+	Default value is info.
+
+## FILEPICKER OPTIONS
+
+These options need to be placed under the **[filepicker]** section. The "~"
 chacacter will be expanded to your home directory.
 
 **cmd** = _command_
-	Command to execute. For invocation details, please refer to the wrapper script.
-
-	The wrapper script is a symlink to contrib/pikeru-wrapper.sh, and is
-	configured to launch the pikeru file picker to select files.
+	Command to execute for launching the filepicker. For invocation details,
+	please refer to the pikeru-wrapper.sh script.
 
 **default_save_dir** = _directory_
 	Default directory to save file paths in, if the invoking program does not provide one.
@@ -52,8 +73,76 @@ chacacter will be expanded to your home directory.
 	The default value is ~/Downloads or /tmp.
 
 **postprocess_dir** = _directory_
-	Default directory to save post-processed files to when using postprocess.sh.
-	The xdg portal will avoid using this as the starting directory next time you
+	Default directory to save post-processed files to when using a postprocess
+	script. The xdg portal will avoid using this as the starting directory next time you
 	select a file for upload.
 
-	The default value is /tmp/pk_postprocess
+	The default value is /tmp/pk_postprocess.
+
+**postprocessor** = _script_
+	The script to pipe selected files through before selecting them. This
+	allows for automatic file conversions, resizing, compressing, etc. Takes
+	lines of files as input and prints lines of files as output, which can be
+	the same ones.
+
+	There is no default value, but you can point it to postprocess.example.sh in
+	the pikeru repository, or adapt that script to your needs.
+
+## INDEXER OPTIONS
+
+These options need to be placed under the **[indexer]** section. The "~"
+chacacter will be expanded to your home directory. These values are used by the
+portal to build an index that enables searching files by semantic content.
+
+**enable** = _true/false_
+	Turn semantic file indexing on or off.
+
+	Default value is false.
+
+**cmd** = _command_
+	Command to execute for generating searchable text for a file. It will be
+	given an additional filepath argument and will print the resulting text for
+	that file to stdout.
+
+	The default value is a script that calls a stable-diffusion-webui api
+	endpoint to generate searchable text for images.
+
+**check** = _command_
+	Command to for checking whether or not the system used to generate
+	searchable text is available. Must exit successfully if and only if the
+	above cmd is expected to work successfully.
+
+	Default value tests the same example stable diffusion server.
+
+**extensions** = _comma separated list_
+	List of file extension that the indexer command can process. Anything not in
+	the list will not be indexed.
+
+	Default value is a list of image formats that stable diffusion can handle.
+
+# REMOTE CONTROL
+
+**pikeru** has several command line flags for controlling the portal
+
+pikeru -c
+	Pause the indexer.
+
+
+pikeru -b
+	Resume the indexer if paused.
+
+
+pikeru -d
+	Configure xdg-desktop-portal to not use pikeru as the system file picker.
+
+pikeru -e
+	Configure xdg-desktop-portal to use pikeru as the system file picker.
+
+## CAVEATS
+```
+-d and -e will not work if your xdg-desktop-portal version is older than
+1.18. In that case, you will need to edit or remove
+/usr/share/xdg-desktop-portal/portals/pikeru.portal to disable it. If you
+want to keep the file but still disable it, remove your $XDG_CURRENT_DESKTOP
+value from the `UseIn` section.
+```

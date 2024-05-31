@@ -32,6 +32,7 @@ First install the dependencies at the bottom of the readme
 * An example configuration using [stable diffusioni webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui)'s `interrogate` API to index your images is included, which uses the `indexer/img_indexer.py` script in this repo. You'll need to edit the filepath and url to use it.
 * Pikeru's xdg portal daemon uses the provided command to build a semantic search index of any directory opened or searched by the filepicker so that next time you search that directory, you can search files by semantic content instead of just file name.
 * You can pause the indexer with `pikeru -c` and resume it with `pikeru -b`.
+* More details are in the man page for xdg-desktop-portal-pikeru.
 
 ## Install Dependencies
 
