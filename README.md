@@ -17,8 +17,7 @@ First install the dependencies at the bottom of the readme
 
 ### Install the filepicker and make applications use it
 * Run `./install.sh` to build and install the filepicker and xdg portal.
-* To make firefox use the portal, open `about:config` and set `widget.use-xdg-desktop-portal.file-picker` to `1`.
-* If your chromium-based browser is not using xdg portal for whatever reason, you can still use pikeru by setting environment variable `XDG_CURRENT_DESKTOP=KDE` and putting the `kdialog` script in your path to trick the browser into thinking pikeru is kdialog.
+* To make firefox use the portal, open `about:config` and set `widget.use-xdg-desktop-portal.file-picker` to `1`. Chromium-based browsers should use it by default.
 
 ### What if I want my old filepicker back?
 * Run `pikeru -d` to disable pikeru and restore your old filepicker, and `pikeru -e` to re-enable pikeru.
