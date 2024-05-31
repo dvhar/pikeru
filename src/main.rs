@@ -119,6 +119,7 @@ struct Config {
     need_update: bool,
     gitignore: String,
     respect_gitignore: bool,
+    home: String,
 }
 
 impl Config {
@@ -229,6 +230,7 @@ impl Config {
             gitignore,
             respect_gitignore,
             need_update: opts_missing > 0,
+            home,
         }
     }
 
@@ -588,9 +590,12 @@ impl Application for FilePicker {
         let path = Path::new(&pathstr);
         let window_size = conf.window_size;
         let startdir = if path.is_dir() {
-            path.to_string_lossy()
+            path.to_string_lossy().to_string()
         } else {
-            path.parent().unwrap().to_string_lossy()
+            match path.parent() {
+                Some(pth) => pth.to_string_lossy().to_string(),
+                None => conf.home.as_str().to_string(),
+            }
         };
         let ts = conf.thumb_size;
         let save_filename = if conf.saving() {
@@ -615,7 +620,7 @@ impl Application for FilePicker {
                 displayed: vec![],
                 thumb_sender: None,
                 nproc: num_cpus::get() * 2,
-                dirs: vec![startdir.to_string()],
+                dirs: vec![startdir],
                 last_loaded: 0,
                 last_clicked: LastClicked::default(),
                 pathbar: String::new(),
