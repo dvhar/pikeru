@@ -221,6 +221,7 @@ pub enum Action {
     None,
 }
 
+#[allow(dead_code)]
 struct Overlay<'a, 'b, Message, Theme, Renderer>
 where
     Renderer: renderer::Renderer,
