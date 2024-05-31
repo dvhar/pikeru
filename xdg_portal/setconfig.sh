@@ -29,27 +29,33 @@ findconf(){
 	return 1
 }
 
+execute(){
+    echo "$*"
+    eval "$*"
+}
+
 xdir="$xhome/xdg-desktop-portal"
 portalfile="$xdir/portals.conf"
 mkdir -p "$xdir"
 
 if [ -f "$portalfile" ] && ! grep -q pikeru "$portalfile" ; then
 	origconf="${portalfile}.orig"
-	mv "$portalfile" "$origconf"
+	execute "mv '$portalfile' '$origconf'"
 else
 	origconf="$(findconf)"
 fi
 
 if [ ! -z "$origconf" ]; then
-	sed '/FileChooser/d' "$origconf" > "$portalfile"
-	echo 'org.freedesktop.impl.portal.FileChooser=pikeru' >> "$portalfile"
+	execute "sed '/FileChooser/d' '$origconf' > '$portalfile'"
+	execute "echo 'org.freedesktop.impl.portal.FileChooser=pikeru' >> '$portalfile'"
 else
-cat << EOF > "$portalfile"
+execute "cat << EOF > '$portalfile'
 [preferred]
 default=auto
 org.freedesktop.impl.portal.FileChooser=pikeru
 EOF
+"
 fi
 
-systemctl --user restart xdg-desktop-portal.service
-echo -e "XDG portal has been configured to use pikeru. Config file is ${portalfile}.\nYou can revert it with 'pikeru -r'"
+execute "systemctl --user restart xdg-desktop-portal.service"
+echo -e "XDG portal has been configured to use pikeru. Config file is ${portalfile}.\nYou can revert it with 'pikeru -d' and re-enable pikeru with 'pikeru -e'"
