@@ -1,6 +1,0 @@
-Pillow==10.2.0
-Requests==2.31.0
-tkinterdnd2==0.3.0
-opencv-python==4.9.0.80
-inotify==0.2.10
-sv_ttk==2.6.0

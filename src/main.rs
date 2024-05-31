@@ -194,8 +194,8 @@ impl Config {
                                 opts_missing -= 1;
                                 sort_by = match v {
                                     "name_desc" => 2,
-                                    "time_desc" => 3,
-                                    "time_asc" => 4,
+                                    "age_asc" => 3,
+                                    "age_desc" => 4,
                                     _ => 1,
                                 }
                             },
@@ -255,7 +255,7 @@ impl Config {
                 self.dpi_scale as i32,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
-                match self.sort_by { 1=>"name_asc", 2=>"name_desc", 3=>"time_asc", 4=>"time_desc", _=>"" },
+                match self.sort_by { 1=>"name_asc", 2=>"name_desc", 3=>"age_asc", 4=>"age_desc", _=>"" },
                 self.respect_gitignore).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
 # The respect_gitignore setting only toggles .gitignore files, not this section.\n[SearchIgnore]\n");
