@@ -142,10 +142,16 @@ impl Config {
         opts.optflag("b", "resume", "Resume the semantic search indexer");
         opts.optflag("d", "disable", "Configure xdg portal to not use pikeru as your system filepicker");
         opts.optflag("e", "enable", "Configure xdg portal to use pikeru as your system filepicker");
-        let matches = match opts.parse(args) {
+        opts.optflag("h", "help", "Show usage information");
+        let matches = match opts.parse(&args) {
             Ok(m) => m,
             Err(e) => die!("Bad args: {}", e),
         };
+        if matches.opt_present("h") {
+            println!("{}\n{}",opts.usage(&args[0]),
+                "File picker config file is ~/.config/pikeru.conf.\nPortal config file, which includes the semantic search indexer, is by default ~/.config/xdg-desktop-portal-pikeru/config");
+            std::process::exit(0);
+        }
 
         let home = std::env::var("HOME").unwrap();
         let confpath = Path::new(&home).join(".config").join("pikeru.conf").to_string_lossy().to_string();

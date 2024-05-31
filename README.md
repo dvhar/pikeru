@@ -21,6 +21,7 @@ First install the dependencies at the bottom of the readme
 
 ### What if I want my old filepicker back?
 * Run `pikeru -d` to disable pikeru and restore your old filepicker, and `pikeru -e` to re-enable pikeru.
+* If your xdg-desktop-portal version is older than 1.18, you'll have to delete /usr/share/xdg-desktop-portal/portals/pikeru.portal or remove your $XDG_CURRENT_DESKTOP from that file to disable it.
 
 ### How to enable semantic search
 * This is configured in `~/.config/xdg-desktop-portal-pikeru/config` in the `indexer` section.
