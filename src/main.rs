@@ -1160,7 +1160,7 @@ impl Application for FilePicker {
                     menu_bar![
                         (top_button("Cmd", 80.0, Message::Dummy), 
                             view_menu(cmd_list))
-                        (top_button("View", 80.0, Message::Dummy),
+                        (top_button("Options", 80.0, Message::Dummy),
                             view_menu(menu_items!(
                                     (menu_button("Sort A-Z",Message::Sort(1)))
                                     (menu_button("Sort Z-A",Message::Sort(2)))
