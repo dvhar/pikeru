@@ -7,10 +7,10 @@ files with the Pikeru file picker and create a searchable index for it
 
 # DESCRIPTION
 
-xdg-desktop-portal-pikeru (or xdpp for short) allows applications to
-choose files via xdg-desktop-portal using your favorite filepiker, Pikeru.
+xdg-desktop-portal-pikeru allows applications to choose files via xdg-desktop-portal using your
+favorite filepiker, Pikeru.
 
-xdpp will try to load the configuration file from these locations before going
+It will try to load the configuration file from these locations before going
 with default settings:
 
 - $XDG_CONFIG_HOME/xdg-desktop-portal-pikeru/$XDG_CURRENT_DESKTOP

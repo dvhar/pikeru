@@ -190,9 +190,16 @@ impl IdxManager {
         query.execute((dir, fname, desc, mtime)).unwrap();
     }
 
-    /// returns online status
+    /// returns online status if file exists, otherwise true to keep going
     async fn update_file(self: &Self, path: &Path, dir: &String) -> bool {
-        let mtime = path.metadata().unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32();
+        let metadata = match path.metadata() {
+            Ok(md) => md,
+            Err(_) => {
+                debug!("{:?} was deleted?", path);
+                return true;
+            },
+        };
+        let mtime = metadata.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32();
         let fname = path.file_name().unwrap().to_string_lossy();
         let stat = self.already_done(dir, &fname, mtime);
         if stat == Entry::Done {
