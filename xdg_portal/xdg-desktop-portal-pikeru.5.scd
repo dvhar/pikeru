@@ -32,7 +32,7 @@ log_level = info
 cmd=/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
 default_save_dir=~/Downloads
 postprocess_dir=/tmp/pk_postprocess
-postprocessor=/opt/pikeru/postprocess.sh
+postprocessor=/opt/pikeru/xdg_portal/postprocess.sh
 
 [indexer]
 enable = true
@@ -85,7 +85,7 @@ chacacter will be expanded to your home directory.
 	lines of files as input and prints lines of files as output, which can be
 	the same ones.
 
-	There is no default value, but you can point it to postprocess.example.sh in
+	There is no default value, but you can point it to xdg_portal/postprocess.example.sh in
 	the pikeru repository, or adapt that script to your needs.
 
 ## INDEXER OPTIONS
