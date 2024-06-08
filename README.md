@@ -8,8 +8,8 @@ Pikeru is a file picker, file searcher, and image viewer for linux that works on
 * Recursive fuzzy semantic file search can search images by visual content in addition to file name.
 * Select multiple directories with ctrl, shift, middle-click, or right-click and click `Open` to view the contents of all of them at the same time.
 * Right click an image to view it. Scroll the image to view the next and previous images.
-* `Cmd` menu shows commands specified in `~/.config/pikeru.conf`. Click one to run it on the selected files.
-* Set a postprocessor script in the config file to convert, resize, compress or do anything else with selected files automatically.
+* `Cmd` menu shows commands specified in the config. Click one to run it on the selected files.
+* Set a postprocessor script to convert, resize, compress or do anything else with selected files automatically.
 
 ## Installation and Usage
 
@@ -33,6 +33,18 @@ First install the dependencies at the bottom of the readme
 * Pikeru's xdg portal daemon uses the provided command to build a semantic search index of any directory opened or searched by the filepicker so that next time you search that directory, you can search files by semantic content instead of just file name.
 * You can pause the indexer with `pikeru -c` and resume it with `pikeru -b`.
 * More details are in the man page for xdg-desktop-portal-pikeru.
+
+### What's configured where
+The filepicker and the portal that launches the filepicker each have their own config files.
+* `~/.config/pikeru.conf`:
+    * Anything related to the GUI, like dpi-scale
+    * Patterns to ignore when searching
+    * Bookmarks saved by drag-and-drop
+    * Commands you can run on files
+* `~/.config/xdg-desktop-portal-pikeru/config`:
+    * Location of filepicker (you probably don't need to touch this part)
+    * Postprocessor for selected files
+    * Semantic search indexer
 
 ## Install Dependencies
 

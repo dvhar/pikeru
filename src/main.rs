@@ -149,7 +149,7 @@ impl Config {
         };
         if matches.opt_present("h") {
             println!("{}\n{}",opts.usage(&args[0]),
-                "File picker config file is ~/.config/pikeru.conf.\nPortal config file, which includes the semantic search indexer, is by default ~/.config/xdg-desktop-portal-pikeru/config");
+                "File picker config file is ~/.config/pikeru.conf.\nThe portal config file, which includes the semantic search indexer and postprocessor, is by default ~/.config/xdg-desktop-portal-pikeru/config");
             std::process::exit(0);
         }
 
@@ -1519,7 +1519,7 @@ impl FItem {
                                 FType::Image
                             }
                         },
-                        "webm"|"mkv"|"mp4"|"av1" => {
+                        "webm"|"mkv"|"mp4"|"av1"|"avi" => {
                             self.handle = self.prepare_cached_thumbnail(self.path.as_str(), true, thumbsize, icons.clone()).await;
                             if self.handle == None {
                                 self.handle = Some(icons.error.clone());
