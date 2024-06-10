@@ -1,3 +1,5 @@
+use iced_gif;
+use iced_gif::widget::gif;
 use img::load_from_memory;
 use img;
 use img::codecs::webp::WebPEncoder;
@@ -381,7 +383,8 @@ struct FItemb {
     path: String,
     label: String,
     ftype: FType,
-    handle: Option<Handle>,
+    img_handle: Option<Handle>,
+    svg_handle: Option<svg::Handle>,
     items_idx: usize,
     display_idx: usize,
     sel: bool,
@@ -389,6 +392,7 @@ struct FItemb {
     view_id: u8,
     mtime: f32,
     vid: bool,
+    gif: bool,
     size: u64,
     hidden: bool,
     recursed: bool,
@@ -554,6 +558,12 @@ impl<'a> IndexProxy<'a> {
     }
 }
 
+enum Preview {
+    None,
+    Handle(Handle),
+    Frames(iced_gif::Frames),
+}
+
 struct FilePicker {
     conf: Config,
     scroll_id: scrollable::Id,
@@ -576,7 +586,7 @@ struct FilePicker {
     nav_id: u8,
     view_id: u8,
     show_hidden: bool,
-    view_image: (usize, Option<Handle>),
+    view_image: (usize, Preview),
     scroll_offset: scrollable::AbsoluteOffset,
     ino_updater: Option<USender<Inochan>>,
     search_commander: Option<USender<SearchEvent>>,
@@ -647,7 +657,7 @@ impl Application for FilePicker {
                 nav_id: 0,
                 view_id: 0,
                 show_hidden: false,
-                view_image: (0, None),
+                view_image: (0, Preview::None),
                 scroll_offset: scrollable::AbsoluteOffset{x: 0.0, y: 0.0},
                 ino_updater: None,
                 search_commander: None,
@@ -883,9 +893,12 @@ impl Application for FilePicker {
                         _ => -1,
                     }
                 } else { 0 };
-                if self.view_image.1 != None {
+                match self.view_image.1 {
+                    Preview::None => {},
+                    _ => {
                     let step = didx - (self.last_clicked.didx as i64);
                     return self.update(Message::NextImage(step));
+                    },
                 }
                 if didx >= 0 && didx < self.displayed.len() as i64 {
                     self.click_item(self.dtoi(didx as usize), self.shift_pressed, self.ctrl_pressed, false);
@@ -944,7 +957,7 @@ impl Application for FilePicker {
                 return self.update(Message::LoadDir);
             }
             Message::LoadDir => {
-                self.view_image = (0, None);
+                self.view_image = (0, Preview::None);
                 self.pathbar = match &self.save_filename {
                     Some(fname) => Path::new(&self.dirs[0]).join(fname).to_string_lossy().to_string(),
                     None => self.dirs[0].clone(),
@@ -1009,28 +1022,37 @@ impl Application for FilePicker {
                         self.click_item(iidx, true, false, false);
                     }
                 } else {
-                    self.view_image = (0, None);
+                    self.view_image = (0, Preview::None);
                     return scrollable::scroll_to(self.scroll_id.clone(), self.scroll_offset);
                 }
             },
             Message::NextImage(step) => {
-                if self.view_image.1 != None {
-                    let mut didx = self.itod(self.view_image.0) as i64;
-                    while (step<0 && didx>0) || (step>0 && didx<((self.displayed.len()-1) as i64)) {
-                        didx = (didx as i64) + step;
-                        if didx<0 || didx as usize>=self.displayed.len() {
-                            return Command::none();
-                        }
-                        let di = didx as usize;
-                        let ii = self.dtoi(di);
-                        if self.items[ii].ftype == FType::Image {
-                            let img = self.items[ii].preview();
-                            if img != None {
-                                self.view_image = (self.dtoi(di), img);
-                                return self.update(Message::LeftClick(self.view_image.0));
+                match self.view_image.1 {
+                    Preview::None => {},
+                    _ => {
+                        let mut didx = self.itod(self.view_image.0) as i64;
+                        while (step<0 && didx>0) || (step>0 && didx<((self.displayed.len()-1) as i64)) {
+                            didx = (didx as i64) + step;
+                            if didx<0 || didx as usize>=self.displayed.len() {
+                                return Command::none();
+                            }
+                            let di = didx as usize;
+                            let ii = self.dtoi(di);
+                            if self.items[ii].ftype == FType::Image {
+                                match self.items[ii].preview() {
+                                    Preview::Handle(img) => {
+                                        self.view_image = (self.dtoi(di), Preview::Handle(img));
+                                        return self.update(Message::LeftClick(self.view_image.0));
+                                    }
+                                    Preview::Frames(img) => {
+                                        self.view_image = (self.dtoi(di), Preview::Frames(img));
+                                        return self.update(Message::LeftClick(self.view_image.0));
+                                    }
+                                    _ => {},
+                                }
                             }
                         }
-                    }
+                    },
                 }
             },
             Message::OverWriteOK => {
@@ -1207,39 +1229,53 @@ impl Application for FilePicker {
                     }).push(container(vertical_space()).height(Length::Fill).width(Length::Fill)
                             .id(CId::new("bookmarks"))).width(Length::Fixed(120.0));
 
-            let content: iced::Element<'_, Self::Message> = if let Some(handle) = &self.view_image.1 {
-                mouse_area(container(image(handle.clone())
-                                    .width(Length::Fill)
-                                    .height(Length::Fill))
-                               .align_x(alignment::Horizontal::Center)
-                               .align_y(alignment::Vertical::Center)
-                               .width(Length::Fill).height(Length::Fill))
-                    .on_right_press(Message::RightClick(-1))
-                    .on_release(Message::LeftClick(self.view_image.0))
-                    .into()
-            } else {
-                let maxcols = ((size.width-130.0) / self.conf.thumb_size).max(1.0) as usize;
-                let num_rows = self.displayed.len() / maxcols + if self.displayed.len() % maxcols != 0 { 1 } else { 0 };
-                let mut rows = Column::new();
-                for i in 0..num_rows {
-                    let start = i * maxcols;
-                    let mut row = Row::new().width(Length::Fill);
-                    for j in 0..maxcols {
-                        let idx = start + j;
-                        if idx < self.displayed.len() {
-                            row = row.push(unsafe{
-                                self.items.get_unchecked(*self.displayed.get_unchecked(idx))
-                            }.display(&self.last_clicked, self.conf.thumb_size));
+            let content: iced::Element<'_, Self::Message> = match &self.view_image.1 {
+                Preview::Handle(handle) => {
+                    mouse_area(container(image(handle.clone())
+                                        .width(Length::Fill)
+                                        .height(Length::Fill))
+                                   .align_x(alignment::Horizontal::Center)
+                                   .align_y(alignment::Vertical::Center)
+                                   .width(Length::Fill).height(Length::Fill))
+                        .on_right_press(Message::RightClick(-1))
+                        .on_release(Message::LeftClick(self.view_image.0))
+                        .into()
+                },
+                Preview::Frames(frames) => {
+                    mouse_area(container(gif(&frames)
+                                        .width(Length::Fill)
+                                        .height(Length::Fill))
+                                   .align_x(alignment::Horizontal::Center)
+                                   .align_y(alignment::Vertical::Center)
+                                   .width(Length::Fill).height(Length::Fill))
+                        .on_right_press(Message::RightClick(-1))
+                        .on_release(Message::LeftClick(self.view_image.0))
+                        .into()
+                },
+                Preview::None => {
+                    let maxcols = ((size.width-130.0) / self.conf.thumb_size).max(1.0) as usize;
+                    let num_rows = self.displayed.len() / maxcols + if self.displayed.len() % maxcols != 0 { 1 } else { 0 };
+                    let mut rows = Column::new();
+                    for i in 0..num_rows {
+                        let start = i * maxcols;
+                        let mut row = Row::new().width(Length::Fill);
+                        for j in 0..maxcols {
+                            let idx = start + j;
+                            if idx < self.displayed.len() {
+                                row = row.push(unsafe{
+                                    self.items.get_unchecked(*self.displayed.get_unchecked(idx))
+                                }.display(&self.last_clicked, self.conf.thumb_size));
+                            }
                         }
+                        rows = rows.push(row);
                     }
-                    rows = rows.push(row);
-                }
-                Scrollable::new(rows)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .on_scroll(Message::Scrolled)
-                    .direction(Direction::Vertical(Properties::new()))
-                    .id(self.scroll_id.clone()).into()
+                    Scrollable::new(rows)
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .on_scroll(Message::Scrolled)
+                        .direction(Direction::Vertical(Properties::new()))
+                        .id(self.scroll_id.clone()).into()
+                },
             };
             let mainview = column![
                 ctrlbar,
@@ -1316,14 +1352,20 @@ impl FItem {
     fn isdir(self: &Self) -> bool { self.ftype == FType::Dir }
 
     #[inline]
-    fn not_loaded(self: &Self) -> bool { self.handle == None && !self.path.is_empty() }
+    fn not_loaded(self: &Self) -> bool { self.img_handle == None && self.svg_handle == None && !self.path.is_empty() }
 
     fn display(&self, last_clicked: &LastClicked, thumbsize: f32) -> Element<'static, Message> {
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
             .width(Length::Fixed(thumbsize));
-        if let Some(h) = &self.handle {
-            col = col.push(image(h.clone()));
+        match (&self.img_handle, &self.svg_handle) {
+            (Some(h), None) => {
+                col = col.push(image(h.clone()));
+            },
+            (None, Some(h)) => {
+                col = col.push(svg(h.clone()));
+            },
+            (_,_) => {},
         }
         col = col.push(text(self.label.as_str()).size(13).shaping(text::Shaping::Advanced));
         let idx = self.items_idx;
@@ -1355,40 +1397,42 @@ impl FItem {
         }
     }
 
-    fn preview(self: &Self) -> Option<Handle> {
+    fn preview(self: &Self) -> Preview {
         match (&self.ftype, self.vid) {
             (FType::Image, false) => {
-               let fmt = img::ImageFormat::from_path(&self.path).unwrap();
-               match img::load(std::io::BufReader::new(std::fs::File::open(&self.path).ok()?), fmt) {
-                   Ok(img) => {
-                        Some(Handle::from_pixels(img.width(), img.height(), img.into_rgba8().as_raw().clone()))
-                   },
-                   Err(_) => {
-                       match std::fs::read(self.path.as_str()) {
-                           Ok(data) => {
-                                match load_from_memory(data.as_ref()) {
-                                   Ok(img) => {
-                                        let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-                                        Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
-                                   },
-                                   Err(e) => {
-                                       eprintln!("Error decoding image {}:{}", self.path, e);
-                                       None
-                                   },
-                                }
-                           }
-                           Err(e) => {
-                               eprintln!("Error reading image {}:{}", self.path, e);
-                               None
-                           },
-                       }
-                   },
-               }
+                match std::fs::read(self.path.as_str()) {
+                    Ok(data) => {
+                        if self.gif {
+                            match iced_gif::Frames::from_bytes(data) {
+                                Ok(f) => return Preview::Frames(f),
+                                Err(_) => return Preview::None,
+                            };
+                        } else {
+                            match load_from_memory(data.as_ref()) {
+                                Ok(img) => {
+                                    let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
+                                    Preview::Handle(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                                },
+                                Err(e) => {
+                                    eprintln!("Error decoding image {}:{}", self.path, e);
+                                    Preview::None
+                                },
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading image {}:{}", self.path, e);
+                        Preview::None
+                    },
+                }
             },
             (FType::Image, true) => {
-               vid_frame(self.path.as_str(), None, None)
+                match vid_frame(self.path.as_str(), None, None) {
+                    None => Preview::None,
+                    Some(a) => Preview::Handle(a),
+                }
             },
-            _ => None,
+            _ => Preview::None,
         }
     }
 
@@ -1436,12 +1480,14 @@ impl FItem {
             ftype,
             items_idx: 0,
             display_idx: 0,
-            handle: None,
+            img_handle: None,
+            svg_handle: None,
             sel: false,
             nav_id,
             view_id: 0,
             mtime: mtime.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32(),
             vid: false,
+            gif: false,
             size,
             hidden,
             recursed: false,
@@ -1511,30 +1557,50 @@ impl FItem {
     }
 
     async fn load(mut self, chan: USender<FItem>, icons: Arc<Icons>, thumbsize: u32) {
-        if self.handle == None {
+        if self.img_handle == None {
             match self.ftype {
                 FType::Dir => {
-                    self.handle = Some(icons.folder.clone());
+                    self.img_handle = Some(icons.folder.clone());
                 },
                 _ => {
                     let ext = match self.path.rsplitn(2,'.').next() {
-                        Some(s) => s,
-                        None => "",
+                        Some(s) => s.to_lowercase(),
+                        None => "".to_string(),
                     };
-                    self.ftype = match ext.to_lowercase().as_str() {
+                    let ext = ext.as_str();
+                    self.ftype = match ext {
+                        "svg" => {
+                            let file = File::open(self.path.as_str()).await;
+                            match file {
+                                Ok(mut file) => {
+                                    let mut buffer = Vec::new();
+                                    file.read_to_end(&mut buffer).await.unwrap_or(0);
+                                    self.svg_handle = Some(svg::Handle::from_memory(buffer));
+                                    FType::Image
+                                },
+                                Err(e) => {
+                                    self.img_handle = Some(icons.error.clone());
+                                    eprintln!("Error opening file {}: {}", self.path, e);
+                                    FType::File
+                                },
+                            }
+                        },
                         "png"|"jpg"|"jpeg"|"bmp"|"tiff"|"gif"|"webp" => {
-                            self.handle = self.prepare_cached_thumbnail(self.path.as_str(), false, thumbsize, icons.clone()).await;
-                            if self.handle == None {
-                                self.handle = Some(icons.error.clone());
+                            self.img_handle = self.prepare_cached_thumbnail(self.path.as_str(), false, thumbsize, icons.clone()).await;
+                            if self.img_handle == None {
+                                self.img_handle = Some(icons.error.clone());
                                 FType::File
                             } else {
+                                if ext == "gif" {
+                                    self.gif = true;
+                                }
                                 FType::Image
                             }
                         },
                         "webm"|"mkv"|"mp4"|"av1"|"avi" => {
-                            self.handle = self.prepare_cached_thumbnail(self.path.as_str(), true, thumbsize, icons.clone()).await;
-                            if self.handle == None {
-                                self.handle = Some(icons.error.clone());
+                            self.img_handle = self.prepare_cached_thumbnail(self.path.as_str(), true, thumbsize, icons.clone()).await;
+                            if self.img_handle == None {
+                                self.img_handle = Some(icons.error.clone());
                                 FType::File
                             } else {
                                 self.vid = true;
@@ -1542,11 +1608,11 @@ impl FItem {
                             }
                         },
                         "txt"|"pdf"|"doc"|"docx"|"xls"|"xlsx" => {
-                            self.handle = Some(icons.doc.clone());
+                            self.img_handle = Some(icons.doc.clone());
                             FType::File
                         },
                         _ => {
-                            self.handle = Some(icons.unknown.clone());
+                            self.img_handle = Some(icons.unknown.clone());
                             FType::File
                         },
                     };
