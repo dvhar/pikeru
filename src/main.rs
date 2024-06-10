@@ -560,8 +560,9 @@ impl<'a> IndexProxy<'a> {
 
 enum Preview {
     None,
-    Handle(Handle),
-    Frames(iced_gif::Frames),
+    Svg(svg::Handle),
+    Image(Handle),
+    Gif(iced_gif::Frames),
 }
 
 struct FilePicker {
@@ -1040,12 +1041,16 @@ impl Application for FilePicker {
                             let ii = self.dtoi(di);
                             if self.items[ii].ftype == FType::Image {
                                 match self.items[ii].preview() {
-                                    Preview::Handle(img) => {
-                                        self.view_image = (self.dtoi(di), Preview::Handle(img));
+                                    Preview::Image(img) => {
+                                        self.view_image = (self.dtoi(di), Preview::Image(img));
                                         return self.update(Message::LeftClick(self.view_image.0));
                                     }
-                                    Preview::Frames(img) => {
-                                        self.view_image = (self.dtoi(di), Preview::Frames(img));
+                                    Preview::Gif(img) => {
+                                        self.view_image = (self.dtoi(di), Preview::Gif(img));
+                                        return self.update(Message::LeftClick(self.view_image.0));
+                                    }
+                                    Preview::Svg(img) => {
+                                        self.view_image = (self.dtoi(di), Preview::Svg(img));
                                         return self.update(Message::LeftClick(self.view_image.0));
                                     }
                                     _ => {},
@@ -1230,7 +1235,18 @@ impl Application for FilePicker {
                             .id(CId::new("bookmarks"))).width(Length::Fixed(120.0));
 
             let content: iced::Element<'_, Self::Message> = match &self.view_image.1 {
-                Preview::Handle(handle) => {
+                Preview::Svg(handle) => {
+                    mouse_area(container(svg(handle.clone())
+                                        .width(Length::Fill)
+                                        .height(Length::Fill))
+                                   .align_x(alignment::Horizontal::Center)
+                                   .align_y(alignment::Vertical::Center)
+                                   .width(Length::Fill).height(Length::Fill))
+                        .on_right_press(Message::RightClick(-1))
+                        .on_release(Message::LeftClick(self.view_image.0))
+                        .into()
+                },
+                Preview::Image(handle) => {
                     mouse_area(container(image(handle.clone())
                                         .width(Length::Fill)
                                         .height(Length::Fill))
@@ -1241,7 +1257,7 @@ impl Application for FilePicker {
                         .on_release(Message::LeftClick(self.view_image.0))
                         .into()
                 },
-                Preview::Frames(frames) => {
+                Preview::Gif(frames) => {
                     mouse_area(container(gif(&frames)
                                         .width(Length::Fill)
                                         .height(Length::Fill))
@@ -1398,20 +1414,23 @@ impl FItem {
     }
 
     fn preview(self: &Self) -> Preview {
+        if let Some(h) = &self.svg_handle {
+            return Preview::Svg(h.clone());
+        }
         match (&self.ftype, self.vid) {
             (FType::Image, false) => {
                 match std::fs::read(self.path.as_str()) {
                     Ok(data) => {
                         if self.gif {
                             match iced_gif::Frames::from_bytes(data) {
-                                Ok(f) => return Preview::Frames(f),
+                                Ok(f) => return Preview::Gif(f),
                                 Err(_) => return Preview::None,
                             };
                         } else {
                             match load_from_memory(data.as_ref()) {
                                 Ok(img) => {
                                     let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-                                    Preview::Handle(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                                    Preview::Image(Handle::from_pixels(w, h, rgba.as_raw().clone()))
                                 },
                                 Err(e) => {
                                     eprintln!("Error decoding image {}:{}", self.path, e);
@@ -1429,7 +1448,7 @@ impl FItem {
             (FType::Image, true) => {
                 match vid_frame(self.path.as_str(), None, None) {
                     None => Preview::None,
-                    Some(a) => Preview::Handle(a),
+                    Some(a) => Preview::Image(a),
                 }
             },
             _ => Preview::None,
