@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Uploaded to: SVG Repo, www.svgrepo.com, Generator: SVG Repo Mixer Tools -->
+
+<svg
+   fill="#000000"
+   width="800px"
+   height="800px"
+   viewBox="0 0 24 24"
+   id="up-square-2"
+   data-name="Flat Line"
+   class="icon flat-line"
+   version="1.1"
+   sodipodi:docname="goto2.svg"
+   inkscape:version="1.5-dev (0b4d3151ad, 2024-06-08)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#50505000"
+     bordercolor="#eeeeeeff"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#505050ff"
+     inkscape:zoom="1.0075"
+     inkscape:cx="399.50372"
+     inkscape:cy="400"
+     inkscape:window-width="1920"
+     inkscape:window-height="1022"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="up-square-2" />
+  <rect
+     id="secondary"
+     x="1.8684863"
+     y="2.255583"
+     width="20.709677"
+     height="19.518612"
+     rx="1.1505376"
+     style="fill:#bd7a5b;fill-opacity:1;stroke-width:2.23392" />
+  <polyline
+     id="primary"
+     points="15 10 12 7 9 10"
+     style="fill:none;stroke:#000000;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"
+     transform="matrix(-1.3357852,-0.04284508,0.02804456,-1.2539163,31.311078,27.535971)"
+     inkscape:transform-center-x="0.46532504"
+     inkscape:transform-center-y="0.6191908" />
+  <path
+     id="primary-2"
+     data-name="primary"
+     d="M 4.6470879,7.4973949 C 17.039536,5.7633528 15.200958,12.186147 15.247537,16.413962 m 7.343161,4.543417 V 3.3999415 c 0,-0.6060438 -0.526846,-1.0973394 -1.176743,-1.0973398 H 2.5860458 C 1.9361479,2.3026016 1.4093014,2.7938974 1.4093015,3.3999415 V 20.957379 c 3e-7,0.606044 0.5268467,1.097339 1.1767443,1.097339 H 21.413955 c 0.649897,0 1.176743,-0.491295 1.176743,-1.097339 z"
+     style="fill:none;stroke:#000000;stroke-width:2.2727;stroke-linecap:round;stroke-linejoin:round"
+     sodipodi:nodetypes="cccscsccscc" />
+</svg>

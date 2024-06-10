@@ -25,6 +25,7 @@ use iced::{
         Scrollable, scrollable, scrollable::{Direction,Properties},
         Button, TextInput, Text,
         column, row, mouse_area, container,
+        svg
     },
     futures::{
         sink::SinkExt,
@@ -138,7 +139,7 @@ impl Config {
         opts.optopt("t", "title", "Title of the filepicker window", "NAME");
         opts.optopt("m", "mode", "Mode of file selection. Default is files", "[file, files, save, dir]");
         opts.optopt("p", "path", "Initial path", "PATH");
-        opts.optflag("c", "pause", "Paused the semantic search indexer");
+        opts.optflag("c", "pause", "Pause the semantic search indexer");
         opts.optflag("b", "resume", "Resume the semantic search indexer");
         opts.optflag("d", "disable", "Configure xdg portal to not use pikeru as your system filepicker");
         opts.optflag("e", "enable", "Configure xdg portal to use pikeru as your system filepicker");
@@ -412,6 +413,11 @@ struct Icons {
     unknown: Handle,
     error: Handle,
     thumb_dir: String,
+    settings: svg::Handle,
+    updir: svg::Handle,
+    newdir: svg::Handle,
+    cmds: svg::Handle,
+    goto: svg::Handle,
 }
 
 struct Bookmark {
@@ -1152,15 +1158,15 @@ impl Application for FilePicker {
             let ctrlbar = column![
                 row![
                     match (&self.last_clicked.size, self.show_goto) {
-                        (Some(size), true) => row![Text::new(size), horizontal_space(), top_button("Goto Dir", 80.0, Message::Goto)],
+                        (Some(size), true) => row![Text::new(size), horizontal_space(), top_icon(self.icons.goto.clone(), Message::Goto)],
                         (Some(size), false) => row![Text::new(size), horizontal_space()],
                         (None, true) => row![horizontal_space(), top_button("Goto Dir", 80.0, Message::Goto)],
                         (None, false) => row![]
                     },
                     menu_bar![
-                        (top_button("Cmd", 80.0, Message::Dummy), 
+                        (top_icon(self.icons.cmds.clone(), Message::Dummy), 
                             view_menu(cmd_list))
-                        (top_button("Options", 80.0, Message::Dummy),
+                        (top_icon(self.icons.settings.clone(), Message::Dummy),
                             view_menu(menu_items!(
                                     (menu_button("Sort A-Z",Message::Sort(1)))
                                     (menu_button("Sort Z-A",Message::Sort(2)))
@@ -1172,11 +1178,11 @@ impl Application for FilePicker {
                                     (slider(50.0..=500.0, self.conf.thumb_size, Message::Thumbsize))
                                     )))
                     ].spacing(1.0),
-                    top_button("New Dir", 80.0, Message::NewDir(false)),
-                    top_button("Up Dir", 80.0, Message::UpDir),
+                    top_icon(self.icons.newdir.clone(), Message::NewDir(false)),
+                    top_icon(self.icons.updir.clone(), Message::UpDir),
                     top_button("Cancel", 100.0, Message::Cancel),
                     top_button(&self.select_button, 100.0, Message::Select(SelType::Button)),
-                ].spacing(1),
+                ].spacing(1).height(35.0),
                 row![
                 TextInput::new("directory or file path", self.pathbar.as_str())
                     .on_input(Message::PathTxtInput)
@@ -1297,6 +1303,12 @@ fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
         .style(style::top_but_theme())
         .on_press(msg).into()
 }
+fn top_icon(img: svg::Handle, msg: Message) -> Element<'static, Message> {
+    Button::new(svg(img)
+                .width(40.0))//.height(Length::Fill))
+        .style(style::top_but_theme())
+        .on_press(msg).into()
+}
 
 impl FItem {
 
@@ -1318,17 +1330,17 @@ impl FItem {
         let clickable = match (self.isdir(), self.sel) {
             (true, true) => {
                 let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::DropBookmark(idx, point));
-                mouse_area(container(dr).style(get_sel_theme()))
+                mouse_area(container(dr).style(get_sel_theme()).padding(1.0))
             },
             (true, false) => {
                 let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::DropBookmark(idx, point));
-                mouse_area(dr)
+                mouse_area(container(dr).padding(1.0))
             },
             (false, true) => {
-                mouse_area(container(col).style(get_sel_theme()))
+                mouse_area(container(col).style(get_sel_theme()).padding(1.0))
             },
             (false, false) => {
-                mouse_area(col)
+                mouse_area(container(col).padding(1.0))
             },
         }.on_release(Message::LeftClick(self.items_idx))
             .on_right_press(Message::RightClick(self.items_idx as i64))
@@ -1637,17 +1649,20 @@ impl FilePicker {
                 Some(s) => s,
                 None => &fname,
             };
-            let fname = shquote(fname.as_ref());
-            let part = shquote(part.as_ref());
+            let quoted_fname = shquote(fname.as_ref());
+            let quoted_part = shquote(part.as_ref());
             let dir = path.parent().unwrap();
             let filecmd = cmd.replace("[path]", shquote(&item.path).as_str())
                 .replace("[dir]", &shquote(&dir.to_string_lossy()).as_str())
+                .replace("[Dir]", dir.to_string_lossy().as_ref())
                 .replace("[ext]", format!(".{}", &match path.extension() {
                     Some(s)=>s.to_string_lossy(),
                     None=> std::borrow::Cow::Borrowed(""),
                 }).as_str())
-                .replace("[name]", &fname)
-                .replace("[part]", &part);
+                .replace("[name]", &quoted_fname)
+                .replace("[Name]", &fname)
+                .replace("[part]", &quoted_part)
+                .replace("[Part]", part);
             let cwd = dir.to_owned();
             eprintln!("CMD:{}", filecmd);
             tokio::task::spawn_blocking(move || {
@@ -1810,6 +1825,11 @@ impl Icons {
             doc:  Self::init(include_bytes!("../assets/document.png"), thumbsize),
             error:  Self::init(include_bytes!("../assets/error.png"), thumbsize),
             thumb_dir: tpath.to_string_lossy().to_string(),
+            settings: svg::Handle::from_memory(include_bytes!("../assets/settings2.svg")),
+            updir: svg::Handle::from_memory(include_bytes!("../assets/up2.svg")),
+            newdir: svg::Handle::from_memory(include_bytes!("../assets/newdir2.svg")),
+            cmds: svg::Handle::from_memory(include_bytes!("../assets/cmd2.svg")),
+            goto: svg::Handle::from_memory(include_bytes!("../assets/goto2.svg")),
         }
     }
     fn init(img_bytes: &[u8], thumbsize: f32) -> Handle {

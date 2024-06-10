@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Uploaded to: SVG Repo, www.svgrepo.com, Generator: SVG Repo Mixer Tools -->
+
+<svg
+   fill="#000000"
+   width="800px"
+   height="800px"
+   viewBox="0 0 24 24"
+   id="up-square-2"
+   data-name="Flat Line"
+   class="icon flat-line"
+   version="1.1"
+   sodipodi:docname="up2.svg"
+   inkscape:version="1.5-dev (0b4d3151ad, 2024-06-08)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1" />
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#50505000"
+     bordercolor="#eeeeeeff"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#505050ff"
+     inkscape:zoom="1.0075"
+     inkscape:cx="399.50372"
+     inkscape:cy="400"
+     inkscape:window-width="1920"
+     inkscape:window-height="1022"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="up-square-2" />
+  <rect
+     id="secondary"
+     x="1.6600497"
+     y="2.4342432"
+     width="20.709677"
+     height="19.518612"
+     rx="1.1505376"
+     style="fill:#bd7a5b;fill-opacity:1;stroke-width:2.23392" />
+  <polyline
+     id="primary"
+     points="15 10 12 7 9 10"
+     style="fill:none;stroke:#000000;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"
+     transform="matrix(1.5391629,0,0,1.2064916,-6.2764062,-2.7378134)" />
+  <path
+     id="primary-2"
+     data-name="primary"
+     d="M 12.133996,17.465372 V 6.4750749 M 22.427247,20.762461 V 3.1779858 A 1.1436947,1.0990296 0 0 0 21.283553,2.0789561 H 2.9844375 A 1.1436947,1.0990296 0 0 0 1.8407427,3.1779858 V 20.762461 A 1.1436947,1.0990296 0 0 0 2.9844375,21.86149 H 21.283553 a 1.1436947,1.0990296 0 0 0 1.143694,-1.099029 z"
+     style="fill:none;stroke:#000000;stroke-width:2.24228;stroke-linecap:round;stroke-linejoin:round" />
+</svg>
