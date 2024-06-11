@@ -103,7 +103,7 @@ fn cli(flags: &getopts::Matches) {
 }
 
 fn main() -> iced::Result {
-    let conf = Config::new();
+    let mut conf = Config::new();
     conf.update(false);
     video_rs::init().unwrap();
     FilePicker::run(iced::Settings::with_flags(conf))
@@ -243,11 +243,14 @@ impl Config {
         }
     }
 
-    fn update(self: &Config, force: bool) {
+    fn update(self: &mut Config, force: bool) {
         if !self.need_update && !force {
             return;
         }
-        let mut conf = String::from("# Commands from the cmd menu will substitute the follwong values from the selected files before running, as seen in the convert examples. All paths and filenames are already quoted for you.
+        self.need_update = false;
+        let mut conf = String::from("# Commands from the cmd menu will substitute the follwong values from the selected files before running,
+# as seen in the convert examples. Paths and filenames are already quoted for you when using lowercase like [path],
+# or unquoted when capitalized like [Path].
 # [path] is full file path
 # [name] is the filename without full path
 # [dir] is the current directory without trailing slash
@@ -688,6 +691,7 @@ impl Application for FilePicker {
         match message {
             Message::Thumbsize(size) => {
                 self.conf.thumb_size = size;
+                self.conf.need_update = true;
             },
             Message::InoCreate(file) => {
                 let mut item = FItem::new(file.as_str().into(), self.nav_id);
@@ -768,6 +772,7 @@ impl Application for FilePicker {
                 };
                 self.displayed.iter().enumerate().for_each(|(i,j)|unsafe{self.items.get_unchecked_mut(*j)}.display_idx = i);
                 self.conf.sort_by = i;
+                self.conf.need_update = true;
                 return self.update(Message::LoadThumbs);
             },
             Message::PositionInfo(elem, widget, viewport) => {
@@ -812,7 +817,7 @@ impl Application for FilePicker {
                 self.ino_updater = Some(txino);
                 self.thumb_sender = Some(fichan);
                 tokio::spawn(recursive_add(recurse_cmds, more_files, txrec.clone(), txsrch,
-                                           mem::take(&mut self.conf.gitignore), self.conf.respect_gitignore));
+                                           self.conf.gitignore.clone(), self.conf.respect_gitignore));
                 self.recurse_updater = Some(txrec);
                 tokio::spawn(search_loop(search_cmds, search_res));
                 return self.update(Message::LoadDir);
@@ -1062,7 +1067,7 @@ impl Application for FilePicker {
             },
             Message::OverWriteOK => {
                 println!("{}", self.pathbar);
-                process::exit(0);
+                self.exit();
             },
             Message::Select(seltype) => {
                 if self.conf.saving() {
@@ -1077,7 +1082,7 @@ impl Application for FilePicker {
                             return self.update(Message::LoadDir);
                         } else {
                             println!("{}", self.pathbar);
-                            process::exit(0);
+                            self.exit();
                         }
                     }
                 } else {
@@ -1091,7 +1096,7 @@ impl Application for FilePicker {
                             FType::Dir => {
                                 if self.conf.dir() && sels.len() == 1 && seltype == SelType::Button {
                                     println!("{}", sels[0].path);
-                                    process::exit(0);
+                                    self.exit();
                                 } else {
                                     self.dirs = sels.iter().filter_map(|item| match item.ftype {
                                         FType::Dir => Some(item.path.clone()), _ => None}).collect();
@@ -1101,13 +1106,13 @@ impl Application for FilePicker {
                             FType::NotExist => {},
                             _ => {
                                 println!("{}", sels.iter().map(|item|item.path.as_str()).join("\n"));
-                                process::exit(0);
+                                self.exit();
                             }
                         }
                     }
                 }
             },
-            Message::Cancel => process::exit(0),
+            Message::Cancel => self.exit(),
         }
         Command::none()
     }
@@ -1357,7 +1362,7 @@ fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
 }
 fn top_icon(img: svg::Handle, msg: Message) -> Element<'static, Message> {
     Button::new(svg(img)
-                .width(40.0))//.height(Length::Fill))
+                .width(40.0))
         .style(style::top_but_theme())
         .on_press(msg).into()
 }
@@ -1898,6 +1903,11 @@ impl FilePicker {
             None => {},
         }
     }
+
+    fn exit(self: &mut Self) {
+        self.conf.update(false);
+        process::exit(0);
+    }
 }
 
 impl Icons {
@@ -2066,7 +2076,11 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>,
             Some(SearchEvent::Search(term)) => {
                 let mut results = displayed.iter().filter_map(|i| {
                     let item = &items[*i];
-                    let name_match = matcher.fuzzy_match(item.path.as_str(), term.as_str());
+                    let path = Path::new(item.path.as_str());
+                    let name_match = matcher.fuzzy_match(match path.file_name() {
+                        Some(p) => p.to_string_lossy(),
+                        None => path.to_string_lossy(),
+                    }.as_ref(), term.as_str());
                     let sem_match = match item.text {
                         Some(text) => matcher.fuzzy_match(text, term.as_str()),
                         None => None,
