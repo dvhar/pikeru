@@ -773,8 +773,8 @@ impl Application for FilePicker {
                     _ => unreachable!(),
                 };
                 self.displayed.iter().enumerate().for_each(|(i,j)|unsafe{self.items.get_unchecked_mut(*j)}.display_idx = i);
+                self.conf.need_update |= i != self.conf.sort_by;
                 self.conf.sort_by = i;
-                self.conf.need_update = true;
                 return self.update(Message::LoadThumbs);
             },
             Message::PositionInfo(elem, widget, viewport) => {
