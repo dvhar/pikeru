@@ -1,3 +1,5 @@
+use resvg;
+use tiny_skia;
 use iced_gif;
 use iced_gif::widget::gif;
 use img::load_from_memory;
@@ -387,7 +389,6 @@ struct FItemb {
     label: String,
     ftype: FType,
     img_handle: Option<Handle>,
-    svg_handle: Option<svg::Handle>,
     items_idx: usize,
     display_idx: usize,
     sel: bool,
@@ -396,6 +397,7 @@ struct FItemb {
     mtime: f32,
     vid: bool,
     gif: bool,
+    svg: bool,
     size: u64,
     hidden: bool,
     recursed: bool,
@@ -1046,6 +1048,10 @@ impl Application for FilePicker {
                             let ii = self.dtoi(di);
                             if self.items[ii].ftype == FType::Image {
                                 match self.items[ii].preview() {
+                                    Preview::Svg(img) => {
+                                        self.view_image = (self.dtoi(di), Preview::Svg(img));
+                                        return self.update(Message::LeftClick(self.view_image.0));
+                                    }
                                     Preview::Image(img) => {
                                         self.view_image = (self.dtoi(di), Preview::Image(img));
                                         return self.update(Message::LeftClick(self.view_image.0));
@@ -1053,11 +1059,7 @@ impl Application for FilePicker {
                                     Preview::Gif(img) => {
                                         self.view_image = (self.dtoi(di), Preview::Gif(img));
                                         return self.update(Message::LeftClick(self.view_image.0));
-                                    }
-                                    Preview::Svg(img) => {
-                                        self.view_image = (self.dtoi(di), Preview::Svg(img));
-                                        return self.update(Message::LeftClick(self.view_image.0));
-                                    }
+                                    },
                                     _ => {},
                                 }
                             }
@@ -1214,7 +1216,7 @@ impl Application for FilePicker {
                     top_icon(self.icons.updir.clone(), Message::UpDir),
                     top_button("Cancel", 100.0, Message::Cancel),
                     top_button(&self.select_button, 100.0, Message::Select(SelType::Button)),
-                ].spacing(1).height(35.0),
+                ].spacing(1).height(31.0),
                 row![
                 TextInput::new("directory or file path", self.pathbar.as_str())
                     .on_input(Message::PathTxtInput)
@@ -1373,20 +1375,15 @@ impl FItem {
     fn isdir(self: &Self) -> bool { self.ftype == FType::Dir }
 
     #[inline]
-    fn not_loaded(self: &Self) -> bool { self.img_handle == None && self.svg_handle == None && !self.path.is_empty() }
+    fn not_loaded(self: &Self) -> bool { self.img_handle == None && !self.path.is_empty() }
 
     fn display(&self, last_clicked: &LastClicked, thumbsize: f32) -> Element<'static, Message> {
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
             .width(Length::Fixed(thumbsize));
-        match (&self.img_handle, &self.svg_handle) {
-            (Some(h), None) => {
-                col = col.push(image(h.clone()));
-            },
-            (None, Some(h)) => {
-                col = col.push(svg(h.clone()));
-            },
-            (_,_) => {},
+        match &self.img_handle {
+            Some(h) => col = col.push(image(h.clone())),
+            _ => {},
         }
         col = col.push(text(self.label.as_str()).size(13).shaping(text::Shaping::Advanced));
         let idx = self.items_idx;
@@ -1419,44 +1416,41 @@ impl FItem {
     }
 
     fn preview(self: &Self) -> Preview {
-        if let Some(h) = &self.svg_handle {
-            return Preview::Svg(h.clone());
-        }
-        match (&self.ftype, self.vid) {
-            (FType::Image, false) => {
-                match std::fs::read(self.path.as_str()) {
-                    Ok(data) => {
-                        if self.gif {
-                            match iced_gif::Frames::from_bytes(data) {
-                                Ok(f) => return Preview::Gif(f),
-                                Err(_) => return Preview::None,
-                            };
-                        } else {
-                            match load_from_memory(data.as_ref()) {
-                                Ok(img) => {
-                                    let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-                                    Preview::Image(Handle::from_pixels(w, h, rgba.as_raw().clone()))
-                                },
-                                Err(e) => {
-                                    eprintln!("Error decoding image {}:{}", self.path, e);
-                                    Preview::None
-                                },
-                            }
+        if self.svg {
+            Preview::Svg(svg::Handle::from_path(&self.path))
+        } else if self.vid {
+            match vid_frame(self.path.as_str(), None, None) {
+                None => Preview::None,
+                Some(a) => Preview::Image(a),
+            }
+        } else if self.ftype == FType::Image {
+            match std::fs::read(self.path.as_str()) {
+                Ok(data) => {
+                    if self.gif {
+                        match iced_gif::Frames::from_bytes(data) {
+                            Ok(f) => return Preview::Gif(f),
+                            Err(_) => return Preview::None,
+                        };
+                    } else {
+                        match load_from_memory(data.as_ref()) {
+                            Ok(img) => {
+                                let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
+                                Preview::Image(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                            },
+                            Err(e) => {
+                                eprintln!("Error decoding image {}:{}", self.path, e);
+                                Preview::None
+                            },
                         }
                     }
-                    Err(e) => {
-                        eprintln!("Error reading image {}:{}", self.path, e);
-                        Preview::None
-                    },
                 }
-            },
-            (FType::Image, true) => {
-                match vid_frame(self.path.as_str(), None, None) {
-                    None => Preview::None,
-                    Some(a) => Preview::Image(a),
-                }
-            },
-            _ => Preview::None,
+                Err(e) => {
+                    eprintln!("Error reading image {}:{}", self.path, e);
+                    Preview::None
+                },
+            }
+        } else {
+            Preview::None
         }
     }
 
@@ -1505,20 +1499,26 @@ impl FItem {
             items_idx: 0,
             display_idx: 0,
             img_handle: None,
-            svg_handle: None,
             sel: false,
             nav_id,
             view_id: 0,
             mtime: mtime.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32(),
             vid: false,
             gif: false,
+            svg: false,
             size,
             hidden,
             recursed: false,
         }))
     }
 
-    async fn prepare_cached_thumbnail(self: &Self, path: &str, vid: bool, thumbsize: u32, icons: Arc<Icons>) -> Option<Handle> {
+    async fn prepare_cached_thumbnail(
+            self: &Self,
+            path: &str,
+            is_vid: bool,
+            is_svg: bool,
+            thumbsize: u32,
+            icons: Arc<Icons>) -> Option<Handle> {
         let mut hasher = Md5::new();
         let p = Path::new(path);
         let fmetadata = p.metadata().unwrap();
@@ -1548,7 +1548,7 @@ impl FItem {
             let thumb = img.thumbnail(thumbsize, thumbsize);
             let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
             Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
-        } else if vid {
+        } else if is_vid {
             vid_frame(&path, Some(thumbsize), Some(&cache_path))
         } else {
             let file = File::open(self.path.as_str()).await;
@@ -1556,20 +1556,45 @@ impl FItem {
                 Ok(mut file) => {
                     let mut buffer = Vec::new();
                     file.read_to_end(&mut buffer).await.unwrap_or(0);
-                    let img = load_from_memory(buffer.as_ref());
-                    match img {
-                        Ok(img) => {
-                            let thumb = img.thumbnail(thumbsize, thumbsize);
-                            let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
-                            let mut file = std::fs::File::create_new(cache_path).unwrap();
-                            let encoder = WebPEncoder::new_lossless(&mut file);
-                            encoder.encode(rgba.as_ref(), w, h, img::ExtendedColorType::Rgba8).unwrap();
-                            Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
-                        },
-                        Err(e) => {
-                            eprintln!("Error decoding image {}: {}", self.path, e);
-                            None
-                        },
+                    if is_svg {
+                        let opts = resvg::usvg::Options::default();
+                        match resvg::usvg::Tree::from_data(buffer.as_ref(), &opts) {
+                            Ok(tree) => {
+                                let (w, h) = (tree.size().width(), tree.size().height());
+                                let scale = thumbsize as f32 / w.max(h);
+                                let w = (w * scale) as u32;
+                                let h = (h * scale) as u32;
+                                let numpix = w * h * 4;
+                                let transforem = tiny_skia::Transform::from_scale(scale, scale);
+                                let mut pixels = vec![0; numpix as usize];
+                                let mut pixmap = tiny_skia::PixmapMut::from_bytes(&mut pixels, w, h).unwrap();
+                                resvg::render(&tree, transforem, &mut pixmap);
+                                let mut newfile = std::fs::File::create_new(cache_path).unwrap();
+                                let encoder = WebPEncoder::new_lossless(&mut newfile);
+                                encoder.encode(pixels.as_ref(), w, h, img::ExtendedColorType::Rgba8).unwrap();
+                                Some(Handle::from_pixels(w, h, pixels))
+                            },
+                            Err(e) => {
+                                eprintln!("Error decoding svg {}: {}", self.path, e);
+                                None
+                            },
+                        }
+                    } else {
+                        let img = load_from_memory(buffer.as_ref());
+                        match img {
+                            Ok(img) => {
+                                let thumb = img.thumbnail(thumbsize, thumbsize);
+                                let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
+                                let mut newfile = std::fs::File::create_new(cache_path).unwrap();
+                                let encoder = WebPEncoder::new_lossless(&mut newfile);
+                                encoder.encode(rgba.as_ref(), w, h, img::ExtendedColorType::Rgba8).unwrap();
+                                Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                            },
+                            Err(e) => {
+                                eprintln!("Error decoding image {}: {}", self.path, e);
+                                None
+                            },
+                        }
                     }
                 },
                 Err(e) => {
@@ -1594,23 +1619,17 @@ impl FItem {
                     let ext = ext.as_str();
                     self.ftype = match ext {
                         "svg" => {
-                            let file = File::open(self.path.as_str()).await;
-                            match file {
-                                Ok(mut file) => {
-                                    let mut buffer = Vec::new();
-                                    file.read_to_end(&mut buffer).await.unwrap_or(0);
-                                    self.svg_handle = Some(svg::Handle::from_memory(buffer));
-                                    FType::Image
-                                },
-                                Err(e) => {
-                                    self.img_handle = Some(icons.error.clone());
-                                    eprintln!("Error opening file {}: {}", self.path, e);
-                                    FType::File
-                                },
+                            self.img_handle = self.prepare_cached_thumbnail(self.path.as_str(), false, true, thumbsize, icons.clone()).await;
+                            if self.img_handle == None {
+                                self.img_handle = Some(icons.error.clone());
+                                FType::File
+                            } else {
+                                self.svg = true;
+                                FType::Image
                             }
                         },
                         "png"|"jpg"|"jpeg"|"bmp"|"tiff"|"gif"|"webp" => {
-                            self.img_handle = self.prepare_cached_thumbnail(self.path.as_str(), false, thumbsize, icons.clone()).await;
+                            self.img_handle = self.prepare_cached_thumbnail(self.path.as_str(), false, false, thumbsize, icons.clone()).await;
                             if self.img_handle == None {
                                 self.img_handle = Some(icons.error.clone());
                                 FType::File
@@ -1622,7 +1641,7 @@ impl FItem {
                             }
                         },
                         "webm"|"mkv"|"mp4"|"av1"|"avi" => {
-                            self.img_handle = self.prepare_cached_thumbnail(self.path.as_str(), true, thumbsize, icons.clone()).await;
+                            self.img_handle = self.prepare_cached_thumbnail(self.path.as_str(), true, false, thumbsize, icons.clone()).await;
                             if self.img_handle == None {
                                 self.img_handle = Some(icons.error.clone());
                                 FType::File

@@ -180,17 +180,13 @@ where
         _viewport: &iced::Rectangle,
         _renderer: &Renderer,
     ) -> iced::advanced::mouse::Interaction {
-        let child_interact = self.content.as_widget().mouse_interaction(
+        self.content.as_widget().mouse_interaction(
             &tree.children[0],
             layout,
             cursor,
             _viewport,
             _renderer,
-        );
-        if child_interact != mouse::Interaction::default() {
-            return child_interact;
-        }
-        mouse::Interaction::default()
+        )
     }
 }
 
