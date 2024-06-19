@@ -33,6 +33,6 @@ ignore = "0.4.22"
 log = "0.4.21"
 env_logger = "0.11.3"
 ctrlc = { version = "3.4.4", features = ["termination"] }
-iced_gif = { git = "https://github.com/dvhar/iced_gif.git", branch = "master" }
+iced_gif = "0.5"
 resvg = "0.42.0"
 tiny-skia = "0.11.4"

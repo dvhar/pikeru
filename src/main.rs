@@ -561,7 +561,10 @@ impl<'a> IndexProxy<'a> {
         } 
         if let Some(sql) = &self.sql {
             let qtext = format!("select concat(dir, '/', fname), description from descriptions where dir in ({})", placeholders);
-            let mut query = sql.prepare(qtext.as_str()).unwrap();
+            let mut query = match sql.prepare(qtext.as_str()) {
+                Ok(q) => q,
+                Err(_) => return Vec::new(),
+            };
             query.query_map(rusqlite::params_from_iter(filtered.iter()), |row|{
                 Ok((row.get(0).unwrap(), row.get(1).unwrap()))
             }).unwrap().map(|r|r.unwrap()).collect()
