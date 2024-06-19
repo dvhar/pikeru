@@ -353,7 +353,7 @@ enum Message {
     HandleZones(usize, Vec<(Id, iced::Rectangle)>),
     NextImage(i64),
     Scrolled(scrollable::Viewport),
-    PositionInfo(i32, Rectangle, Rectangle),
+    PositionInfo(Pos, Rectangle, Rectangle),
     Sort(i32),
     ArrowKey(Named),
     ShowHidden(bool),
@@ -366,6 +366,13 @@ enum Message {
     SearchResult(Box<SearchEvent>),
     NextRecurse(Vec<FItem>, u8),
     Dummy,
+}
+
+#[derive(Clone, Debug)]
+enum Pos {
+    Content(bool),
+    Item,
+    Row(u32, usize),
 }
 
 enum SubState {
@@ -388,7 +395,7 @@ struct FItemb {
     path: String,
     label: String,
     ftype: FType,
-    img_handle: Option<Handle>,
+    thumb_handle: Option<Handle>,
     items_idx: usize,
     display_idx: usize,
     sel: bool,
@@ -459,6 +466,7 @@ struct LastClicked {
     iidx: usize,
     didx: usize,
     new: bool,
+    nav_id: u8,
     size: Option<String>,
 }
 
@@ -570,6 +578,51 @@ enum Preview {
     Gif(iced_gif::Frames),
 }
 
+#[derive(Debug, Default)]
+struct Rowsize {
+    ready: bool,
+    end_pos: f32,
+    pos: f32,
+}
+
+#[derive(Debug)]
+struct RowSizes {
+    rows: Vec<Rowsize>,
+    num_ready: usize,
+    next_send: usize,
+    last_recv: usize,
+    view_counter: u32,
+    cols: usize,
+}
+impl RowSizes {
+    fn reset(self: &mut Self, samecols: bool) {
+        self.rows.clear();
+        self.next_send = 0;
+        self.last_recv = 0;
+        self.num_ready = 0;
+        self.view_counter += 1;
+        if !samecols {
+            self.cols = 0;
+        }
+    }
+    fn checkcols(self: &mut Self, newcols: usize) {
+        if self.cols != newcols {
+            self.reset(false);
+            self.cols = newcols;
+        }
+    }
+    fn new() -> Self {
+        Self {
+            rows: vec![],
+            next_send: 0,
+            last_recv: 0,
+            num_ready: 0,
+            view_counter: 0,
+            cols: 0,
+        }
+    }
+}
+
 struct FilePicker {
     conf: Config,
     scroll_id: scrollable::Id,
@@ -603,8 +656,12 @@ struct FilePicker {
     modal: FModal,
     dir_history: Vec<Vec<String>>,
     content_width: f32,
+    content_height: f32,
+    content_y: f32,
+    content_viewport: Rectangle,
     recursive_search: bool,
     show_goto: bool,
+    row_sizes: RefCell<RowSizes>,
 }
 
 impl Application for FilePicker {
@@ -674,8 +731,12 @@ impl Application for FilePicker {
                 new_dir: String::new(),
                 dir_history: vec![],
                 content_width: 0.0,
+                content_height: 0.0,
+                content_y: 0.0,
+                content_viewport: Rectangle::default(),
                 recursive_search: true,
                 show_goto: false,
+                row_sizes: RefCell::new(RowSizes::new()),
             },
             iced::window::resize(iced::window::Id::MAIN, window_size)
         )
@@ -775,19 +836,55 @@ impl Application for FilePicker {
                 self.displayed.iter().enumerate().for_each(|(i,j)|unsafe{self.items.get_unchecked_mut(*j)}.display_idx = i);
                 self.conf.need_update |= i != self.conf.sort_by;
                 self.conf.sort_by = i;
+                self.row_sizes.borrow_mut().reset(true);
                 return self.update(Message::LoadThumbs);
             },
             Message::PositionInfo(elem, widget, viewport) => {
                 match elem {
-                    1 => {
+                    Pos::Item => {
+                        self.content_viewport = viewport;
                         if self.last_clicked.new {
                             self.last_clicked.new = false;
                             return self.keep_in_view(widget, viewport);
                         }
                     },
-                    2 => self.content_width = widget.width,
-                    _ => {},
+                    Pos::Content(clicked_offscreen) => {
+                        self.content_width = widget.width;
+                        self.content_height = widget.height;
+                        self.content_y = widget.y;
+                        self.content_viewport.height = widget.height;
+                        if self.last_clicked.new && self.last_clicked.nav_id == self.nav_id && clicked_offscreen {
+                            self.last_clicked.new = false;
+                            let ii = self.last_clicked.iidx;
+                            if let Some(rect) = self.itopos(ii) {
+                                return self.keep_in_view(rect, self.content_viewport);
+                            }
+                        }
+                    },
+                    Pos::Row(counter, i) => {
+                        let mut rs = self.row_sizes.borrow_mut();
+                        if counter == rs.view_counter {
+                            if rs.rows.len() <= i {
+                                rs.rows.resize_with(self.num_rows(self.max_cols()), Rowsize::default);
+                            }
+                            if i > rs.last_recv+1 {
+                                rs.next_send = rs.last_recv+1;
+                            } else if !rs.rows[i].ready {
+                                rs.last_recv = i;
+                                rs.num_ready += 1;
+                                let pos = widget.y - self.content_y;
+                                rs.rows[i] = Rowsize {
+                                    ready: true,
+                                    end_pos: pos + widget.height,
+                                    pos,
+                                };
+                            }
+                        }
+                    },
                 }
+            },
+            Message::Scrolled(viewport) => {
+                self.update_scroll(viewport.absolute_offset().y);
             },
             Message::DropBookmark(idx, cursor_pos) => {
                 return iced_drop::zones_on_point(
@@ -824,7 +921,6 @@ impl Application for FilePicker {
                 tokio::spawn(search_loop(search_cmds, search_res));
                 return self.update(Message::LoadDir);
             },
-            Message::Scrolled(viewport) => self.scroll_offset = viewport.absolute_offset(),
             Message::PathTxtInput(txt) => self.pathbar = txt,
             Message::SearchTxtInput(txt) => {
                 self.searchbar = txt;
@@ -861,6 +957,7 @@ impl Application for FilePicker {
                             self.search_commander.as_ref().unwrap().send(SearchEvent::Search(self.searchbar.clone())).unwrap();
                             still_running = true;
                         }
+                        self.row_sizes.borrow_mut().reset(true);
                     }
                 }
                 self.search_running = still_running;
@@ -891,7 +988,7 @@ impl Application for FilePicker {
             Message::Shift(pressed) => self.shift_pressed = pressed,
             Message::ArrowKey(key) => {
                 let didx = if self.items.iter().filter(|item|!item.recursed || !self.searchbar.is_empty()).any(|item|item.sel) {
-                    let maxcols = (((self.content_width-130.0) / self.conf.thumb_size)+1.0).max(1.0) as i64;
+                    let maxcols = self.max_cols() as i64;
                     let i = self.last_clicked.didx as i64;
                     match key {
                         ArrowUp => i - maxcols,
@@ -904,8 +1001,8 @@ impl Application for FilePicker {
                 match self.view_image.1 {
                     Preview::None => {},
                     _ => {
-                    let step = didx - (self.last_clicked.didx as i64);
-                    return self.update(Message::NextImage(step));
+                        let step = didx - (self.last_clicked.didx as i64);
+                        return self.update(Message::NextImage(step));
                     },
                 }
                 if didx >= 0 && didx < self.displayed.len() as i64 {
@@ -954,18 +1051,19 @@ impl Application for FilePicker {
             Message::LoadBookmark(idx) => {
                 self.dir_history.push(mem::take(&mut self.dirs));
                 self.dirs = vec![self.conf.bookmarks[idx].path.clone()];
-                self.scroll_offset.y = 0.0;
+                self.update_scroll(0.0);
                 return self.update(Message::LoadDir);
             },
             Message::Goto => {
                 self.dir_history.push(mem::take(&mut self.dirs));
                 self.dirs = self.items.iter().filter(|item|item.sel).map(|item|
                     Path::new(&item.path).parent().unwrap().to_string_lossy().to_string()).collect();
-                self.scroll_offset.y = 0.0;
+                self.update_scroll(0.0);
                 return self.update(Message::LoadDir);
             }
             Message::LoadDir => {
                 self.view_image = (0, Preview::None);
+                self.update_scroll(0.0);
                 self.pathbar = match &self.save_filename {
                     Some(fname) => Path::new(&self.dirs[0]).join(fname).to_string_lossy().to_string(),
                     None => self.dirs[0].clone(),
@@ -980,7 +1078,7 @@ impl Application for FilePicker {
             Message::DownDir => {
                 if let Some(dirs) = self.dir_history.pop() {
                     self.dirs = dirs;
-                    self.scroll_offset.y = 0.0;
+                    self.update_scroll(0.0);
                     return self.update(Message::LoadDir);
                 }
             },
@@ -1080,7 +1178,7 @@ impl Application for FilePicker {
                         } else if result.is_dir() {
                             self.dir_history.push(mem::take(&mut self.dirs));
                             self.dirs = vec![self.pathbar.clone()];
-                            self.scroll_offset.y = 0.0;
+                            self.update_scroll(0.0);
                             return self.update(Message::LoadDir);
                         } else {
                             println!("{}", self.pathbar);
@@ -1189,47 +1287,6 @@ impl Application for FilePicker {
             let view_menu = |items| Menu::new(items).max_width(180.0).offset(15.0).spacing(3.0);
             let cmd_list = self.conf.cmds.iter().enumerate().map(
                 |(i,cmd)|Item::new(menu_button(cmd.label.as_str(), Message::RunCmd(i)))).collect();
-            let ctrlbar = column![
-                row![
-                    match (&self.last_clicked.size, self.show_goto) {
-                        (Some(size), true) => row![Text::new(size), horizontal_space(), top_icon(self.icons.goto.clone(), Message::Goto)],
-                        (Some(size), false) => row![Text::new(size), horizontal_space()],
-                        (None, true) => row![horizontal_space(), top_button("Goto Dir", 80.0, Message::Goto)],
-                        (None, false) => row![]
-                    },
-                    menu_bar![
-                        (top_icon(self.icons.cmds.clone(), Message::Dummy), 
-                            view_menu(cmd_list))
-                        (top_icon(self.icons.settings.clone(), Message::Dummy),
-                            view_menu(menu_items!(
-                                    (menu_button("Sort A-Z",Message::Sort(1)))
-                                    (menu_button("Sort Z-A",Message::Sort(2)))
-                                    (menu_button("Sort Newest first",Message::Sort(3)))
-                                    (menu_button("Sort Oldest first",Message::Sort(4)))
-                                    (checkbox("Show Hidden", self.show_hidden).on_toggle(Message::ShowHidden))
-                                    (checkbox("Recursive Search", self.recursive_search).on_toggle(Message::SetRecursive))
-                                    (text("Thumbnail size"))
-                                    (slider(50.0..=500.0, self.conf.thumb_size, Message::Thumbsize))
-                                    )))
-                    ].spacing(1.0),
-                    top_icon(self.icons.newdir.clone(), Message::NewDir(false)),
-                    top_icon(self.icons.updir.clone(), Message::UpDir),
-                    top_button("Cancel", 100.0, Message::Cancel),
-                    top_button(&self.select_button, 100.0, Message::Select(SelType::Button)),
-                ].spacing(1).height(31.0),
-                row![
-                TextInput::new("directory or file path", self.pathbar.as_str())
-                    .on_input(Message::PathTxtInput)
-                    .on_paste(Message::PathTxtInput)
-                    .on_submit(Message::Select(SelType::TxtEntr))
-                    .width(Length::FillPortion(8)),
-                TextInput::new("search", self.searchbar.as_str())
-                    .on_input(Message::SearchTxtInput)
-                    .on_paste(Message::SearchTxtInput)
-                    .width(Length::FillPortion(2)),
-                Button::new("X").on_press(Message::SearchTxtInput("".to_string())).style(style::flat_but_theme())
-                ]
-            ].align_items(iced::Alignment::End).width(Length::Fill);
             let bookmarks = self.conf.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
                         col.push(Button::new(
                                     container(
@@ -1241,6 +1298,12 @@ impl Application for FilePicker {
                     }).push(container(vertical_space()).height(Length::Fill).width(Length::Fill)
                             .id(CId::new("bookmarks"))).width(Length::Fixed(120.0));
 
+            let mut clicked_offscreen = false;
+            let maxcols = ((size.width-130.0) / self.conf.thumb_size).max(1.0) as usize;
+            let num_rows = self.num_rows(maxcols);
+            let top = self.scroll_offset.y - self.conf.thumb_size*1.1;
+            let bot = self.scroll_offset.y + self.content_height;
+            let mut rs = self.row_sizes.borrow_mut();
             let content: iced::Element<'_, Self::Message> = match &self.view_image.1 {
                 Preview::Svg(handle) => {
                     mouse_area(container(svg(handle.clone())
@@ -1276,21 +1339,63 @@ impl Application for FilePicker {
                         .into()
                 },
                 Preview::None => {
-                    let maxcols = ((size.width-130.0) / self.conf.thumb_size).max(1.0) as usize;
-                    let num_rows = self.displayed.len() / maxcols + if self.displayed.len() % maxcols != 0 { 1 } else { 0 };
                     let mut rows = Column::new();
-                    for i in 0..num_rows {
-                        let start = i * maxcols;
-                        let mut row = Row::new().width(Length::Fill);
-                        for j in 0..maxcols {
-                            let idx = start + j;
-                            if idx < self.displayed.len() {
-                                row = row.push(unsafe{
-                                    self.items.get_unchecked(*self.displayed.get_unchecked(idx))
-                                }.display(&self.last_clicked, self.conf.thumb_size));
+                    rs.checkcols(maxcols);
+                    if rs.rows.len() < num_rows {
+                        rs.rows.resize_with(num_rows, Rowsize::default);
+                    }
+                    let first_idx = match rs.rows.iter().take_while(|r|r.ready).find_position(|r|r.pos > top) {
+                        Some((i,r)) => {
+                            rows = rows.push(vertical_space().height(r.pos));
+                            i
+                        },
+                        None => 0,
+                    };
+                    let mut next_ready = true;
+                    let mut send_max = 20;
+                    for i in first_idx..num_rows {
+                        let cur_row = &rs.rows[i];
+                        let past_bot = cur_row.pos > bot;
+                        if num_rows <= rs.num_ready {
+                            if past_bot {
+                                let last_pos = rs.rows.last().unwrap().end_pos;
+                                rows = rows.push(vertical_space().height(last_pos - cur_row.pos));
+                                break;
                             }
                         }
-                        rows = rows.push(row);
+
+                        let mut row_ready = next_ready;
+                        if past_bot {
+                            rows = rows.push(vertical_space().height(cur_row.end_pos - cur_row.pos));
+                        } else {
+                            let start = i * maxcols;
+                            let mut row = Row::new().width(Length::Fill);
+                            let mut clicked = false;
+                            for j in 0..maxcols {
+                                let idx = start + j;
+                                if idx < self.displayed.len() {
+                                    let item = &self.items[self.dtoi(idx)];
+                                    row_ready &= item.thumb_handle != None;
+                                    let (cl, display) = item.display(&self.last_clicked, self.conf.thumb_size);
+                                    clicked |= cl;
+                                    row = row.push(display);
+                                }
+                            }
+                            clicked_offscreen = self.last_clicked.new && !clicked;
+                            if row_ready && i == rs.next_send && send_max > 0 {
+                                send_max -= 1;
+                                let counter = rs.view_counter;
+                                rows = rows.push(wrapper::locator(row).send_info(move|a,b|Message::PositionInfo(Pos::Row(counter, i),a,b)));
+                                rs.next_send += 1;
+                            } else {
+                                rows = rows.push(row);
+                            }
+                            if !row_ready {
+                                break;
+                            }
+                        }
+
+                        next_ready = row_ready;
                     }
                     Scrollable::new(rows)
                         .width(Length::Fill)
@@ -1300,9 +1405,52 @@ impl Application for FilePicker {
                         .id(self.scroll_id.clone()).into()
                 },
             };
+            let count = Text::new(format!("  count:{}", self.displayed.len()));
+            let ctrlbar = column![
+                row![
+                    match (&self.last_clicked.size, self.show_goto) {
+                        (Some(size), true) => row![Text::new(size),count, horizontal_space(), top_icon(self.icons.goto.clone(), Message::Goto)],
+                        (Some(size), false) => row![Text::new(size),count, horizontal_space()],
+                        (None, true) => row![count, horizontal_space(), top_button("Goto Dir", 80.0, Message::Goto)],
+                        (None, false) => row![count, horizontal_space()]
+                    },
+                    menu_bar![
+                        (top_icon(self.icons.cmds.clone(), Message::Dummy), 
+                            view_menu(cmd_list))
+                        (top_icon(self.icons.settings.clone(), Message::Dummy),
+                            view_menu(menu_items!(
+                                    (menu_button("Sort A-Z",Message::Sort(1)))
+                                    (menu_button("Sort Z-A",Message::Sort(2)))
+                                    (menu_button("Sort Newest first",Message::Sort(3)))
+                                    (menu_button("Sort Oldest first",Message::Sort(4)))
+                                    (checkbox("Show Hidden", self.show_hidden).on_toggle(Message::ShowHidden))
+                                    (checkbox("Recursive Search", self.recursive_search).on_toggle(Message::SetRecursive))
+                                    (text("Thumbnail size"))
+                                    (slider(50.0..=500.0, self.conf.thumb_size, Message::Thumbsize))
+                                    )))
+                    ].spacing(1.0),
+                    top_icon(self.icons.newdir.clone(), Message::NewDir(false)),
+                    top_icon(self.icons.updir.clone(), Message::UpDir),
+                    top_button("Cancel", 100.0, Message::Cancel),
+                    top_button(&self.select_button, 100.0, Message::Select(SelType::Button)),
+                ].spacing(1).height(31.0),
+                row![
+                TextInput::new("directory or file path", self.pathbar.as_str())
+                    .on_input(Message::PathTxtInput)
+                    .on_paste(Message::PathTxtInput)
+                    .on_submit(Message::Select(SelType::TxtEntr))
+                    .width(Length::FillPortion(8)),
+                TextInput::new("search", self.searchbar.as_str())
+                    .on_input(Message::SearchTxtInput)
+                    .on_paste(Message::SearchTxtInput)
+                    .width(Length::FillPortion(2)),
+                Button::new("X").on_press(Message::SearchTxtInput("".to_string())).style(style::flat_but_theme())
+                ]
+            ].align_items(iced::Alignment::End).width(Length::Fill);
             let mainview = column![
                 ctrlbar,
-                row![bookmarks, wrapper::locator(content).on_info(|a,b|Message::PositionInfo(2,a,b))],
+                row![bookmarks, wrapper::locator(content).send_info(move|a,b|Message::PositionInfo(
+                        Pos::Content(clicked_offscreen),a,b))],
             ];
             match self.modal {
                 FModal::None => mainview.into(),
@@ -1375,13 +1523,13 @@ impl FItem {
     fn isdir(self: &Self) -> bool { self.ftype == FType::Dir }
 
     #[inline]
-    fn not_loaded(self: &Self) -> bool { self.img_handle == None && !self.path.is_empty() }
+    fn not_loaded(self: &Self) -> bool { self.thumb_handle == None && !self.path.is_empty() }
 
-    fn display(&self, last_clicked: &LastClicked, thumbsize: f32) -> Element<'static, Message> {
+    fn display(&self, last_clicked: &LastClicked, thumbsize: f32) -> (bool, Element<'static, Message>) {
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
             .width(Length::Fixed(thumbsize));
-        match &self.img_handle {
+        match &self.thumb_handle {
             Some(h) => col = col.push(image(h.clone())),
             _ => {},
         }
@@ -1407,10 +1555,10 @@ impl FItem {
             .on_middle_press(Message::MiddleClick(self.items_idx));
         match (last_clicked.iidx, last_clicked.new) {
             (i, true) if i == idx => {
-                wrapper::locator(clickable).on_info(|a,b|Message::PositionInfo(1,a,b)).into()
+                (true, wrapper::locator(clickable).send_info(move|a,b|Message::PositionInfo(Pos::Item,a,b)).into())
             },
             (_,_) => {
-                clickable.into()
+                (false, clickable.into())
             },
         }
     }
@@ -1498,7 +1646,7 @@ impl FItem {
             ftype,
             items_idx: 0,
             display_idx: 0,
-            img_handle: None,
+            thumb_handle: None,
             sel: false,
             nav_id,
             view_id: 0,
@@ -1606,10 +1754,10 @@ impl FItem {
     }
 
     async fn load(mut self, chan: USender<FItem>, icons: Arc<Icons>, thumbsize: u32) {
-        if self.img_handle == None {
+        if self.thumb_handle == None {
             match self.ftype {
                 FType::Dir => {
-                    self.img_handle = Some(icons.folder.clone());
+                    self.thumb_handle = Some(icons.folder.clone());
                 },
                 _ => {
                     let ext = match self.path.rsplitn(2,'.').next() {
@@ -1619,9 +1767,9 @@ impl FItem {
                     let ext = ext.as_str();
                     self.ftype = match ext {
                         "svg" => {
-                            self.img_handle = self.prepare_cached_thumbnail(self.path.as_str(), false, true, thumbsize, icons.clone()).await;
-                            if self.img_handle == None {
-                                self.img_handle = Some(icons.error.clone());
+                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), false, true, thumbsize, icons.clone()).await;
+                            if self.thumb_handle == None {
+                                self.thumb_handle = Some(icons.error.clone());
                                 FType::File
                             } else {
                                 self.svg = true;
@@ -1629,9 +1777,9 @@ impl FItem {
                             }
                         },
                         "png"|"jpg"|"jpeg"|"bmp"|"tiff"|"gif"|"webp" => {
-                            self.img_handle = self.prepare_cached_thumbnail(self.path.as_str(), false, false, thumbsize, icons.clone()).await;
-                            if self.img_handle == None {
-                                self.img_handle = Some(icons.error.clone());
+                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), false, false, thumbsize, icons.clone()).await;
+                            if self.thumb_handle == None {
+                                self.thumb_handle = Some(icons.error.clone());
                                 FType::File
                             } else {
                                 if ext == "gif" {
@@ -1641,9 +1789,9 @@ impl FItem {
                             }
                         },
                         "webm"|"mkv"|"mp4"|"av1"|"avi" => {
-                            self.img_handle = self.prepare_cached_thumbnail(self.path.as_str(), true, false, thumbsize, icons.clone()).await;
-                            if self.img_handle == None {
-                                self.img_handle = Some(icons.error.clone());
+                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), true, false, thumbsize, icons.clone()).await;
+                            if self.thumb_handle == None {
+                                self.thumb_handle = Some(icons.error.clone());
                                 FType::File
                             } else {
                                 self.vid = true;
@@ -1651,11 +1799,11 @@ impl FItem {
                             }
                         },
                         "txt"|"pdf"|"doc"|"docx"|"xls"|"xlsx" => {
-                            self.img_handle = Some(icons.doc.clone());
+                            self.thumb_handle = Some(icons.doc.clone());
                             FType::File
                         },
                         _ => {
-                            self.img_handle = Some(icons.unknown.clone());
+                            self.thumb_handle = Some(icons.unknown.clone());
                             FType::File
                         },
                     };
@@ -1749,6 +1897,38 @@ impl FilePicker {
     #[inline]
     fn dtoi(self: &Self, i: usize) -> usize { self.displayed[i] }
 
+    #[inline]
+    fn update_scroll(self: &mut Self, y: f32) {
+        self.scroll_offset.y = y;
+        self.content_viewport.y = y + self.content_y;
+    }
+
+    #[inline]
+    fn itopos(self: &Self, i: usize) -> Option<Rectangle> {
+        let rs = self.row_sizes.borrow();
+        let ri = self.itod(i) / self.max_cols();
+        if rs.rows.len() > ri {
+            let r = &rs.rows[ri];
+            if r.ready {
+                let mut rect = Rectangle::default();
+                rect.y = r.pos + self.content_y;
+                rect.height = r.end_pos - r.pos;
+                return Some(rect)
+            }
+        }
+        None
+    }
+
+    #[inline]
+    fn max_cols(self: &Self) -> usize {
+        (((self.content_width-130.0) / self.conf.thumb_size)+1.0).max(1.0) as usize
+    }
+
+    #[inline]
+    fn num_rows(self: &Self, maxcols: usize) -> usize {
+        self.displayed.len() / maxcols + if self.displayed.len() % maxcols != 0 { 1 } else { 0 }
+    }
+
     fn run_command(self: &Self, icmd: usize) {
         let cmd = self.conf.cmds[icmd].cmd.as_str();
         self.items.iter().filter(|item| item.sel).for_each(|item| {
@@ -1793,7 +1973,8 @@ impl FilePicker {
            wbot - v.height
         } else { -1.0 };
         if abspos >= 0.0 {
-            let offset = scrollable::AbsoluteOffset{x:0.0, y:abspos - 61.6}; //TODO: calculate top position
+            let offset = scrollable::AbsoluteOffset{x:0.0, y:abspos - self.content_y};
+            self.update_scroll(offset.y);
             return scrollable::scroll_to(self.scroll_id.clone(), offset);
         }
         Command::none()
@@ -1804,6 +1985,7 @@ impl FilePicker {
         let isdir = self.items[ii].isdir();
         self.last_clicked = LastClicked{
             new: true,
+            nav_id: self.nav_id,
             iidx: ii,
             didx: self.items[ii].display_idx,
             size: if isdir { None } else {
@@ -1860,6 +2042,7 @@ impl FilePicker {
         self.pathbar = if self.items[ii].sel {
             self.items[ii].path.clone()
         } else {
+            self.last_clicked.size = None;
             self.dirs[0].clone()
         };
     }

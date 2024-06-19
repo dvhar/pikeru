@@ -13,7 +13,7 @@ where
 {
     content: Element<'a, Message, Theme, Renderer>,
     id: Option<iced::advanced::widget::Id>,
-    on_info: Option<Box<dyn Fn(Rectangle, Rectangle) -> Message + 'a>>,
+    send_info: Option<Box<dyn Fn(Rectangle, Rectangle) -> Message + 'a>>,
 }
 
 impl<'a, Message, Theme, Renderer> Wrapper<'a, Message, Theme, Renderer>
@@ -26,7 +26,7 @@ where
         Self {
             content: content.into(),
             id: None,
-            on_info: None,
+            send_info: None,
         }
     }
 
@@ -37,11 +37,11 @@ where
     }
 
     /// Sets the message that will be produced when the [`Wrapper`] is clicked.
-    pub fn on_info<F>(mut self, message: F) -> Self
+    pub fn send_info<F>(mut self, message: F) -> Self
     where
         F: Fn(Rectangle, Rectangle) -> Message + 'a,
     {
-        self.on_info = Some(Box::new(message));
+        self.send_info = Some(Box::new(message));
         self
     }
 }
@@ -99,8 +99,8 @@ where
         if status == Status::Captured {
             return status;
         };
-        if let Some(on_info) = self.on_info.as_deref() {
-            let message = (on_info)(layout.bounds(), *_viewport);
+        if let Some(send_info) = self.send_info.as_deref() {
+            let message = (send_info)(layout.bounds(), *_viewport);
             shell.publish(message);
         }
         status
