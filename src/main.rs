@@ -1300,6 +1300,7 @@ impl Application for FilePicker {
 
             let mut clicked_offscreen = false;
             let maxcols = ((size.width-130.0) / self.conf.thumb_size).max(1.0) as usize;
+            let thumb_width = (size.width-130.0) / maxcols as f32;
             let num_rows = self.num_rows(maxcols);
             let top = self.scroll_offset.y - self.conf.thumb_size*1.1;
             let bot = self.scroll_offset.y + self.content_height;
@@ -1376,7 +1377,7 @@ impl Application for FilePicker {
                                 if idx < self.displayed.len() {
                                     let item = &self.items[self.dtoi(idx)];
                                     row_ready &= item.thumb_handle != None;
-                                    let (cl, display) = item.display(&self.last_clicked, self.conf.thumb_size);
+                                    let (cl, display) = item.display(&self.last_clicked, thumb_width);
                                     clicked |= cl;
                                     row = row.push(display);
                                 }
