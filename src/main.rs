@@ -664,7 +664,7 @@ struct FilePicker {
     content_viewport: Rectangle,
     recursive_search: bool,
     show_goto: bool,
-    any_selected: bool,
+    enable_sel_button: bool,
     row_sizes: RefCell<RowSizes>,
 }
 
@@ -701,6 +701,7 @@ impl Application for FilePicker {
             Mode::Save => "Save",
             Mode::Dir => "Selecct",
         }.to_string();
+        let enable_sel_button = conf.saving();
         (
             Self {
                 conf,
@@ -740,7 +741,7 @@ impl Application for FilePicker {
                 content_viewport: Rectangle::default(),
                 recursive_search: true,
                 show_goto: false,
-                any_selected: false,
+                enable_sel_button,
                 row_sizes: RefCell::new(RowSizes::new()),
             },
             iced::window::resize(iced::window::Id::MAIN, window_size)
@@ -803,7 +804,7 @@ impl Application for FilePicker {
             Message::ShowHidden(show) => {
                 self.show_hidden = show;
                 if !show {
-                    self.any_selected = self.items.iter().any(|item|item.sel);
+                    self.enable_sel_button = self.conf.saving() || self.items.iter().any(|item|item.sel);
                 }
                 let end = if self.searchbar.is_empty() { self.end_idx } else { self.displayed.len() };
                 let displayed = self.items[..end].iter().enumerate().filter_map(|(i,item)| {
@@ -942,7 +943,7 @@ impl Application for FilePicker {
                         } else {None}
                     }).collect();
                     self.show_goto = have_sel && self.dirs.len() > 1;
-                    self.any_selected = have_sel;
+                    self.enable_sel_button = self.conf.saving() || have_sel;
                     return self.update(Message::Sort(self.conf.sort_by));
                 } else if !self.search_running{
                     self.search_running = true;
@@ -1442,7 +1443,7 @@ impl Application for FilePicker {
                     top_icon(self.icons.newdir.clone(), Message::NewDir(false)),
                     top_icon(self.icons.updir.clone(), Message::UpDir),
                     top_button("Cancel", 100.0, Message::Cancel),
-                    if self.any_selected {
+                    if self.enable_sel_button {
                         top_button(&self.select_button, 100.0, Message::Select(SelType::Button))
                     } else {
                         top_button_off(&self.select_button, 100.0)
@@ -2068,7 +2069,7 @@ impl FilePicker {
             self.last_clicked.size = None;
             self.dirs[0].clone()
         };
-        self.any_selected = any_selected;
+        self.enable_sel_button = any_selected || self.conf.saving();
     }
 
     fn load_dir(self: &mut Self) {
@@ -2096,7 +2097,7 @@ impl FilePicker {
         self.end_idx = self.items.len();
         self.items.iter_mut().enumerate().for_each(|(i,item)|item.items_idx = i);
         self.displayed = displayed;
-        self.any_selected = false;
+        self.enable_sel_button = self.conf.saving();
         self.update_searcher_items(self.items.iter().map(|item|item.path.clone()).collect());
     }
 
