@@ -428,6 +428,7 @@ struct Icons {
     doc: Handle,
     unknown: Handle,
     error: Handle,
+    audio: Handle,
     thumb_dir: String,
     settings: svg::Handle,
     updir: svg::Handle,
@@ -1809,7 +1810,7 @@ impl FItem {
                                 FType::Image
                             }
                         },
-                        "webm"|"mkv"|"mp4"|"av1"|"avi" => {
+                        "webm"|"mkv"|"mp4"|"av1"|"avi"|"avif"|"flv"|"wmv"|"m4v"|"mpeg"|"mov"|"jxl" => {
                             self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), true, false, thumbsize, icons.clone()).await;
                             if self.thumb_handle == None {
                                 self.thumb_handle = Some(icons.error.clone());
@@ -1821,6 +1822,10 @@ impl FItem {
                         },
                         "txt"|"pdf"|"doc"|"docx"|"xls"|"xlsx" => {
                             self.thumb_handle = Some(icons.doc.clone());
+                            FType::File
+                        },
+                        "mp3"|"wav"|"ogg"|"flac"|"aac"|"wma"|"aiff"|"alac"|"opus"|"m4a" => {
+                            self.thumb_handle = Some(icons.audio.clone());
                             FType::File
                         },
                         _ => {
@@ -2143,10 +2148,11 @@ impl Icons {
         let home = std::env::var("HOME").unwrap();
         let tpath = Path::new(&home).join(".cache").join("pikeru").join("thumbnails");
         Self {
-            folder: Self::init(include_bytes!("../assets/folder.png"), thumbsize),
-            unknown:  Self::init(include_bytes!("../assets/unknown.png"), thumbsize),
-            doc:  Self::init(include_bytes!("../assets/document.png"), thumbsize),
-            error:  Self::init(include_bytes!("../assets/error.png"), thumbsize),
+            folder: Self::prerender_svg(include_bytes!("../assets/folder7.svg"), thumbsize),
+            unknown:  Self::prerender_svg(include_bytes!("../assets/file6.svg"), thumbsize),
+            doc:  Self::prerender_svg(include_bytes!("../assets/document.svg"), thumbsize),
+            error:  Self::prerender_svg(include_bytes!("../assets/error.svg"), thumbsize),
+            audio:  Self::prerender_svg(include_bytes!("../assets/music4.svg"), thumbsize),
             thumb_dir: tpath.to_string_lossy().to_string(),
             settings: svg::Handle::from_memory(include_bytes!("../assets/settings2.svg")),
             updir: svg::Handle::from_memory(include_bytes!("../assets/up2.svg")),
@@ -2155,11 +2161,19 @@ impl Icons {
             goto: svg::Handle::from_memory(include_bytes!("../assets/goto2.svg")),
         }
     }
-    fn init(img_bytes: &[u8], thumbsize: f32) -> Handle {
-        let img = load_from_memory(img_bytes).unwrap();
-        let thumb = img.thumbnail((thumbsize * 0.9) as u32, (thumbsize * 0.9) as u32);
-        let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
-        Handle::from_pixels(w, h, rgba.as_raw().clone())
+    fn prerender_svg(img_bytes: &[u8], thumbsize: f32) -> Handle {
+        let opts = resvg::usvg::Options::default();
+        let tree = resvg::usvg::Tree::from_data(img_bytes.as_ref(), &opts).unwrap();
+        let (w, h) = (tree.size().width(), tree.size().height());
+        let scale = thumbsize as f32 / w.max(h);
+        let w = (w * scale) as u32;
+        let h = (h * scale) as u32;
+        let numpix = w * h * 4;
+        let transforem = tiny_skia::Transform::from_scale(scale, scale);
+        let mut pixels = vec![0; numpix as usize];
+        let mut pixmap = tiny_skia::PixmapMut::from_bytes(&mut pixels, w, h).unwrap();
+        resvg::render(&tree, transforem, &mut pixmap);
+        Handle::from_pixels(w, h, pixels)
     }
 }
 
