@@ -1302,8 +1302,8 @@ impl Application for FilePicker {
                             .id(CId::new("bookmarks"))).width(Length::Fixed(120.0));
 
             let mut clicked_offscreen = false;
-            let maxcols = ((size.width-130.0) / self.conf.thumb_size).max(1.0) as usize;
-            let thumb_width = (size.width-130.0) / maxcols as f32;
+            let maxcols = ((size.width-140.0) / self.conf.thumb_size).max(1.0) as usize;
+            let thumb_width = (size.width-140.0) / maxcols as f32;
             let num_rows = self.num_rows(maxcols);
             let top = self.scroll_offset.y - self.conf.thumb_size*1.1;
             let bot = self.scroll_offset.y + self.content_height;
@@ -1409,7 +1409,7 @@ impl Application for FilePicker {
                         .id(self.scroll_id.clone()).into()
                 },
             };
-            let count = Text::new(format!("  count:{}", self.displayed.len()));
+            let count = Text::new(format!("  {} items", self.displayed.len()));
             let ctrlbar = column![
                 row![
                     match (&self.last_clicked.size, self.show_goto) {
@@ -1925,7 +1925,7 @@ impl FilePicker {
 
     #[inline]
     fn max_cols(self: &Self) -> usize {
-        (((self.content_width-130.0) / self.conf.thumb_size)+1.0).max(1.0) as usize
+        (((self.content_width-140.0) / self.conf.thumb_size)+1.0).max(1.0) as usize
     }
 
     #[inline]

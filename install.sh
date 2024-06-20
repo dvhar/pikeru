@@ -47,8 +47,8 @@ else
 		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 		. ~/.cargo/env
 	fi
-	cargo build -r
-	cargo build -r --bin portal
+	cargo build -r || exit 1
+	cargo build -r --bin portal || exit 1
 	mkdir -p $confdir
 	[[ -r "$confdir/config" ]] || cp -u $sample_conf $confdir/config
 	sudo "$0"
