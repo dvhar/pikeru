@@ -664,6 +664,7 @@ struct FilePicker {
     content_viewport: Rectangle,
     recursive_search: bool,
     show_goto: bool,
+    any_selected: bool,
     row_sizes: RefCell<RowSizes>,
 }
 
@@ -739,6 +740,7 @@ impl Application for FilePicker {
                 content_viewport: Rectangle::default(),
                 recursive_search: true,
                 show_goto: false,
+                any_selected: false,
                 row_sizes: RefCell::new(RowSizes::new()),
             },
             iced::window::resize(iced::window::Id::MAIN, window_size)
@@ -800,6 +802,9 @@ impl Application for FilePicker {
             },
             Message::ShowHidden(show) => {
                 self.show_hidden = show;
+                if !show {
+                    self.any_selected = self.items.iter().any(|item|item.sel);
+                }
                 let end = if self.searchbar.is_empty() { self.end_idx } else { self.displayed.len() };
                 let displayed = self.items[..end].iter().enumerate().filter_map(|(i,item)| {
                     if show || !item.hidden { Some(i)
@@ -937,6 +942,7 @@ impl Application for FilePicker {
                         } else {None}
                     }).collect();
                     self.show_goto = have_sel && self.dirs.len() > 1;
+                    self.any_selected = have_sel;
                     return self.update(Message::Sort(self.conf.sort_by));
                 } else if !self.search_running{
                     self.search_running = true;
@@ -1436,7 +1442,11 @@ impl Application for FilePicker {
                     top_icon(self.icons.newdir.clone(), Message::NewDir(false)),
                     top_icon(self.icons.updir.clone(), Message::UpDir),
                     top_button("Cancel", 100.0, Message::Cancel),
-                    top_button(&self.select_button, 100.0, Message::Select(SelType::Button)),
+                    if self.any_selected {
+                        top_button(&self.select_button, 100.0, Message::Select(SelType::Button))
+                    } else {
+                        top_button_off(&self.select_button, 100.0)
+                    }
                 ].spacing(1).height(31.0),
                 row![
                 TextInput::new("directory or file path", self.pathbar.as_str())
@@ -1513,6 +1523,12 @@ fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
                 .horizontal_alignment(alignment::Horizontal::Center))
         .style(style::top_but_theme())
         .on_press(msg).into()
+}
+fn top_button_off(txt: &str, size: f32) -> Element<'static, Message> {
+    Button::new(text(txt)
+                .width(size)
+                .horizontal_alignment(alignment::Horizontal::Center))
+        .style(style::top_but_theme()).into()
 }
 fn top_icon(img: svg::Handle, msg: Message) -> Element<'static, Message> {
     Button::new(svg(img)
@@ -2036,19 +2052,23 @@ impl FilePicker {
         } else if prevsel.len() == 1 || ctrl {
             self.items[ii].sel = false;
         }
+        let mut any_selected = false;
         prevsel.into_iter().filter(|j|*j != ii).for_each(|j| {
             if !(ctrl && (self.conf.multi()||isdir)) || self.items[j].isdir() != isdir {
                 self.items[j].sel = false;
             } else {
                 self.show_goto |= self.items[j].recursed || self.dirs.len() > 1;
+                any_selected = true;
             }
         });
         self.pathbar = if self.items[ii].sel {
+            any_selected = true;
             self.items[ii].path.clone()
         } else {
             self.last_clicked.size = None;
             self.dirs[0].clone()
         };
+        self.any_selected = any_selected;
     }
 
     fn load_dir(self: &mut Self) {
@@ -2076,6 +2096,7 @@ impl FilePicker {
         self.end_idx = self.items.len();
         self.items.iter_mut().enumerate().for_each(|(i,item)|item.items_idx = i);
         self.displayed = displayed;
+        self.any_selected = false;
         self.update_searcher_items(self.items.iter().map(|item|item.path.clone()).collect());
     }
 
