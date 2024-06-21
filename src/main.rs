@@ -2165,7 +2165,7 @@ impl Icons {
         let opts = resvg::usvg::Options::default();
         let tree = resvg::usvg::Tree::from_data(img_bytes.as_ref(), &opts).unwrap();
         let (w, h) = (tree.size().width(), tree.size().height());
-        let scale = thumbsize as f32 / w.max(h);
+        let scale = thumbsize as f32 * 0.8 / w.max(h);
         let w = (w * scale) as u32;
         let h = (h * scale) as u32;
         let numpix = w * h * 4;
