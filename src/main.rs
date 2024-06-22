@@ -1,3 +1,4 @@
+use unicode_segmentation::UnicodeSegmentation;
 use resvg;
 use tiny_skia;
 use iced_gif;
@@ -400,14 +401,15 @@ struct FItemb {
     display_idx: usize,
     sel: bool,
     nav_id: u8,
-    view_id: u8,
     mtime: f32,
+    size: u64,
+    view_id: u8,
     vid: bool,
     gif: bool,
     svg: bool,
-    size: u64,
     hidden: bool,
     recursed: bool,
+    unicode: bool,
 }
 #[derive(Debug, Clone, Default)]
 struct FItem(Box<FItemb>);
@@ -1555,7 +1557,8 @@ impl FItem {
             Some(h) => col = col.push(image(h.clone())),
             _ => {},
         }
-        col = col.push(text(self.label.as_str()).size(13).shaping(text::Shaping::Advanced));
+        let shape = if self.unicode { text::Shaping::Advanced } else { text::Shaping::Basic };
+        col = col.push(text(self.label.as_str()).size(13).shaping(shape));
         let idx = self.items_idx;
         let clickable = match (self.isdir(), self.sel) {
             (true, true) => {
@@ -1647,21 +1650,49 @@ impl FItem {
         let path = pth.to_string_lossy();
         let mut label = path.rsplitn(2,'/').next().unwrap().to_string();
         let hidden = label.starts_with('.');
-        if label.len() > 20 {
-            let mut start = label.len()-40.min(label.len());
-            while  (label.as_bytes()[start] & 0b11000000) == 0b10000000 {
-                start += 1;
+
+        let len = label.len();
+        if len > 20 {
+            let mut line_len = 0;
+            let mut split = 0;
+            for (i, w) in label.split_word_bound_indices().rev() {
+                if line_len + w.len() > 20 {
+                    if line_len == 0 {
+                        split = len - 20.min(len);
+                        while  split > 0 && (label.as_bytes()[split] & 0b11000000) == 0b10000000 {
+                            split -= 1;
+                        }
+                    }
+                    break;
+                }
+                split = i;
+                line_len += w.len();
             }
-            let mut split = label.len()-20;
-            while  (label.as_bytes()[split] & 0b11000000) == 0b10000000 {
-                split += 1;
+            let len = split;
+            line_len = 0;
+            let mut start = 0;
+            for (i, w) in label[..split].split_word_bound_indices().rev() {
+                if line_len + w.len() > 20 {
+                    if line_len == 0 {
+                        start = len - 20.min(len);
+                        while  start > 0 && (label.as_bytes()[start] & 0b11000000) == 0b10000000 {
+                            start -= 1;
+                        }
+                    }
+                    break;
+                }
+                start = i;
+                line_len += w.len();
             }
             if start == split {
                 label = label[start..].to_string();
             } else {
-                label = format!("{}{}\n{}", if start == 0 { "" } else { "..." }, &label[start..split], &label[split..]);
+                label = format!("{}{}\n{}", if start == 0 { "" } else { "..." },
+                    &label[start..split],
+                    &label[split..]);
             }
         }
+        let unicode = label.bytes().any(|c| c & 0b10000000 != 0);
         FItem(Box::new(FItemb {
             path: path.to_string(),
             label,
@@ -1679,6 +1710,7 @@ impl FItem {
             size,
             hidden,
             recursed: false,
+            unicode,
         }))
     }
 
