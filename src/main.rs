@@ -669,6 +669,7 @@ struct FilePicker {
     show_goto: bool,
     enable_sel_button: bool,
     row_sizes: RefCell<RowSizes>,
+    pos_state: RefCell<(f32,f32)>,
 }
 
 impl Application for FilePicker {
@@ -746,6 +747,7 @@ impl Application for FilePicker {
                 show_goto: false,
                 enable_sel_button,
                 row_sizes: RefCell::new(RowSizes::new()),
+                pos_state: RefCell::new((0.0,0.0)),
             },
             iced::window::resize(iced::window::Id::MAIN, window_size)
         )
@@ -1399,7 +1401,7 @@ impl Application for FilePicker {
                             if row_ready && i == rs.next_send && send_max > 0 {
                                 send_max -= 1;
                                 let counter = rs.view_counter;
-                                rows = rows.push(wrapper::locator(row).send_info(move|a,b|Message::PositionInfo(Pos::Row(counter, i),a,b)));
+                                rows = rows.push(wrapper::locator(row).send_info(move|a,b|Message::PositionInfo(Pos::Row(counter, i),a,b), true));
                                 rs.next_send += 1;
                             } else {
                                 rows = rows.push(row);
@@ -1465,11 +1467,15 @@ impl Application for FilePicker {
                 Button::new("X").on_press(Message::SearchTxtInput("".to_string())).style(style::flat_but_theme())
                 ]
             ].align_items(iced::Alignment::End).width(Length::Fill);
+            let send = self.need_content_pos(clicked_offscreen, size.width, size.height);
             let mainview = column![
                 ctrlbar,
                 row![bookmarks, wrapper::locator(content).send_info(move|a,b|Message::PositionInfo(
-                        Pos::Content(clicked_offscreen),a,b))],
+                        Pos::Content(clicked_offscreen),a,b), send)],
             ];
+            let mut ps = self.pos_state.borrow_mut();
+            ps.0 = size.width;
+            ps.1 = size.height;
             match self.modal {
                 FModal::None => mainview.into(),
                 FModal::Error(ref msg) => modal(mainview, Some(Card::new(
@@ -1580,7 +1586,7 @@ impl FItem {
             .on_middle_press(Message::MiddleClick(self.items_idx));
         match (last_clicked.iidx, last_clicked.new) {
             (i, true) if i == idx => {
-                (true, wrapper::locator(clickable).send_info(move|a,b|Message::PositionInfo(Pos::Item,a,b)).into())
+                (true, wrapper::locator(clickable).send_info(move|a,b|Message::PositionInfo(Pos::Item,a,b), true).into())
             },
             (_,_) => {
                 (false, clickable.into())
@@ -1985,6 +1991,14 @@ impl FilePicker {
     #[inline]
     fn num_rows(self: &Self, maxcols: usize) -> usize {
         self.displayed.len() / maxcols + if self.displayed.len() % maxcols != 0 { 1 } else { 0 }
+    }
+
+    #[inline]
+    fn need_content_pos(self: &Self, co: bool, w: f32, h: f32) -> bool {
+        co || {
+            let ps = self.pos_state.borrow();
+            ps.0 != w || ps.1 != h
+        }
     }
 
     fn run_command(self: &Self, icmd: usize) {

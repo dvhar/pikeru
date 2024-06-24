@@ -37,11 +37,13 @@ where
     }
 
     /// Sets the message that will be produced when the [`Wrapper`] is clicked.
-    pub fn send_info<F>(mut self, message: F) -> Self
+    pub fn send_info<F>(mut self, message: F, send: bool) -> Self
     where
         F: Fn(Rectangle, Rectangle) -> Message + 'a,
     {
-        self.send_info = Some(Box::new(message));
+        if send {
+            self.send_info = Some(Box::new(message));
+        }
         self
     }
 }
@@ -81,7 +83,7 @@ where
         _renderer: &Renderer,
         _clipboard: &mut dyn iced::advanced::Clipboard,
         shell: &mut iced::advanced::Shell<'_, Message>,
-        _viewport: &iced::Rectangle,
+        viewport: &iced::Rectangle,
     ) -> iced::advanced::graphics::core::event::Status {
         // handle the on event of the content first, in case that the wrapper is nested
         let status = self.content.as_widget_mut().on_event(
@@ -92,7 +94,7 @@ where
             _renderer,
             _clipboard,
             shell,
-            _viewport,
+            viewport,
         );
         // this should really only be captured if the wrapper is nested or it contains some other
         // widget that captures the event
@@ -100,7 +102,7 @@ where
             return status;
         };
         if let Some(send_info) = self.send_info.as_deref() {
-            let message = (send_info)(layout.bounds(), *_viewport);
+            let message = (send_info)(layout.bounds(), *viewport);
             shell.publish(message);
         }
         status
