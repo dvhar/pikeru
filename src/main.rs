@@ -10,6 +10,8 @@ use num_cpus;
 use itertools::Itertools;
 mod wrapper;
 mod iced_drop;
+mod mouse;
+use mouse::mouse_area;
 mod style;
 use iced::{
     advanced::widget::Id,
@@ -29,7 +31,7 @@ use iced::{
         image, image::Handle, Column, Row, text, responsive,
         Scrollable, scrollable, scrollable::{Direction,Properties},
         Button, TextInput, Text,
-        column, row, mouse_area, container,
+        column, row, container,
         svg
     },
     futures::{

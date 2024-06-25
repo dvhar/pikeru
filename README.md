@@ -59,4 +59,4 @@ sudo pacman -S scdoc xdg-desktop-portal ffmpeg clang
 ```
 
 ## License
-Pikeru is Public Domain.
+MIT License
