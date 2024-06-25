@@ -203,7 +203,7 @@ where
                             if let Some(on_click) = self.on_click.clone() {
                                 shell.publish(on_click);
                             }
-                            return Status::Captured;
+                            return Status::Ignored;
                         } else if btn == mouse::Button::Right {
                             if let Action::Drag(_, _) = state.action {
                                 shell.invalidate_layout();
