@@ -345,7 +345,8 @@ enum Message {
     Init((USender<FItem>, USender<Inochan>, USender<SearchEvent>, USender<RecMsg>)),
     NextItem(FItem),
     LoadThumbs,
-    LeftClick(usize),
+    LeftPreClick(usize),
+    LeftClick(usize, bool),
     MiddleClick(usize),
     RightClick(i64),
     PathTxtInput(String),
@@ -730,7 +731,7 @@ impl Application for FilePicker {
                 search_running: false,
                 recurse_state: RecState::Stop,
                 icons: Arc::new(Icons::new(ts)),
-                clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1)},
+                clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1), preclicked: None},
                 ctrl_pressed: false,
                 shift_pressed: false,
                 scroll_id: scrollable::Id::unique(),
@@ -1130,13 +1131,15 @@ impl Application for FilePicker {
             Message::NewDirInput(dir) => self.new_dir = dir,
             Message::CloseModal => self.modal = FModal::None,
             Message::MiddleClick(iidx) => self.click_item(iidx, false, true, false),
-            Message::LeftClick(iidx) => {
-                match self.clicktimer.click(iidx) {
+            Message::LeftPreClick(iidx) => self.clicktimer.preclick(iidx),
+            Message::LeftClick(iidx, always_valid) => {
+                match self.clicktimer.click(iidx, always_valid) {
                     ClickType::Single => self.click_item(iidx, self.shift_pressed, self.ctrl_pressed, iidx == self.view_image.0),
                     ClickType::Double => {
                         self.items[iidx].sel = true;
                         return self.update(Message::Select(SelType::Click));
                     },
+                    ClickType::Pass => {},
                 }
             },
             Message::RightClick(iidx) => {
@@ -1170,15 +1173,15 @@ impl Application for FilePicker {
                                 match self.items[ii].preview() {
                                     Preview::Svg(img) => {
                                         self.view_image = (self.dtoi(di), Preview::Svg(img));
-                                        return self.update(Message::LeftClick(self.view_image.0));
+                                        return self.update(Message::LeftClick(self.view_image.0, true));
                                     }
                                     Preview::Image(img) => {
                                         self.view_image = (self.dtoi(di), Preview::Image(img));
-                                        return self.update(Message::LeftClick(self.view_image.0));
+                                        return self.update(Message::LeftClick(self.view_image.0, true));
                                     }
                                     Preview::Gif(img) => {
                                         self.view_image = (self.dtoi(di), Preview::Gif(img));
-                                        return self.update(Message::LeftClick(self.view_image.0));
+                                        return self.update(Message::LeftClick(self.view_image.0, true));
                                     },
                                     _ => {},
                                 }
@@ -1337,7 +1340,7 @@ impl Application for FilePicker {
                                    .align_y(alignment::Vertical::Center)
                                    .width(Length::Fill).height(Length::Fill))
                         .on_right_press(Message::RightClick(-1))
-                        .on_release(Message::LeftClick(self.view_image.0))
+                        .on_release(Message::LeftClick(self.view_image.0, true))
                         .into()
                 },
                 Preview::Image(handle) => {
@@ -1348,7 +1351,7 @@ impl Application for FilePicker {
                                    .align_y(alignment::Vertical::Center)
                                    .width(Length::Fill).height(Length::Fill))
                         .on_right_press(Message::RightClick(-1))
-                        .on_release(Message::LeftClick(self.view_image.0))
+                        .on_release(Message::LeftClick(self.view_image.0, true))
                         .into()
                 },
                 Preview::Gif(frames) => {
@@ -1359,7 +1362,7 @@ impl Application for FilePicker {
                                    .align_y(alignment::Vertical::Center)
                                    .width(Length::Fill).height(Length::Fill))
                         .on_right_press(Message::RightClick(-1))
-                        .on_release(Message::LeftClick(self.view_image.0))
+                        .on_release(Message::LeftClick(self.view_image.0, true))
                         .into()
                 },
                 Preview::None => {
@@ -1587,7 +1590,8 @@ impl FItem {
             (false, false) => {
                 mouse_area(container(col).padding(1.0))
             },
-        }.on_release(Message::LeftClick(self.items_idx))
+        }.on_release(Message::LeftClick(self.items_idx, false))
+            .on_press(Message::LeftPreClick(self.items_idx))
             .on_right_press(Message::RightClick(self.items_idx as i64))
             .on_middle_press(Message::MiddleClick(self.items_idx));
         match (last_clicked.iidx, last_clicked.new) {
@@ -2238,13 +2242,28 @@ impl Cmd {
 enum ClickType {
     Single,
     Double,
+    Pass,
 }
 struct ClickTimer {
     idx: usize,
     time: Instant,
+    preclicked: Option<(usize, Instant)>,
 }
 impl ClickTimer {
-    fn click(self: &mut Self, idx: usize) -> ClickType {
+    fn preclick(self: &mut Self, idx: usize) {
+        self.preclicked = Some((idx, Instant::now()));
+    }
+    fn click(self: &mut Self, idx: usize, always_valid: bool) -> ClickType {
+        if !always_valid {
+            match self.preclicked {
+                None => return ClickType::Pass,
+                Some((pidx, inst)) => {
+                    if pidx != idx || inst.elapsed().as_secs() > 1 {
+                        return ClickType::Pass;
+                    }
+                },
+            };
+        }
         let time = Instant::now();
         let ret = if idx != self.idx || time - self.time > Duration::from_millis(300) {
             ClickType::Single

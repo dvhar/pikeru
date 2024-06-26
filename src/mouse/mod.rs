@@ -7,7 +7,6 @@ use iced::advanced::widget::{Operation, Tree, tree, Widget};
 use iced::Length;
 use iced::advanced::{Clipboard, Shell, layout, mouse, overlay, renderer, Layout};
 use iced::{Element, Point, Rectangle, Size, Vector};
-use std::time::Instant;
 
 /// Emit messages on mouse events.
 #[allow(missing_debug_implementations)]
@@ -28,7 +27,6 @@ pub struct MouseArea<
     on_move: Option<Box<dyn Fn(Point) -> Message>>,
     on_exit: Option<Message>,
     interaction: Option<mouse::Interaction>,
-    last_click: Option<Instant>,
 }
 
 impl<'a, Message, Theme, Renderer> MouseArea<'a, Message, Theme, Renderer> {
@@ -129,7 +127,6 @@ impl<'a, Message, Theme, Renderer> MouseArea<'a, Message, Theme, Renderer> {
             on_move: None,
             on_exit: None,
             interaction: None,
-            last_click: None,
         }
     }
 }
@@ -332,14 +329,9 @@ fn update<Message: Clone, Theme, Renderer>(
         return event::Status::Ignored;
     }
 
-    let mut left_clicked = false;
-    if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
-        | Event::Touch(touch::Event::FingerPressed { .. }) = event {
-        widget.last_click = Some(Instant::now());
-        left_clicked = true;
-    }
     if let Some(message) = widget.on_press.as_ref() {
-        if left_clicked {
+        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+            | Event::Touch(touch::Event::FingerPressed { .. }) = event {
             shell.publish(message.clone());
             return event::Status::Captured;
         }
@@ -348,11 +340,7 @@ fn update<Message: Clone, Theme, Renderer>(
     if let Some(message) = widget.on_release.as_ref() {
         if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
         | Event::Touch(touch::Event::FingerLifted { .. }) = event {
-            if let Some(then) = widget.last_click {
-                if then.elapsed().as_millis() < 1000 {
-                    shell.publish(message.clone());
-                }
-            }
+            shell.publish(message.clone());
             return event::Status::Ignored;
         }
     }
