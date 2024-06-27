@@ -166,7 +166,7 @@ impl IdxManager {
 
     fn already_done(self: &Self, dir: &String, fname: &str, mtime: f32) -> Entry {
         let con = self.con.lock().unwrap();
-        let mut query = con.prepare_cached("select mtime from descriptions where dir = ?1 and fname = ?2").unwrap();
+        let mut query = con.prepare("select mtime from descriptions where dir = ?1 and fname = ?2").unwrap();
         let ret = match query.query([dir.as_str(), fname.as_ref()]).unwrap().next().unwrap() {
             Some(r) => {
                 let prev_time: f32 = r.get(0).unwrap();
@@ -182,7 +182,7 @@ impl IdxManager {
 
     fn save(self: &Self, dir: &String, fname: &str, desc: &str, mtime: f32, stat: Entry) {
         let con = self.con.lock().unwrap();
-        let mut query = con.prepare_cached(match stat {
+        let mut query = con.prepare(match stat {
             Entry::None => "insert into descriptions (dir, fname, description, mtime) values (?1, ?2, ?3, ?4)",
             Entry::Old => "update descriptions set description = ?3, mtime = ?4 where dir = ?1 and fname = ?2",
             Entry::Done => unreachable!(),

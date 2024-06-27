@@ -23,7 +23,7 @@ use iced::{
     mouse::ScrollDelta,
     keyboard::Event::{KeyPressed,KeyReleased},
     keyboard::Key,
-    keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace},
+    keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace,PageUp,PageDown},
     keyboard::key::Named,
     widget::{
         horizontal_space, vertical_space, checkbox, slider,
@@ -369,6 +369,8 @@ enum Message {
     CloseModal,
     SearchResult(Box<SearchEvent>),
     NextRecurse(Vec<FItem>, u8),
+    PageUp,
+    PageDown,
     Dummy,
 }
 
@@ -908,6 +910,23 @@ impl Application for FilePicker {
             Message::Scrolled(viewport) => {
                 self.update_scroll(viewport.absolute_offset().y);
             },
+            Message::PageUp => {
+                let current = self.scroll_offset.y;
+                let offset = scrollable::AbsoluteOffset{x:0.0, y:(current - self.content_height).max(0.0)};
+                self.update_scroll(offset.y);
+                return scrollable::scroll_to(self.scroll_id.clone(), offset);
+            },
+            Message::PageDown => {
+                let current = self.scroll_offset.y;
+                let end = match self.row_sizes.borrow().rows.last() {
+                    None => self.content_height,
+                    Some(r) => r.end_pos,
+                };
+                let offset = scrollable::AbsoluteOffset{x:0.0, y:(current + self.content_height)
+                    .min(end - self.content_height)};
+                self.update_scroll(offset.y);
+                return scrollable::scroll_to(self.scroll_id.clone(), offset);
+            },
             Message::DropBookmark(idx, cursor_pos) => {
                 return iced_drop::zones_on_point(
                     move |zones| Message::HandleZones(idx, zones),
@@ -1300,6 +1319,8 @@ impl Application for FilePicker {
                     Keyboard(KeyPressed{ key: Key::Named(ArrowLeft), .. }) => Some(Message::ArrowKey(ArrowLeft)),
                     Keyboard(KeyPressed{ key: Key::Named(ArrowRight), .. }) => Some(Message::ArrowKey(ArrowRight)),
                     Keyboard(KeyPressed{ key: Key::Named(Backspace), .. }) => Some(Message::UpDir),
+                    Keyboard(KeyPressed{ key: Key::Named(PageUp), .. }) => Some(Message::PageUp),
+                    Keyboard(KeyPressed{ key: Key::Named(PageDown), .. }) => Some(Message::PageDown),
                     _ => None,
                 }
             } else { None }
@@ -1380,6 +1401,7 @@ impl Application for FilePicker {
                     };
                     let mut next_ready = true;
                     let mut send_max = 20;
+                    let mut clicked_onscreen = false;
                     for i in first_idx..num_rows {
                         let cur_row = &rs.rows[i];
                         let past_bot = cur_row.pos > bot;
@@ -1390,25 +1412,25 @@ impl Application for FilePicker {
                                 break;
                             }
                         }
-                        let mut row_ready = next_ready;
+                        let mut row_all_ready = next_ready;
+                        let mut row_none_ready = true;
                         if past_bot {
                             rows = rows.push(vertical_space().height(cur_row.end_pos - cur_row.pos));
                         } else {
                             let start = i * ps.max_cols;
                             let mut row = Row::new().width(Length::Fill);
-                            let mut clicked = false;
                             for j in 0..ps.max_cols {
                                 let idx = start + j;
                                 if idx < self.displayed.len() {
                                     let item = &self.items[self.dtoi(idx)];
-                                    row_ready &= item.thumb_handle != None;
-                                    let (cl, display) = item.display(&self.last_clicked, thumb_width);
-                                    clicked |= cl;
+                                    row_all_ready &= item.thumb_handle != None;
+                                    row_none_ready &= item.thumb_handle == None;
+                                    let (clicked, display) = item.display(&self.last_clicked, thumb_width);
+                                    clicked_onscreen |= clicked;
                                     row = row.push(display);
                                 }
                             }
-                            clicked_offscreen = self.last_clicked.new && !clicked;
-                            if row_ready && i == rs.next_send && send_max > 0 {
+                            if row_all_ready && i == rs.next_send && send_max > 0 {
                                 send_max -= 1;
                                 let counter = rs.view_counter;
                                 rows = rows.push(wrapper::locator(row).send_info(move|a,b|Message::PositionInfo(Pos::Row(counter, i),a,b), true));
@@ -1416,13 +1438,14 @@ impl Application for FilePicker {
                             } else {
                                 rows = rows.push(row);
                             }
-                            if !row_ready {
+                            if row_none_ready {
                                 break;
                             }
                         }
 
-                        next_ready = row_ready;
+                        next_ready = row_all_ready;
                     }
+                    clicked_offscreen = self.last_clicked.new && !clicked_onscreen;
                     Scrollable::new(rows)
                         .width(Length::Fill)
                         .height(Length::Fill)
