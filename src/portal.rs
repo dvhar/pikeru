@@ -56,10 +56,10 @@ struct IdxManager {
     igtxt: String,
 }
 
-async fn index_loop(mut man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
+async fn index_loop(mut mgr: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
     let mut done_map = HashMap::<String,bool>::new();
     let mut timeout = time::Instant::now().checked_add(time::Duration::from_secs(60)).unwrap();
-    let mut online = man.indexer_online().await;
+    let mut online = mgr.indexer_online().await;
     info!("indexer {}", if online {"online"} else {"offline"});
     loop {
         let msg = chan.recv().await.unwrap();
@@ -67,7 +67,7 @@ async fn index_loop(mut man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool
         let uptodate = timeout.cmp(&time::Instant::now()) == core::cmp::Ordering::Greater;
         if !uptodate {
             timeout = timeout.checked_add(time::Duration::from_secs(60)).unwrap();
-            online = man.indexer_online().await;
+            online = mgr.indexer_online().await;
             if !online { warn!("indexer offline"); }
         }
         if !online {
@@ -75,27 +75,33 @@ async fn index_loop(mut man: IdxManager, mut chan: UReceiver<Msg>, enabled: bool
         }
         match msg {
             Msg::Start => {
-                if !man.shtate.lock().unwrap().paused {
+                if !mgr.shtate.lock().unwrap().paused {
                     debug!("Starting index");
                 }
-                man.shtate.lock().unwrap().idx_running = true;
-                while !man.shtate.lock().unwrap().picker_open {
+                mgr.shtate.lock().unwrap().idx_running = true;
+                while !mgr.shtate.lock().unwrap().picker_open {
                     if let Some(dir) = done_map.iter().find(|v|!v.1) {
-                        man.update_dir(dir.0).await;
-                        done_map.entry(dir.0.to_string()).and_modify(|v| *v = true);
+                        if mgr.update_dir(dir.0).await {
+                            done_map.entry(dir.0.to_string()).and_modify(|v| *v = true);
+                        } else {
+                            error!("Indexing batch failed");
+                            done_map.clear();
+                            break;
+                        }
                     } else {
+                        debug!("Indexing batch finished");
                         done_map.clear();
                         break;
                     }
                 }
-                man.shtate.lock().unwrap().idx_running = false;
+                mgr.shtate.lock().unwrap().idx_running = false;
             },
             Msg::Dirs(dirs) => {
                 debug!("Got dirs");
                 dirs.into_iter().for_each(|dir|{done_map.entry(dir).or_default();});
             },
             Msg::Ignore(txt) => {
-                man.update_ignore(txt);
+                mgr.update_ignore(txt);
             }
         }
     }
@@ -223,12 +229,13 @@ impl IdxManager {
         return self.indexer_online().await;
     }
 
-    async fn update_dir(self: &Self, dir: &String) {
+    /// returns false if giving up
+    async fn update_dir(self: &Self, dir: &String) -> bool {
         trace!("Updating dir:{}", dir);
         match std::fs::read_dir(dir) {
-            Ok(rd) => {
-                for f in rd {
-                    let path = f.unwrap().path();
+            Ok(read_dir) => {
+                for dir_entry in read_dir {
+                    let path = dir_entry.unwrap().path();
                     match path.extension() {
                         Some(ext) => {
                             if self.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
@@ -237,6 +244,7 @@ impl IdxManager {
                                     _ => {},
                                 }
                                 let mut online = true;
+                                let mut tries_left = 10;
                                 loop {
                                     if self.shtate.lock().unwrap().paused {
                                         sleep(Duration::from_secs(60)).await;
@@ -246,8 +254,12 @@ impl IdxManager {
                                         break;
                                     } else  {
                                         warn!("Retrying {:?} in a minute...", path);
+                                        tries_left -= 1;
                                         sleep(Duration::from_secs(60)).await;
                                         online = self.indexer_online().await;
+                                        if !online && tries_left == 0 {
+                                            return false;
+                                        }
                                     }
                                 };
                             }
@@ -258,6 +270,7 @@ impl IdxManager {
             },
             Err(e) => error!("Error reading dir {}: {}", dir, e),
         }
+        return true;
     }
 
 }
