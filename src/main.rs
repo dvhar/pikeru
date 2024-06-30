@@ -197,7 +197,7 @@ impl Config {
                                 opts_missing -= 1;
                                 if !match str::split_once(v, 'x') {
                                     Some(wh) => match (wh.0.parse::<f32>(), wh.1.parse::<f32>()) {
-                                        (Ok(w),Ok(h)) => {window_size = Size {width: w*dpi_scale, height: h*dpi_scale}; true},
+                                        (Ok(w),Ok(h)) => {window_size = Size {width: w, height: h}; true},
                                         (_,_) => false,
                                     }
                                     None => false,
@@ -271,7 +271,7 @@ impl Config {
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
                 "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\n",
-                self.dpi_scale as i32,
+                self.dpi_scale,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
                 match self.sort_by { 1=>"name_asc", 2=>"name_desc", 3=>"age_asc", 4=>"age_desc", _=>"" },
@@ -692,7 +692,9 @@ impl Application for FilePicker {
     fn new(conf: Self::Flags) -> (Self, iced::Command<Self::Message>) {
         let pathstr = conf.path.clone();
         let path = Path::new(&pathstr);
-        let window_size = conf.window_size;
+        let mut window_size = conf.window_size;
+        window_size.width *= conf.dpi_scale as f32;
+        window_size.height *= conf.dpi_scale as f32;
         let startdir = if path.is_dir() {
             path.to_string_lossy().to_string()
         } else {
