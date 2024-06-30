@@ -19,7 +19,7 @@ pk_portal=xdg_portal/pikeru.portal.in
 manpage=xdg_portal/xdg-desktop-portal-pikeru.5.scd
 wrapper=xdg_portal/pikeru-wrapper.sh
 sd_svc=xdg_portal/xdg-desktop-portal-pikeru.service
-sample_conf=xdg_portal/config.sample
+sample_conf=xdg_portal/config.in
 
 get_desktop(){
 	[ -z "$XDG_CURRENT_DESKTOP" ] && return
@@ -40,6 +40,8 @@ if [[ $(whoami) = root ]]; then
 	scdoc < $manpage > $mandir/xdg-desktop-portal-pikeru.5
 	sed "s/@cur_desktop@/$(get_desktop)/" xdg_portal/pikeru.portal.in > $portalfile
 else
+	this_dir="$(dirname $0)"
+	cd "$this_dir"
 	if ! command -v cargo &> /dev/null; then
 		echo -e "Cargo is not installed. Enter 'y' to install it now\n(then press enter when prompted use default location)"
 		read ans
@@ -50,7 +52,7 @@ else
 	cargo build -r || exit 1
 	cargo build -r --bin portal || exit 1
 	mkdir -p $confdir
-	[[ -r "$confdir/config" ]] || cp -u $sample_conf $confdir/config
+	[[ -r "$confdir/config" ]] || sed "s|@git_dir@|$PWD|g" $sample_conf > $confdir/config
 	sudo "$0"
 	set -x
 	systemctl --user daemon-reload

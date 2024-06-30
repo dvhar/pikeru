@@ -29,7 +29,7 @@ First install the dependencies at the bottom of the readme
     * a command that prints text associated with a file, like a description or tags
     * a command that checks if the above command can be used, for example checking if an API is online
     * a list of file extensions the above command can handle
-* An example configuration using [stable diffusioni webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui)'s `interrogate` API to index your images is included, which uses the `indexer/img_indexer.py` script in this repo. You'll need to edit the filepath and url to use it.
+* An example configuration using [stable diffusioni webui](https://github.com/AUTOMATIC1111/stable-diffusion-webui)'s `interrogate` API to index your images is included, which uses the `indexer/img_indexer.py` script in this repo.
 * Pikeru's xdg portal daemon uses the provided command to build a semantic search index of any directory opened or searched by the filepicker so that next time you search that directory, you can search files by semantic content instead of just file name.
 * You can pause the indexer with `pikeru -c` and resume it with `pikeru -b`.
 * More details are in the man page for xdg-desktop-portal-pikeru.
