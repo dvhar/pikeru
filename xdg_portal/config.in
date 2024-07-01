@@ -5,8 +5,10 @@ log_level = info
 cmd=/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
 default_save_dir=~/Downloads
 
-# Point postprocessor to postprocess.example.sh or similar script to automatically process files before upload.
-postprocessor=@git_dir@/xdg_portal/postprocess.example.sh
+# Point postprocessor to a script to automatically process files before upload.
+# Replace the empty config value with the commented one to use the example script.
+#postprocessor=@git_dir@/xdg_portal/postprocess.example.sh
+postprocessor=
 postprocess_dir=/tmp/pk_postprocess
 
 
@@ -14,6 +16,7 @@ postprocess_dir=/tmp/pk_postprocess
 # this section tells xdg-desktop-portal-pikeru how to build an index for semantic search.
 # The example values here are for a stable-diffusion-webui server running on localhost that
 # is used to generate searchable text for files in any directory opened by pikeru.
+# Set log_level above to trace to see the searchable text results.
 
 enable = false
 

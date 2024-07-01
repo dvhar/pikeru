@@ -1,0 +1,36 @@
+# Commands from the cmd menu will substitute the follwong values from the selected files before running,
+# as seen in the convert examples. Paths and filenames are already quoted for you when using lowercase like [path],
+# or unquoted when capitalized like [Path].
+# [path] is full file path
+# [name] is the filename without full path
+# [dir] is the current directory without trailing slash
+# [part] is the filename without path or extension
+# [ext] is the file extension, including the period
+[Commands]
+resize image = convert -resize 50% [path] [dir]/[part]_resized[ext]
+resize video = ffmpeg -i [path] -vf scale=w=1920:h=1080:flags=lanczos [part]_1080[ext]
+get description = notify-send "$(sqlite3 ~/.cache/pikeru/index.db "select description from descriptions where dir='[Dir]' and fname='[Name]';")"
+wallpaper = feh --bg-scale [path]
+mpv = mpv [path]
+delete = rm -rf [path]
+
+[Settings]
+dpi_scale = 0.7
+window_size = 820x480
+thumbnail_size = 200
+sort_by = age_asc
+respect_gitignore = true
+
+# The SearchIgnore section uses gitignore syntax rather than ini.
+# The respect_gitignore setting only toggles .gitignore files, not this section.
+[SearchIgnore]
+.git/
+
+[Bookmarks]
+Home = /home/a
+Documents = /home/a/Documents
+Pictures = /home/a/Pictures
+Downloads = /home/a/Downloads
+Videos = /home/a/Videos
+papes = /home/a/Documents
+mnt = /mnt
