@@ -1339,10 +1339,13 @@ impl Application for FilePicker {
                         col.push(Button::new(
                                     container(
                                         text(bm.label.as_str())
+                                           .size(15.0)
                                            .horizontal_alignment(alignment::Horizontal::Center)
-                                           .width(Length::Fill)).id(bm.id.clone()))
-                                           .style(style::side_but_theme())
-                                     .on_press(Message::LoadBookmark(i)))
+                                           .width(Length::Fill))
+                                    .padding(-3.0)
+                                    .id(bm.id.clone()))
+                                 .style(style::side_but_theme())
+                                 .on_press(Message::LoadBookmark(i)))
                     }).push(container(vertical_space()).height(Length::Fill).width(Length::Fill)
                             .id(CId::new("bookmarks"))).width(Length::Fixed(120.0));
 
