@@ -776,7 +776,7 @@ impl Application for FilePicker {
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
             Message::Thumbsize(size) => {
-                self.conf.thumb_size = size;
+                self.conf.thumb_size = (size / 5.0).round() * 5.0;
                 self.conf.need_update = true;
             },
             Message::InoCreate(file) => {
@@ -1479,7 +1479,7 @@ impl Application for FilePicker {
                                     (menu_button("Sort Oldest first",Message::Sort(4)))
                                     (checkbox("Show Hidden", self.show_hidden).on_toggle(Message::ShowHidden))
                                     (checkbox("Recursive Search", self.recursive_search).on_toggle(Message::SetRecursive))
-                                    (text("Thumbnail size"))
+                                    (text(format!("Thumbnail size:{}", self.conf.thumb_size)))
                                     (slider(50.0..=500.0, self.conf.thumb_size, Message::Thumbsize))
                                     )))
                     ].spacing(1.0),
