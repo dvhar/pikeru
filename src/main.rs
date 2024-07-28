@@ -312,7 +312,7 @@ impl Mode {
                    "files" => Self::Files,
                    "save" => Self::Save,
                    "dir" => Self::Dir,
-                   _ => Self::Files,
+                   _ => die!("Invalid mode: {}. Need one of [file, files, save, dir]", s),
                }
            }
        }
@@ -716,9 +716,9 @@ impl Application for FilePicker {
         let select_button = match conf.mode {
             Mode::Files|Mode::File => "Open",
             Mode::Save => "Save",
-            Mode::Dir => "Selecct",
+            Mode::Dir => "Select",
         }.to_string();
-        let enable_sel_button = conf.saving();
+        let enable_sel_button = conf.saving() || conf.dir();
         (
             Self {
                 conf,
@@ -821,7 +821,7 @@ impl Application for FilePicker {
             Message::ShowHidden(show) => {
                 self.show_hidden = show;
                 if !show {
-                    self.enable_sel_button = self.conf.saving() || self.items.iter().any(|item|item.sel);
+                    self.enable_sel_button = self.conf.saving() || self.conf.dir() || self.items.iter().any(|item|item.sel);
                 }
                 let end = if self.searchbar.is_empty() { self.end_idx } else { self.displayed.len() };
                 let displayed = self.items[..end].iter().enumerate().filter_map(|(i,item)| {
@@ -977,7 +977,7 @@ impl Application for FilePicker {
                         } else {None}
                     }).collect();
                     self.show_goto = have_sel && self.dirs.len() > 1;
-                    self.enable_sel_button = self.conf.saving() || have_sel;
+                    self.enable_sel_button = self.conf.saving() || self.conf.dir() || have_sel;
                     return self.update(Message::Sort(self.conf.sort_by));
                 } else if !self.search_running{
                     self.search_running = true;
@@ -1228,6 +1228,25 @@ impl Application for FilePicker {
                             return self.update(Message::LoadDir);
                         } else {
                             println!("{}", self.pathbar);
+                            self.exit();
+                        }
+                    }
+                } else if self.conf.dir() {
+                    let sel = Path::new(match self.items.iter().find(|item|item.sel) {
+                        Some(item) => &item.path,
+                        None => &self.pathbar,
+                    });
+                    if sel.is_dir() {
+                        if seltype == SelType::Click {
+                            self.dirs = vec![self.items.iter().find(|it|it.sel).unwrap().path.clone()];
+                            return self.update(Message::LoadDir);
+                        } else {
+                            println!("{}", sel.to_string_lossy());
+                            self.exit();
+                        }
+                    } else if sel.is_file() {
+                        if let Some(p) = sel.parent() {
+                            println!("{}", p.to_string_lossy());
                             self.exit();
                         }
                     }
@@ -2100,6 +2119,10 @@ impl FilePicker {
                 None
             }
         }).collect::<Vec<usize>>();
+        if self.conf.dir() && !isdir {
+            prevsel.into_iter().for_each(|j|self.items[j].sel = false);
+            return;
+        }
         while (self.conf.multi() || isdir) && shift && prevsel.len() > 0 {
             let prevdir = self.items[prevsel[0]].isdir();
             if prevdir != isdir {
@@ -2145,7 +2168,7 @@ impl FilePicker {
             self.last_clicked.size = None;
             self.dirs[0].clone()
         };
-        self.enable_sel_button = any_selected || self.conf.saving();
+        self.enable_sel_button = any_selected || self.conf.saving() || self.conf.dir();
     }
 
     fn load_dir(self: &mut Self) {
@@ -2173,7 +2196,7 @@ impl FilePicker {
         self.end_idx = self.items.len();
         self.items.iter_mut().enumerate().for_each(|(i,item)|item.items_idx = i);
         self.displayed = displayed;
-        self.enable_sel_button = self.conf.saving();
+        self.enable_sel_button = self.conf.saving() || self.conf.dir();
         self.update_searcher_items(self.items.iter().map(|item|item.path.clone()).collect());
     }
 
