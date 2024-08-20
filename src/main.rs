@@ -1516,11 +1516,13 @@ impl Application for FilePicker {
                     .on_input(Message::PathTxtInput)
                     .on_paste(Message::PathTxtInput)
                     .on_submit(Message::Select(SelType::TxtEntr))
-                    .width(Length::FillPortion(8)),
+                    .width(Length::FillPortion(8))
+                    .padding(2.0),
                 TextInput::new("search", self.searchbar.as_str())
                     .on_input(Message::SearchTxtInput)
                     .on_paste(Message::SearchTxtInput)
-                    .width(Length::FillPortion(2)),
+                    .width(Length::FillPortion(2))
+                    .padding(2.0),
                 Button::new("X").on_press(Message::SearchTxtInput("".to_string())).style(style::flat_but_theme())
                 ]
             ].align_items(iced::Alignment::End).width(Length::Fill);
@@ -1905,7 +1907,7 @@ impl FItem {
                                 FType::Image
                             }
                         },
-                        "webm"|"mkv"|"mp4"|"av1"|"avi"|"avif"|"flv"|"wmv"|"m4v"|"mpeg"|"mov"|"jxl" => {
+                        "webm"|"mkv"|"mp4"|"m4b"|"av1"|"avi"|"avif"|"flv"|"wmv"|"m4v"|"mpeg"|"mov"|"jxl" => {
                             self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), true, false, thumbsize, icons.clone()).await;
                             if self.thumb_handle == None {
                                 self.thumb_handle = Some(icons.error.clone());
