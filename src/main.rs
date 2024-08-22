@@ -15,7 +15,7 @@ use mouse::mouse_area;
 mod style;
 use iced::{
     advanced::widget::Id,
-    Rectangle,
+    Rectangle, Padding,
     color, Background, alignment, executor, subscription,
     Application, Command, Length, Element, theme::Container,
     mouse::Event::{ButtonPressed, WheelScrolled},
@@ -66,7 +66,8 @@ use inotify::{Inotify, WatchMask, WatchDescriptor, EventMask};
 use iced_aw::{
     menu_bar, menu_items,
     menu::{Item, Menu},
-    modal, Card
+    modal, Card,
+    ContextMenu,
 };
 use md5::{Md5,Digest};
 use fuzzy_matcher::{self, FuzzyMatcher};
@@ -334,6 +335,10 @@ enum SearchEvent {
 enum Message {
     LoadDir,
     LoadBookmark(usize),
+    EditBookmark(usize),
+    UpdateBookmark(usize),
+    NewBmPathInput(String),
+    NewBmLabelInput(String),
     Goto,
     Select(SelType),
     OverWriteOK,
@@ -354,6 +359,7 @@ enum Message {
     Shift(bool),
     Ctrl(bool),
     DropBookmark(usize, Point),
+    DeleteBookmark(usize),
     HandleZones(usize, Vec<(Id, iced::Rectangle)>),
     NextImage(i64),
     Scrolled(scrollable::Viewport),
@@ -460,6 +466,7 @@ enum FModal {
     NewDir,
     OverWrite,
     Error(String),
+    EditBookmark(usize),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -671,6 +678,8 @@ struct FilePicker {
     save_filename: Option<String>,
     select_button: String,
     new_dir: String,
+    new_bm_label: String,
+    new_bm_path: String,
     modal: FModal,
     dir_history: Vec<Vec<String>>,
     content_viewport: Rectangle,
@@ -752,6 +761,8 @@ impl Application for FilePicker {
                 modal: FModal::None,
                 new_dir: String::new(),
                 dir_history: vec![],
+                new_bm_path: String::new(),
+                new_bm_label: String::new(),
                 content_viewport: Rectangle::default(),
                 content_height: 0.0,
                 content_y: 0.0,
@@ -935,6 +946,38 @@ impl Application for FilePicker {
                     cursor_pos, None, None,
                 );
             }
+            Message::DeleteBookmark(idx) => {
+                self.rem_bookmark(idx);
+                self.modal = FModal::None;
+            },
+            Message::EditBookmark(idx) => {
+                self.modal = FModal::EditBookmark(idx);
+                self.new_bm_path = self.conf.bookmarks[idx].path.clone();
+                self.new_bm_label = self.conf.bookmarks[idx].label.clone();
+            },
+            Message::NewBmPathInput(path) => self.new_bm_path = path,
+            Message::NewBmLabelInput(label) => self.new_bm_label = label,
+            Message::UpdateBookmark(idx) => {
+                let mut changed = false;
+                if !self.new_bm_path.is_empty() {
+                    changed = true;
+                    self.conf.bookmarks[idx].path = mem::take(&mut self.new_bm_path);
+                }
+                if !self.new_bm_label.is_empty() {
+                    changed = true;
+                    self.conf.bookmarks[idx].label = mem::take(&mut self.new_bm_label);
+                }
+                self.modal = FModal::None;
+                if changed {
+                    self.conf.update(true);
+                }
+            },
+            Message::LoadBookmark(idx) => {
+                self.dir_history.push(mem::take(&mut self.dirs));
+                self.dirs = vec![self.conf.bookmarks[idx].path.clone()];
+                self.update_scroll(0.0);
+                return self.update(Message::LoadDir);
+            },
             Message::HandleZones(idx, zones) => {
                 if zones.len() > 0 {
                     let targets: Vec<_> = self.conf.bookmarks.iter().enumerate().filter_map(|(i, bm)| {
@@ -1091,12 +1134,6 @@ impl Application for FilePicker {
                     doneitem.display_idx = self.items[j].display_idx;
                     self.items[j] = doneitem;
                 }
-            },
-            Message::LoadBookmark(idx) => {
-                self.dir_history.push(mem::take(&mut self.dirs));
-                self.dirs = vec![self.conf.bookmarks[idx].path.clone()];
-                self.update_scroll(0.0);
-                return self.update(Message::LoadDir);
             },
             Message::Goto => {
                 self.dir_history.push(mem::take(&mut self.dirs));
@@ -1355,16 +1392,29 @@ impl Application for FilePicker {
             let cmd_list = self.conf.cmds.iter().enumerate().map(
                 |(i,cmd)|Item::new(menu_button(cmd.label.as_str(), Message::RunCmd(i)))).collect();
             let bookmarks = self.conf.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
-                        col.push(Button::new(
+                        let bm_button = container(Button::new(
                                     container(
-                                        text(bm.label.as_str())
+                                        Text::new(bm.label.as_str())
                                            .size(15.0)
                                            .horizontal_alignment(alignment::Horizontal::Center)
                                            .width(Length::Fill))
                                     .padding(-3.0)
                                     .id(bm.id.clone()))
                                  .style(style::side_but_theme())
-                                 .on_press(Message::LoadBookmark(i)))
+                                 .on_press(Message::LoadBookmark(i)));
+                        let ctx_menu = ContextMenu::new(bm_button, move || {
+                            column![
+                                Button::new(Text::new("Delete"))
+                                    .on_press(Message::DeleteBookmark(i))
+                                    .width(Length::Fill)
+                                    .style(style::top_but_theme()),
+                                Button::new(Text::new("Edit"))
+                                    .on_press(Message::EditBookmark(i))
+                                    .width(Length::Fill)
+                                    .style(style::top_but_theme()),
+                            ].width(Length::Fixed(100.0)).into()
+                        });
+                        col.push(ctx_menu)
                     }).push(container(vertical_space()).height(Length::Fill).width(Length::Fill)
                             .id(CId::new("bookmarks"))).width(Length::Fixed(120.0));
 
@@ -1524,6 +1574,7 @@ impl Application for FilePicker {
                     .width(Length::FillPortion(2))
                     .padding(2.0),
                 Button::new("X").on_press(Message::SearchTxtInput("".to_string())).style(style::flat_but_theme())
+                    .padding(Padding::from([2.0, 5.0]))
                 ]
             ].align_items(iced::Alignment::End).width(Length::Fill);
             let send = clicked_offscreen || ps.total_width != size.width || ps.total_height != size.height;
@@ -1536,15 +1587,41 @@ impl Application for FilePicker {
             ps.total_height = size.height;
             match self.modal {
                 FModal::None => mainview.into(),
+                FModal::EditBookmark(i) => modal(mainview, Some(Card::new(
+                        Text::new("Edit bookmark"),
+                        column![
+                            Text::new("Label"),
+                            TextInput::new(&self.conf.bookmarks[i].label, self.new_bm_label.as_str())
+                                .on_input(Message::NewBmLabelInput)
+                                .on_submit(Message::UpdateBookmark(i))
+                                .on_paste(Message::NewBmLabelInput),
+                            Text::new("Directory path:"),
+                            TextInput::new(&self.conf.bookmarks[i].path, self.new_bm_path.as_str())
+                                .on_input(Message::NewBmPathInput)
+                                .on_submit(Message::UpdateBookmark(i))
+                                .on_paste(Message::NewBmPathInput),
+                            row![
+                                Button::new("Update").on_press(Message::UpdateBookmark(i)).style(style::top_but_theme()),
+                                Button::new("Delete").on_press(Message::DeleteBookmark(i)).style(style::top_but_theme()),
+                                Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_theme()),
+                            ].spacing(5.0)
+                        ]
+                        ).max_width(500.0)
+                        .on_close(Message::CloseModal))
+                    )
+                    .backdrop(Message::CloseModal)
+                    .on_esc(Message::CloseModal)
+                    .align_y(alignment::Vertical::Center)
+                    .into(),
                 FModal::Error(ref msg) => modal(mainview, Some(Card::new(
-                            text("Error"), text(msg)).max_width(500.0))
+                            Text::new("Error"), text(msg)).max_width(500.0))
                     )
                     .backdrop(Message::CloseModal)
                     .on_esc(Message::CloseModal)
                     .align_y(alignment::Vertical::Center)
                     .into(),
                 FModal::OverWrite => modal(mainview, Some(Card::new(
-                        text("File exists. Overwrite?"),
+                        Text::new("File exists. Overwrite?"),
                         row![
                             Button::new("Overwrite").on_press(Message::OverWriteOK),
                             Button::new("Cancel").on_press(Message::CloseModal),
@@ -1555,7 +1632,7 @@ impl Application for FilePicker {
                     .align_y(alignment::Vertical::Center)
                     .into(),
                 FModal::NewDir => modal(mainview, Some(Card::new(
-                        text("Enter new directory name"),
+                        Text::new("Enter new directory name"),
                         column![
                             TextInput::new("Untitled", self.new_dir.as_str())
                                 .on_input(Message::NewDirInput)
@@ -2214,6 +2291,11 @@ impl FilePicker {
             sender.send(SearchEvent::NewView(displaylist)).unwrap();
             sender.send(SearchEvent::Search(self.searchbar.clone())).unwrap();
         }
+    }
+
+    fn rem_bookmark(self: &mut Self, idx: usize) {
+        self.conf.bookmarks.remove(idx);
+        self.conf.update(true);
     }
 
     fn add_bookmark(self: &mut Self, dragged: usize, target: Option<i32>) {

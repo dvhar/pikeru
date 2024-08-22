@@ -23,7 +23,7 @@ itertools = "0.12.1"
 video-rs = { version = "0.7.3", features = ["ndarray"] }
 ndarray = "0.15.6"
 getopts = "0.2.21"
-iced_aw = { version = "0.8.0", features = ["menu"] }
+iced_aw = { version = "0.8.0", features = ["menu","context_menu"] }
 inotify = "0.10.2"
 md-5 = "0.10.6"
 fuzzy-matcher = "0.3.7"
