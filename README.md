@@ -2,11 +2,11 @@
 
 Pikeru is a file picker, file searcher, and image viewer for linux that works on any desktop environment or window manager. It has an xdg-desktop-portal backend that makes it useable with web browsers and anything else that uses portal for file selection.
 
-![Screenshot_20240720_171747](https://github.com/user-attachments/assets/93b6a6a9-34f7-4a52-9d7f-761fa55b8090)
+![Screenshot_20240821_205129](https://github.com/user-attachments/assets/2c1a8a14-dd88-4454-88f3-e1c7437125b0)
 
 
 ## Special features other filepickers don't have
-* Recursive fuzzy semantic file search can search images by visual content in addition to file name.
+* Semantic file search can search images by visual content in addition to file name.
 * Select multiple directories with ctrl, shift, middle-click, or right-click and click `Open` to view the contents of all of them at the same time.
 * Right click an image to view it. Scroll the image to view the next and previous images.
 * `Cmd` menu shows commands specified in the config. Click one to run it on the selected files.
