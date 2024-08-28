@@ -1,7 +1,10 @@
 #!/usr/bin/env python
-# Example indexer works with stable-diffusion-webui to generate searchable text for images.
-# This is called by xdg-desktop-portal-pikeru to build a semantic search index, see usage info in its config file.
-# This requires https://github.com/AUTOMATIC1111/stable-diffusion-webui or one of its forks to be running with the --api flag.
+# Example indexer works with caption_server or with stable-diffusion-webui to
+# generate searchable text for images. Not guaranteed to be compatible with the
+# latest version of stable-diffusion-webui, but it does work with the provided
+# caption server.
+# This is called by xdg-desktop-portal-pikeru to build a semantic search index,
+# see usage info in its config file.
 import base64, requests, json, sys
 
 if len(sys.argv) < 3:

@@ -1,0 +1,10 @@
+torch>=1.13.0
+torchvision
+Pillow
+requests
+safetensors
+tqdm
+open_clip_torch
+accelerate
+transformers>=4.27.1
+flask
