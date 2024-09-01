@@ -5,7 +5,7 @@ use iced_gif;
 use iced_gif::widget::gif;
 use img::load_from_memory;
 use img;
-use img::codecs::webp::WebPEncoder;
+use webp;
 use num_cpus;
 use itertools::Itertools;
 mod wrapper;
@@ -1590,7 +1590,7 @@ impl Application for FilePicker {
                 FModal::EditBookmark(i) => modal(mainview, Some(Card::new(
                         Text::new("Edit bookmark"),
                         column![
-                            Text::new("Label"),
+                            Text::new("Label:"),
                             TextInput::new(&self.conf.bookmarks[i].label, self.new_bm_label.as_str())
                                 .on_input(Message::NewBmLabelInput)
                                 .on_submit(Message::UpdateBookmark(i))
@@ -1639,8 +1639,8 @@ impl Application for FilePicker {
                                 .on_submit(Message::NewDir(true))
                                 .on_paste(Message::NewDirInput),
                             row![
-                                Button::new("Create").on_press(Message::NewDir(true)),
-                                Button::new("Cancel").on_press(Message::CloseModal),
+                                Button::new("Create").on_press(Message::NewDir(true)).style(style::top_but_theme()),
+                                Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_theme()),
                             ].spacing(5.0)
                         ]
                         ).max_width(500.0)
@@ -1913,9 +1913,9 @@ impl FItem {
                                 let mut pixels = vec![0; numpix as usize];
                                 let mut pixmap = tiny_skia::PixmapMut::from_bytes(&mut pixels, w, h).unwrap();
                                 resvg::render(&tree, transforem, &mut pixmap);
-                                let mut newfile = std::fs::File::create_new(cache_path).unwrap();
-                                let encoder = WebPEncoder::new_lossless(&mut newfile);
-                                encoder.encode(pixels.as_ref(), w, h, img::ExtendedColorType::Rgba8).unwrap();
+                                let encoder = webp::Encoder::from_rgba(pixels.as_ref(), w, h);
+                                let wp = encoder.encode_simple(false, 50.0).unwrap();
+                                std::fs::write(cache_path, &*wp).unwrap();
                                 Some(Handle::from_pixels(w, h, pixels))
                             },
                             Err(e) => {
@@ -1929,9 +1929,9 @@ impl FItem {
                             Ok(img) => {
                                 let thumb = img.thumbnail(thumbsize, thumbsize);
                                 let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
-                                let mut newfile = std::fs::File::create_new(cache_path).unwrap();
-                                let encoder = WebPEncoder::new_lossless(&mut newfile);
-                                encoder.encode(rgba.as_ref(), w, h, img::ExtendedColorType::Rgba8).unwrap();
+                                let encoder = webp::Encoder::from_rgba(rgba.as_ref(), w, h);
+                                let wp = encoder.encode_simple(false, 50.0).unwrap();
+                                std::fs::write(cache_path, &*wp).unwrap();
                                 Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
                             },
                             Err(e) => {
@@ -2449,9 +2449,9 @@ fn vid_frame(src: &str, thumbnail: Option<u32>, savepath: Option<&PathBuf>) -> O
                 *rgba.get_unchecked_mut(i4+2) = *rgb.get_unchecked(i3+2);
             }}
             if let Some(out) = savepath {
-                let mut file = std::fs::File::create_new(out).unwrap();
-                let encoder = WebPEncoder::new_lossless(&mut file);
-                encoder.encode(rgba.as_ref(), w, h, img::ExtendedColorType::Rgba8).unwrap();
+                let encoder = webp::Encoder::from_rgba(rgba.as_ref(), w, h);
+                let wp = encoder.encode_simple(false, 50.0).unwrap();
+                std::fs::write(out, &*wp).unwrap();
             }
             Some(Handle::from_pixels(w, h, rgba))
         },
