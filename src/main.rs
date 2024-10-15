@@ -1229,19 +1229,11 @@ impl Application for FilePicker {
                             let ii = self.dtoi(di);
                             if self.items[ii].ftype == FType::Image {
                                 match self.items[ii].preview() {
-                                    Preview::Svg(img) => {
-                                        self.view_image = (self.dtoi(di), Preview::Svg(img));
-                                        return self.update(Message::LeftClick(self.view_image.0, true));
-                                    }
-                                    Preview::Image(img) => {
-                                        self.view_image = (self.dtoi(di), Preview::Image(img));
-                                        return self.update(Message::LeftClick(self.view_image.0, true));
-                                    }
-                                    Preview::Gif(img) => {
-                                        self.view_image = (self.dtoi(di), Preview::Gif(img));
+                                    Preview::None => {},
+                                    pv => {
+                                        self.view_image = (self.dtoi(di), pv);
                                         return self.update(Message::LeftClick(self.view_image.0, true));
                                     },
-                                    _ => {},
                                 }
                             }
                         }
