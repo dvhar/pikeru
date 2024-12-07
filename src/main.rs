@@ -73,6 +73,9 @@ use md5::{Md5,Digest};
 use fuzzy_matcher::{self, FuzzyMatcher};
 use zbus::{Result,proxy,Connection,blocking};
 use ignore::{gitignore,Match};
+use chrono::{DateTime,Utc};
+
+const ROW_HEIGHT: f32 = 25.0;
 
 macro_rules! die {
     ($($arg:tt)*) => {{
@@ -128,6 +131,7 @@ struct Config {
     need_update: bool,
     gitignore: String,
     respect_gitignore: bool,
+    icon_view: bool,
     home: String,
 }
 
@@ -171,12 +175,13 @@ impl Config {
         let mut bookmarks = vec![];
         let mut cmds = vec![];
         let mut respect_gitignore = true;
+        let mut icon_view = true;
         let mut gitignore = ".git/\n".to_string();
         let mut sort_by = 1;
         let mut thumb_size = 160.0;
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dpi_scale: f32 = 1.0;
-        let mut opts_missing = 5;
+        let mut opts_missing = 6;
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
             match line {
                 "[Commands]" => section = S::Commands,
@@ -194,6 +199,7 @@ impl Config {
                             "thumbnail_size" => { opts_missing -= 1; thumb_size = v.parse().unwrap() },
                             "dpi_scale" => { opts_missing -= 1; dpi_scale = v.parse().unwrap() },
                             "respect_gitignore" => { opts_missing -= 1; respect_gitignore = v.parse().unwrap() },
+                            "icon_view" => { opts_missing -= 1; icon_view = v.parse().unwrap() },
                             "window_size" => {
                                 opts_missing -= 1;
                                 if !match str::split_once(v, 'x') {
@@ -244,6 +250,7 @@ impl Config {
             dpi_scale: dpi_scale.into(),
             gitignore,
             respect_gitignore,
+            icon_view,
             need_update: opts_missing > 0,
             home,
         }
@@ -271,12 +278,13 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\n",
+                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\n",
                 self.dpi_scale,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
                 match self.sort_by { 1=>"name_asc", 2=>"name_desc", 3=>"age_asc", 4=>"age_desc", _=>"" },
-                self.respect_gitignore).as_str());
+                self.respect_gitignore,
+                self.icon_view).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
 # The respect_gitignore setting only toggles .gitignore files, not this section.\n[SearchIgnore]\n");
         conf.push_str(self.gitignore.as_str());
@@ -365,6 +373,7 @@ enum Message {
     Scrolled(scrollable::Viewport),
     PositionInfo(Pos, Rectangle, Rectangle),
     Sort(i32),
+    ChangeView,
     ArrowKey(Named),
     ShowHidden(bool),
     SetRecursive(bool),
@@ -412,7 +421,7 @@ struct FItemb {
     display_idx: usize,
     sel: bool,
     nav_id: u8,
-    mtime: f32,
+    mtime: u64,
     size: u64,
     view_id: u8,
     vid: bool,
@@ -846,6 +855,10 @@ impl Application for FilePicker {
                     self.update_searcher_visible(displayed);
                 }
             },
+            Message::ChangeView => {
+                self.conf.icon_view = !self.conf.icon_view;
+                self.conf.need_update = true;
+            },
             Message::Sort(i) => {
                 match i {
                     1 => self.displayed.sort_by(|a:&usize,b:&usize| unsafe {
@@ -931,14 +944,18 @@ impl Application for FilePicker {
             },
             Message::PageDown => {
                 let current = self.scroll_offset.y;
-                let end = match self.row_sizes.borrow().rows.last() {
-                    None => self.content_height,
-                    Some(r) => r.end_pos,
+                let end = if self.conf.icon_view {
+                    match self.row_sizes.borrow().rows.last() {
+                        None => self.content_height,
+                        Some(r) => r.end_pos,
+                    }
+                } else {
+                    self.displayed.len() as f32 * ROW_HEIGHT
                 };
                 let offset = scrollable::AbsoluteOffset{x:0.0, y:(current + self.content_height)
                     .min(end - self.content_height)};
-                self.update_scroll(offset.y);
-                return scrollable::scroll_to(self.scroll_id.clone(), offset);
+                    self.update_scroll(offset.y);
+                    return scrollable::scroll_to(self.scroll_id.clone(), offset);
             },
             Message::DropBookmark(idx, cursor_pos) => {
                 return iced_drop::zones_on_point(
@@ -1412,12 +1429,9 @@ impl Application for FilePicker {
 
             let mut clicked_offscreen = false;
             let mut ps = self.pos_state.borrow_mut();
-            ps.max_cols = ((size.width-140.0) / self.conf.thumb_size).max(1.0) as usize;
-            let thumb_width = (size.width-140.0) / ps.max_cols as f32;
-            let num_rows = self.num_rows(ps.max_cols);
-            let top = self.scroll_offset.y - self.conf.thumb_size*1.1;
-            let bot = self.scroll_offset.y + self.content_height;
-            let mut rs = self.row_sizes.borrow_mut();
+            ps.max_cols = if self.conf.icon_view {
+                ((size.width-140.0) / self.conf.thumb_size).max(1.0) as usize
+            } else { 1 };
             let content: iced::Element<'_, Self::Message> = match &self.view_image.1 {
                 Preview::Svg(handle) => {
                     mouse_area(container(svg(handle.clone())
@@ -1453,71 +1467,108 @@ impl Application for FilePicker {
                         .into()
                 },
                 Preview::None => {
-                    let mut rows = Column::new();
-                    rs.checkcols(ps.max_cols);
-                    if rs.rows.len() < num_rows {
-                        rs.rows.resize_with(num_rows, Rowsize::default);
-                    }
-                    let first_idx = match rs.rows.iter().take_while(|r|r.ready).find_position(|r|r.pos > top) {
-                        Some((i,r)) => {
-                            rows = rows.push(vertical_space().height(r.pos));
-                            i
-                        },
-                        None => 0,
-                    };
-                    let mut next_ready = true;
-                    let mut send_max = 20;
-                    let mut clicked_onscreen = false;
-                    for i in first_idx..num_rows {
-                        let cur_row = &rs.rows[i];
-                        let past_bot = cur_row.pos > bot;
-                        if num_rows <= rs.num_ready {
-                            if past_bot {
-                                let last_pos = rs.rows.last().unwrap().end_pos;
-                                rows = rows.push(vertical_space().height(last_pos - cur_row.pos));
-                                break;
-                            }
+                    if self.conf.icon_view {
+                        let thumb_width = (size.width-140.0) / ps.max_cols as f32;
+                        let num_rows = self.num_rows(ps.max_cols);
+                        let top = self.scroll_offset.y - self.conf.thumb_size*1.1;
+                        let bot = self.scroll_offset.y + self.content_height;
+                        let mut rs = self.row_sizes.borrow_mut();
+                        let mut rows = Column::new();
+                        rs.checkcols(ps.max_cols);
+                        if rs.rows.len() < num_rows {
+                            rs.rows.resize_with(num_rows, Rowsize::default);
                         }
-                        let mut row_all_ready = next_ready;
-                        let mut row_none_ready = true;
-                        if past_bot {
-                            rows = rows.push(vertical_space().height(cur_row.end_pos - cur_row.pos));
-                        } else {
-                            let start = i * ps.max_cols;
-                            let mut row = Row::new().width(Length::Fill);
-                            for j in 0..ps.max_cols {
-                                let idx = start + j;
-                                if idx < self.displayed.len() {
-                                    let item = &self.items[self.dtoi(idx)];
-                                    row_all_ready &= item.thumb_handle != None;
-                                    row_none_ready &= item.thumb_handle == None;
-                                    let (clicked, display) = item.display(&self.last_clicked, thumb_width);
-                                    clicked_onscreen |= clicked;
-                                    row = row.push(display);
+                        let first_idx = match rs.rows.iter().take_while(|r|r.ready).find_position(|r|r.pos > top) {
+                            Some((i,r)) => {
+                                rows = rows.push(vertical_space().height(r.pos));
+                                i
+                            },
+                            None => 0,
+                        };
+                        let mut next_ready = true;
+                        let mut send_max = 20;
+                        let mut clicked_onscreen = false;
+                        for i in first_idx..num_rows {
+                            let cur_row = &rs.rows[i];
+                            let past_bot = cur_row.pos > bot;
+                            if num_rows <= rs.num_ready {
+                                if past_bot {
+                                    let last_pos = rs.rows.last().unwrap().end_pos;
+                                    rows = rows.push(vertical_space().height(last_pos - cur_row.pos));
+                                    break;
                                 }
                             }
-                            if row_all_ready && i == rs.next_send && send_max > 0 {
-                                send_max -= 1;
-                                let counter = rs.view_counter;
-                                rows = rows.push(wrapper::locator(row).send_info(move|a,b|Message::PositionInfo(Pos::Row(counter, i),a,b), true));
-                                rs.next_send += 1;
+                            let mut row_all_ready = next_ready;
+                            let mut row_none_ready = true;
+                            if past_bot {
+                                rows = rows.push(vertical_space().height(cur_row.end_pos - cur_row.pos));
                             } else {
-                                rows = rows.push(row);
+                                let start = i * ps.max_cols;
+                                let mut row = Row::new().width(Length::Fill);
+                                for j in 0..ps.max_cols {
+                                    let idx = start + j;
+                                    if idx < self.displayed.len() {
+                                        let item = &self.items[self.dtoi(idx)];
+                                        row_all_ready &= item.thumb_handle != None;
+                                        row_none_ready &= item.thumb_handle == None;
+                                        let (clicked, display) = item.display_thumb(&self.last_clicked, thumb_width);
+                                        clicked_onscreen |= clicked;
+                                        row = row.push(display);
+                                    }
+                                }
+                                if row_all_ready && i == rs.next_send && send_max > 0 {
+                                    send_max -= 1;
+                                    let counter = rs.view_counter;
+                                    rows = rows.push(wrapper::locator(row).send_info(move|a,b|Message::PositionInfo(Pos::Row(counter, i),a,b), true));
+                                    rs.next_send += 1;
+                                } else {
+                                    rows = rows.push(row);
+                                }
+                                if row_none_ready {
+                                    break;
+                                }
                             }
-                            if row_none_ready {
-                                break;
+
+                            next_ready = row_all_ready;
+                        }
+                        clicked_offscreen = self.last_clicked.new && !clicked_onscreen;
+                        Scrollable::new(rows)
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .on_scroll(Message::Scrolled)
+                            .direction(Direction::Vertical(Properties::new()))
+                            .id(self.scroll_id.clone()).into()
+                    } else {
+                        // list view
+                        let mut rows = Column::new();
+                        let mut clicked_onscreen = false;
+                        let num_total = self.displayed.len();
+                        let top = self.scroll_offset.y - ROW_HEIGHT*1.1;
+                        let bot = self.scroll_offset.y + self.content_height;
+                        let first_idx = (top / ROW_HEIGHT).floor().max(0.0) as usize;
+                        let last_idx = (bot / ROW_HEIGHT).ceil().min((num_total.max(1) - 1) as f32) as usize;
+                        if first_idx > 0 {
+                            rows = rows.push(vertical_space().height(ROW_HEIGHT * first_idx as f32));
+                        }
+                        if num_total > 0 {
+                            for i in first_idx..last_idx+1 {
+                                let item = &self.items[self.dtoi(i)];
+                                let (clicked, displayed) = item.display_row(&self.last_clicked);
+                                clicked_onscreen |= clicked;
+                                rows = rows.push(displayed);
                             }
                         }
-
-                        next_ready = row_all_ready;
+                        if last_idx+1 < num_total {
+                            rows = rows.push(vertical_space().height(ROW_HEIGHT * (num_total-1-last_idx) as f32));
+                        }
+                        clicked_offscreen = self.last_clicked.new && !clicked_onscreen;
+                        Scrollable::new(rows)
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .on_scroll(Message::Scrolled)
+                            .direction(Direction::Vertical(Properties::new()))
+                            .id(self.scroll_id.clone()).into()
                     }
-                    clicked_offscreen = self.last_clicked.new && !clicked_onscreen;
-                    Scrollable::new(rows)
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .on_scroll(Message::Scrolled)
-                        .direction(Direction::Vertical(Properties::new()))
-                        .id(self.scroll_id.clone()).into()
                 },
             };
             let count = Text::new(format!("  {} items", self.displayed.len()));
@@ -1534,6 +1585,7 @@ impl Application for FilePicker {
                             view_menu(cmd_list))
                         (top_icon(self.icons.settings.clone(), Message::Dummy),
                             view_menu(menu_items!(
+                                    (menu_button(if self.conf.icon_view { "List View" } else { "Icon View" },Message::ChangeView))
                                     (menu_button("Sort A-Z",Message::Sort(1)))
                                     (menu_button("Sort Z-A",Message::Sort(2)))
                                     (menu_button("Sort Newest first",Message::Sort(3)))
@@ -1682,7 +1734,56 @@ impl FItem {
     #[inline]
     fn not_loaded(self: &Self) -> bool { self.thumb_handle == None && !self.path.is_empty() }
 
-    fn display(&self, last_clicked: &LastClicked, thumbsize: f32) -> (bool, Element<'static, Message>) {
+    fn display_row(&self, last_clicked: &LastClicked) -> (bool, Element<'static, Message>) {
+        let mut row = Row::new();
+        let idx = self.items_idx;
+        row = row.push(text(self.path.rsplitn(2,'/').next().unwrap()).width(Length::FillPortion(70)));
+        if !self.isdir() {
+            let bytes = self.size as f64;
+            let sz = if bytes > 1073741824.0 { format!("{:.2} GB", bytes/1073741824.0 ) }
+            else if bytes > 1048576.0 { format!("{:.1} MB", bytes/1048576.0 ) }
+            else if bytes > 1024.0 { format!("{:.0} KB", bytes/1024.0 ) }
+            else { format!("{:.0} B", bytes) };
+            row = row.push(container(Text::new(sz)).padding(Padding{
+                right: 15.0, left: 5.0, top: 0.0, bottom: 0.0
+            }));
+        }
+        let systime = std::time::UNIX_EPOCH + Duration::from_secs(self.mtime);
+        let datetime: DateTime<Utc> = systime.into();
+        let iso_8601_string = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
+        row = row.push(container(Text::new(iso_8601_string)).padding(Padding{
+            right: 15.0, left: 0.0, top: 0.0, bottom: 0.0
+        }));
+        let clickable = match (self.isdir(), self.sel) {
+            (true, true) => {
+                let dr = iced_drop::droppable(row).on_drop(move |point,_| Message::DropBookmark(idx, point));
+                mouse_area(container(dr).height(ROW_HEIGHT).width(Length::Fill).style(get_sel_theme()))
+            },
+            (true, false) => {
+                let dr = iced_drop::droppable(row).on_drop(move |point,_| Message::DropBookmark(idx, point));
+                mouse_area(container(dr).height(ROW_HEIGHT).width(Length::Fill))
+            },
+            (false, true) => {
+                mouse_area(container(row).height(ROW_HEIGHT).width(Length::Fill).style(get_sel_theme()))
+            },
+            (false, false) => {
+                mouse_area(container(row).height(ROW_HEIGHT).width(Length::Fill))
+            },
+        }.on_release(Message::LeftClick(self.items_idx, false))
+            .on_press(Message::LeftPreClick(self.items_idx))
+            .on_right_press(Message::RightClick(self.items_idx as i64))
+            .on_middle_press(Message::MiddleClick(self.items_idx));
+        match (last_clicked.iidx, last_clicked.new) {
+            (i, true) if i == idx => {
+                (true, wrapper::locator(clickable).send_info(move|a,b|Message::PositionInfo(Pos::Item,a,b), true).into())
+            },
+            (_,_) => {
+                (false, clickable.into())
+            },
+        }
+    }
+
+    fn display_thumb(&self, last_clicked: &LastClicked, thumbsize: f32) -> (bool, Element<'static, Message>) {
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
             .width(Length::Fixed(thumbsize));
@@ -1837,7 +1938,7 @@ impl FItem {
             sel: false,
             nav_id,
             view_id: 0,
-            mtime: mtime.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32(),
+            mtime: mtime.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
             vid: false,
             gif: false,
             svg: false,
@@ -2097,6 +2198,13 @@ impl FilePicker {
 
     #[inline]
     fn itopos(self: &Self, i: usize) -> Option<Rectangle> {
+        if !self.conf.icon_view {
+            let di = self.itod(i);
+            let mut rect = Rectangle::default();
+            rect.y = di as f32 * ROW_HEIGHT + self.content_y;
+            rect.height = ROW_HEIGHT;
+            return Some(rect)
+        }
         let rs = self.row_sizes.borrow();
         let ri = self.itod(i) / self.pos_state.borrow().max_cols;
         if rs.rows.len() > ri {
