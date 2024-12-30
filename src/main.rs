@@ -32,7 +32,7 @@ use iced::{
         Scrollable, scrollable, scrollable::{Direction,Properties},
         Button, TextInput, Text,
         column, row, container,
-        svg
+        svg, text_input
     },
     futures::{
         sink::SinkExt,
@@ -699,6 +699,7 @@ struct FilePicker {
     enable_sel_button: bool,
     row_sizes: RefCell<RowSizes>,
     pos_state: RefCell<Measurements>,
+    search_id: text_input::Id,
 }
 
 impl Application for FilePicker {
@@ -736,7 +737,9 @@ impl Application for FilePicker {
             Mode::Save => "Save",
             Mode::Dir => "Select",
         }.to_string();
+        let saving = conf.saving();
         let enable_sel_button = conf.saving() || conf.dir();
+        let search_id = text_input::Id::unique();
         (
             Self {
                 conf,
@@ -780,8 +783,13 @@ impl Application for FilePicker {
                 enable_sel_button,
                 row_sizes: RefCell::new(RowSizes::new()),
                 pos_state: RefCell::new(Measurements::default()),
+                search_id: search_id.clone(),
             },
-            iced::window::resize(iced::window::Id::MAIN, window_size)
+            Command::batch({
+                let mut cmds = vec![iced::window::resize(iced::window::Id::MAIN, window_size)];
+                if !saving { cmds.push(text_input::focus(search_id)); }
+                cmds
+            })
         )
     }
 
@@ -1171,7 +1179,9 @@ impl Application for FilePicker {
                 self.recurse_state = RecState::Stop;
                 self.recurse_updater.as_ref().unwrap().send(RecMsg::NewNav(self.dirs.clone(), self.nav_id)).unwrap();
                 let _ = self.update(Message::Sort(self.conf.sort_by));
-                return scrollable::snap_to(self.scroll_id.clone(), scrollable::RelativeOffset::START);
+                let mut cmds = vec![scrollable::snap_to(self.scroll_id.clone(), scrollable::RelativeOffset::START)];
+                if !self.conf.saving() { cmds.push(text_input::focus(self.search_id.clone())); }
+                return Command::batch(cmds);
             },
             Message::DownDir => {
                 if let Some(dirs) = self.dir_history.pop() {
@@ -1616,7 +1626,8 @@ impl Application for FilePicker {
                     .on_input(Message::SearchTxtInput)
                     .on_paste(Message::SearchTxtInput)
                     .width(Length::FillPortion(2))
-                    .padding(2.0),
+                    .padding(2.0)
+                    .id(self.search_id.clone()),
                 Button::new("X").on_press(Message::SearchTxtInput("".to_string())).style(style::flat_but_theme())
                     .padding(Padding::from([2.0, 5.0]))
                 ]
