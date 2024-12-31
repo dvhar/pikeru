@@ -162,7 +162,7 @@ impl Config {
         };
         if matches.opt_present("h") {
             println!("{}\n{}",opts.usage(&args[0]),
-                "File picker config file is ~/.config/pikeru.conf.\nThe portal config file, which includes the semantic search indexer and postprocessor, is by default ~/.config/xdg-desktop-portal-pikeru/config");
+                "File picker config file is ~/.config/pikeru.conf.\nThe portal config file, which includes the semantic search indexer and postprocessor, is by default ~/.config/xdg-desktop-portal-pikeru/config.\nTo handle pdf and epub thumbnails, make sure pdftoppm and epub-thumbnailer are installed.");
             std::process::exit(0);
         }
 
@@ -401,6 +401,15 @@ enum SubState {
     Ready((UReceiver<FItem>,UReceiver<Inochan>,UReceiver<SearchEvent>,UReceiver<RecMsg>)),
 }
 
+#[derive(PartialEq)]
+enum ImgType {
+    Norm,
+    Vid,
+    Svg,
+    Pdf,
+    Epub,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 enum FType {
     File,
@@ -457,6 +466,8 @@ struct Icons {
     newdir: svg::Handle,
     cmds: svg::Handle,
     goto: svg::Handle,
+    cando_pdf: bool,
+    cando_epub: bool,
 }
 
 struct Bookmark {
@@ -1963,8 +1974,7 @@ impl FItem {
     async fn prepare_cached_thumbnail(
             self: &Self,
             path: &str,
-            is_vid: bool,
-            is_svg: bool,
+            imgtype: ImgType,
             thumbsize: u32,
             icons: Arc<Icons>) -> Option<Handle> {
         let mut hasher = Md5::new();
@@ -1976,7 +1986,11 @@ impl FItem {
         hasher.update(path.as_bytes());
         hasher.update(fmtime.to_le_bytes());
         hasher.update(fsize.to_le_bytes());
-        let cache_path = Path::new(&icons.thumb_dir).join(format!("{:x}{}.webp", hasher.finalize(), thumbsize));
+        let cache_path = Path::new(&icons.thumb_dir).join(if imgtype == ImgType::Pdf || imgtype == ImgType::Epub {
+            format!("{:x}{}.jpg", hasher.finalize(), thumbsize)
+        } else {
+            format!("{:x}{}.webp", hasher.finalize(), thumbsize)
+        });
         let cmtime = match cache_path.metadata() {
             Ok(md) => md.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
             Err(_) => 0,
@@ -1987,8 +2001,12 @@ impl FItem {
             file.read_to_end(&mut buffer).await.unwrap_or(0);
             let img = load_from_memory(buffer.as_ref()).unwrap();
             let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-            Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
-        } else if fdir.to_string_lossy() == icons.thumb_dir {
+            return Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+        }
+        if (imgtype == ImgType::Pdf && !icons.cando_pdf) || (imgtype == ImgType::Epub && !icons.cando_epub) {
+            return Some(icons.doc.clone());
+        }
+        if fdir.to_string_lossy() == icons.thumb_dir {
             let mut buffer = Vec::new();
             let mut file = File::open(self.path.as_str()).await.unwrap();
             file.read_to_end(&mut buffer).await.unwrap_or(0);
@@ -1996,15 +2014,60 @@ impl FItem {
             let thumb = img.thumbnail(thumbsize, thumbsize);
             let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
             Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
-        } else if is_vid {
+        } else if imgtype == ImgType::Vid {
             vid_frame(&path, Some(thumbsize), Some(&cache_path))
+        } else if imgtype == ImgType::Epub {
+            match OsCmd::new("epub-thumbnailer")
+                .arg(self.path.as_str()).arg(&cache_path).arg(format!("{}",thumbsize))
+                .output() {
+                Ok(_) => {
+                    match File::open(&cache_path).await {
+                        Ok(mut file) => {
+                            let mut buffer = Vec::new();
+                            file.read_to_end(&mut buffer).await.unwrap_or(0);
+                            let img = load_from_memory(buffer.as_ref()).unwrap();
+                            let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
+                            Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                        },
+                        Err(_) => {
+                            None
+                        },
+                    }
+                },
+                Err(_) => {
+                    None
+                },
+            }
+        } else if imgtype == ImgType::Pdf {
+            match OsCmd::new("pdftoppm")
+                .arg("-jpeg").arg("-f").arg("1").arg("-singlefile").arg("-scale-to").arg(format!("{}",thumbsize))
+                .arg(self.path.as_str()).arg(cache_path.to_string_lossy().trim_end_matches(".jpg"))
+                .output() {
+                Ok(_) => {
+                    match File::open(&cache_path).await {
+                        Ok(mut file) => {
+                            let mut buffer = Vec::new();
+                            file.read_to_end(&mut buffer).await.unwrap_or(0);
+                            let img = load_from_memory(buffer.as_ref()).unwrap();
+                            let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
+                            Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                        },
+                        Err(_) => {
+                            None
+                        },
+                    }
+                },
+                Err(_) => {
+                    None
+                },
+            }
         } else {
             let file = File::open(self.path.as_str()).await;
             match file {
                 Ok(mut file) => {
                     let mut buffer = Vec::new();
                     file.read_to_end(&mut buffer).await.unwrap_or(0);
-                    if is_svg {
+                    if imgtype == ImgType::Svg {
                         let opts = resvg::usvg::Options::default();
                         match resvg::usvg::Tree::from_data(buffer.as_ref(), &opts) {
                             Ok(tree) => {
@@ -2067,7 +2130,7 @@ impl FItem {
                     let ext = ext.as_str();
                     self.ftype = match ext {
                         "svg" => {
-                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), false, true, thumbsize, icons.clone()).await;
+                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Svg, thumbsize, icons.clone()).await;
                             if self.thumb_handle == None {
                                 self.thumb_handle = Some(icons.error.clone());
                                 FType::File
@@ -2077,7 +2140,7 @@ impl FItem {
                             }
                         },
                         "png"|"jpg"|"jpeg"|"bmp"|"tiff"|"gif"|"webp" => {
-                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), false, false, thumbsize, icons.clone()).await;
+                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Norm, thumbsize, icons.clone()).await;
                             if self.thumb_handle == None {
                                 self.thumb_handle = Some(icons.error.clone());
                                 FType::File
@@ -2089,7 +2152,7 @@ impl FItem {
                             }
                         },
                         "webm"|"mkv"|"mp4"|"m4b"|"av1"|"avi"|"avif"|"flv"|"wmv"|"m4v"|"mpeg"|"mov"|"jxl" => {
-                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), true, false, thumbsize, icons.clone()).await;
+                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Vid, thumbsize, icons.clone()).await;
                             if self.thumb_handle == None {
                                 self.thumb_handle = Some(icons.error.clone());
                                 FType::File
@@ -2098,7 +2161,27 @@ impl FItem {
                                 FType::Image
                             }
                         },
-                        "txt"|"pdf"|"doc"|"docx"|"xls"|"xlsx" => {
+                        "pdf" => {
+                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Pdf, thumbsize, icons.clone()).await;
+                            if self.thumb_handle == None {
+                                self.thumb_handle = Some(icons.doc.clone());
+                                FType::File
+                            } else {
+                                self.vid = true;
+                                FType::Image
+                            }
+                        },
+                        "epub" => {
+                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Epub, thumbsize, icons.clone()).await;
+                            if self.thumb_handle == None {
+                                self.thumb_handle = Some(icons.doc.clone());
+                                FType::File
+                            } else {
+                                self.vid = true;
+                                FType::Image
+                            }
+                        },
+                        "txt"|"doc"|"docx"|"xls"|"xlsx" => {
                             self.thumb_handle = Some(icons.doc.clone());
                             FType::File
                         },
@@ -2436,6 +2519,10 @@ impl Icons {
     fn new(thumbsize: f32) -> Self {
         let home = std::env::var("HOME").unwrap();
         let tpath = Path::new(&home).join(".cache").join("pikeru").join("thumbnails");
+        let cando_pdf = std::process::Command::new("which")
+            .arg("pdftoppm").output().map_or(false, |output| output.status.success());
+        let cando_epub = std::process::Command::new("which")
+            .arg("epub-thumbnailer").output().map_or(false, |output| output.status.success());
         Self {
             folder: Self::prerender_svg(include_bytes!("../assets/folder7.svg"), thumbsize),
             unknown:  Self::prerender_svg(include_bytes!("../assets/file6.svg"), thumbsize),
@@ -2448,6 +2535,8 @@ impl Icons {
             newdir: svg::Handle::from_memory(include_bytes!("../assets/newdir2.svg")),
             cmds: svg::Handle::from_memory(include_bytes!("../assets/cmd2.svg")),
             goto: svg::Handle::from_memory(include_bytes!("../assets/goto2.svg")),
+            cando_pdf,
+            cando_epub,
         }
     }
     fn prerender_svg(img_bytes: &[u8], thumbsize: f32) -> Handle {
