@@ -7,7 +7,7 @@ Pikeru is a file picker, file searcher, and image viewer for linux that works on
 
 ## Special features other filepickers don't have
 * Semantic file search can search images by visual content in addition to file name.
-* Select multiple directories with ctrl, shift, middle-click, or right-click and click `Open` to view the contents of all of them at the same time.
+* Select multiple directories and click `Open` to view the contents of all of them at the same time.
 * Right click an image to view it. Scroll the image to view the next and previous images.
 * `Cmd` menu shows commands specified in the config. Click one to run it on the selected files.
 * Set a postprocessor script to convert, resize, compress or do anything else with selected files automatically.
