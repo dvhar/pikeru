@@ -1,7 +1,7 @@
 # NOTE: this PKGBUILD is under construction and probably not ready to use yet
 
 pkgname=pikeru
-pkgver=1.0
+pkgver=1.1
 pkgrel=1
 pkgdesc="A file picker with proper thumbnails and search"
 arch=('x86_64')
@@ -9,8 +9,8 @@ url="https://github.com/dvhar/pikeru"
 license=('MIT')
 depends=('ffmpeg', 'xdg-desktop-portal')
 makedepends=('cargo', 'clang', 'scdoc')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/dvhar/$pkgname/archive/refs/tags/v$pkgver.tar.gz")
-sha512sums=('5aad8f6821efc6b1863f65a2b84eb359f185e627ea97d27326bd5d5d9a114607512999ef317ba381007752fec6c16df50539a3b0091847efb18a44fa00247259')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/dvhar/$pkgname/archive/refs/tags/$pkgver.tar.gz")
+sha512sums=('89a9445f76c56f02b9ac4b245f0cc8865e365a999b7c3e6ef1a54c0d357157f7bbc555e704d1a5da8c8c916cf4212f3fe0afe6efee36fef659a93276ac4d9952')
 options=()
 
 build() {
