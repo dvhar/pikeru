@@ -28,18 +28,25 @@ get_desktop(){
 package() {
   cd "$pkgname-$pkgver"
 
-  mandir="$pkgdir/usr/local/share/man/man5"
-  portaldir="/usr/share/xdg-desktop-portal/portals"
-  dbusdir="/usr/local/share/dbus-1/services"
-  sharedir="/usr/local/share/xdg-desktop-portal-pikeru"
-  mkdir -p $mandir $portaldir $dbusdir $sharedir
+  # Create directories
+  install -dm755 "$pkgdir/usr/share/man/man5"
+  install -dm755 "$pkgdir/usr/share/xdg-desktop-portal/portals"
+  install -dm755 "$pkgdir/usr/share/dbus-1/services"
+  install -dm755 "$pkgdir/usr/share/xdg-desktop-portal-pikeru"
 
-  install -Dm755 "target/release/pikeru" "$pkgdir/usr/local/bin/pikeru"
-  install -Dm755 "target/release/portal" "$pkgdir/usr/local/bin/xdg-desktop-portal-pikeru"
-  install -Dm755 "xdg_portal/pikeru-wrapper.sh" "$pkgdir/$sharedir"
-  install -Dm644 "xdg_portal/xdg-desktop-portal-pikeru.service" $(pkg-config --variable systemduserunitdir systemd)
-  install -Dm644 "xdg_portal/org.freedesktop.impl.portal.desktop.pikeru.service" "$pkgdir/$dbusdir"
-  scdoc < "xdg_portal/xdg-desktop-portal-pikeru.5.scd" > "$pdgdir/$mandir/xdg-desktop-portal-pikeru.5"
-	sed "s/@cur_desktop@/$(get_desktop)/" "xdg_portal/pikeru.portal.in" > "$pkgdir/usr/share/xdg-desktop-portal/portals/pikeru.portal"
+  # Install binaries
+  install -Dm755 "target/release/pikeru" "$pkgdir/usr/bin/pikeru"
+  install -Dm755 "target/release/portal" "$pkgdir/usr/lib/xdg-desktop-portal-pikeru"
 
+  # Install other files
+  install -Dm755 "xdg_portal/pikeru-wrapper.sh" "$pkgdir/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh"
+  install -Dm644 "xdg_portal/xdg-desktop-portal-pikeru.service" "$pkgdir$(pkg-config --variable systemduserunitdir systemd)/xdg-desktop-portal-pikeru.service"
+  install -Dm644 "xdg_portal/org.freedesktop.impl.portal.desktop.pikeru.service" "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.pikeru.service"
+
+  # Generate and install man page
+  scdoc < "xdg_portal/xdg-desktop-portal-pikeru.5.scd" > "$pkgdir/usr/share/man/man5/xdg-desktop-portal-pikeru.5"
+
+  # Generate and install portal file
+  sed "s/@cur_desktop@/$(get_desktop)/" "xdg_portal/pikeru.portal.in" > "$pkgdir/usr/share/xdg-desktop-portal/portals/pikeru.portal"
 }
+
