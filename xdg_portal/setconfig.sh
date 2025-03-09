@@ -57,5 +57,39 @@ EOF
 "
 fi
 
+mkdir -p "$HOME/.config/xdg-desktop-portal-pikeru"
+[[ -r "$HOME/.config/xdg-desktop-portal-pikeru/config" ]] || cat << EOF >> $xdgpconf/config
+# off, error, warn, info, debug, trace
+log_level = info
+
+[filepicker]
+cmd=/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
+default_save_dir=~/Downloads
+
+# Point postprocessor to a script to automatically process files before upload.
+# Replace the empty config value with the commented one to use the example script.
+#postprocessor=/usr/share/xdg-desktop-portal-pikeru/postprocess.example.sh
+postprocessor=
+postprocess_dir=/tmp/pk_postprocess
+
+
+[indexer]
+# this section tells xdg-desktop-portal-pikeru how to build an index for semantic search.
+# The example values here are for a stable-diffusion-webui server running on localhost that
+# is used to generate searchable text for files in any directory opened by pikeru.
+# Set log_level above to trace to see the searchable text results.
+
+enable = false
+
+# bash command that will be given an additional filepath arg and prints searchable text to stdout.
+cmd = python /usr/share/xdg-desktop-portal-pikeru/img_indexer.py http://127.0.0.1:7860/sdapi/v1/interrogate
+
+# bash command that only returns status code 0 when the indexer is online
+check = curl http://127.0.0.1:7860/sdapi/v1/interrogate
+
+# comma-separate list of file types that 'cmd' can process.
+extensions = png,jpg,jpeg,gif,webp,tiff,bmp
+EOF
+
 execute "systemctl --user restart xdg-desktop-portal.service"
 echo -e "XDG portal has been configured to use pikeru. Config file is ${portalfile}.\nYou can revert it with 'pikeru -d' and re-enable pikeru with 'pikeru -e'"

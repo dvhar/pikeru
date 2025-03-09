@@ -1,6 +1,20 @@
 #!/bin/bash
 
-# dest
+if [ -f /etc/arch-release ]; then
+    echo "Arch Linux detected!"
+    if [ -f ./PKGBUILD ]; then
+        read -p "PKGBUILD file found. Would you like to install using 'makepkg -si' instead? (y/n): " choice
+        case "$choice" in
+            y|Y) echo "Running makepkg -si..."
+                makepkg -si
+                exit 0 ;;
+            *) echo "Continuing with the regular installation script..." ;;
+        esac
+    else
+        echo "No PKGBUILD file found in the current directory. Continuing with regular installation..."
+    fi
+fi
+
 unitdir=$(pkg-config --variable systemduserunitdir systemd)
 portalbin=/usr/lib/xdg-desktop-portal-pikeru
 bindir=/usr/local/bin
@@ -13,14 +27,6 @@ portaldir=/usr/share/xdg-desktop-portal/portals
 portalfile=/usr/share/xdg-desktop-portal/portals/pikeru.portal
 confdir=$HOME/.config/xdg-desktop-portal-pikeru
 
-# src
-dbus_svc=xdg_portal/org.freedesktop.impl.portal.desktop.pikeru.service
-pk_portal=xdg_portal/pikeru.portal.in
-manpage=xdg_portal/xdg-desktop-portal-pikeru.5.scd
-wrapper=xdg_portal/pikeru-wrapper.sh
-sd_svc=xdg_portal/xdg-desktop-portal-pikeru.service
-sample_conf=xdg_portal/config.in
-
 get_desktop(){
 	[ -z "$XDG_CURRENT_DESKTOP" ] && return
 	tail -n1 xdg_portal/pikeru.portal.in|grep -q $XDG_CURRENT_DESKTOP && return
@@ -32,12 +38,14 @@ if [[ $(whoami) = root ]]; then
 	mkdir -p $mandir $dbusdir1 $dbusdir2 $sharedir1 $sharedir2 $portaldir
 	mv -u target/release/pikeru $bindir
 	mv -u target/release/portal $portalbin
-	cp -u $wrapper $sharedir1
-	cp -u $wrapper $sharedir2
-	cp -u $dbus_svc $dbusdir1
-	cp -u $dbus_svc $dbusdir2
-	cp -u $sd_svc $unitdir
-	scdoc < $manpage > $mandir/xdg-desktop-portal-pikeru.5
+	cp -u xdg_portal/pikeru-wrapper.sh $sharedir1
+	cp -u xdg_portal/pikeru-wrapper.sh $sharedir2
+	cp -u xdg_portal/postprocess.example.sh $sharedir2
+	cp -u indexer/img_indexer.py $sharedir2
+	cp -u xdg_portal/org.freedesktop.impl.portal.desktop.pikeru.service $dbusdir1
+	cp -u xdg_portal/org.freedesktop.impl.portal.desktop.pikeru.service $dbusdir2
+	cp -u xdg_portal/xdg-desktop-portal-pikeru.service $unitdir
+	scdoc < xdg_portal/xdg-desktop-portal-pikeru.5.scd > $mandir/xdg-desktop-portal-pikeru.5
 	sed "s/@cur_desktop@/$(get_desktop)/" xdg_portal/pikeru.portal.in > $portalfile
 else
 	this_dir="$(dirname $0)"
@@ -52,7 +60,7 @@ else
 	cargo build -r || exit 1
 	cargo build -r --bin portal || exit 1
 	mkdir -p $confdir
-	[[ -r "$confdir/config" ]] || sed "s|@git_dir@|$PWD|g" $sample_conf > $confdir/config
+	[[ -r "$confdir/config" ]] || cp -u xdg_portal/config $confdir/config
 	sudo "$0"
 	set -x
 	systemctl --user daemon-reload

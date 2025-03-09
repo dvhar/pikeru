@@ -7,7 +7,7 @@ default_save_dir=~/Downloads
 
 # Point postprocessor to a script to automatically process files before upload.
 # Replace the empty config value with the commented one to use the example script.
-#postprocessor=@git_dir@/xdg_portal/postprocess.example.sh
+#postprocessor=/usr/share/xdg-desktop-portal-pikeru/postprocess.example.sh
 postprocessor=
 postprocess_dir=/tmp/pk_postprocess
 
@@ -21,7 +21,7 @@ postprocess_dir=/tmp/pk_postprocess
 enable = false
 
 # bash command that will be given an additional filepath arg and prints searchable text to stdout.
-cmd = python @git_dir@/indexer/img_indexer.py http://127.0.0.1:7860/sdapi/v1/interrogate
+cmd = python /usr/share/xdg-desktop-portal-pikeru/img_indexer.py http://127.0.0.1:7860/sdapi/v1/interrogate
 
 # bash command that only returns status code 0 when the indexer is online
 check = curl http://127.0.0.1:7860/sdapi/v1/interrogate

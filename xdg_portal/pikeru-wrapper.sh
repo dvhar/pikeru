@@ -46,7 +46,7 @@ fi
 #pikerudir="$(dirname "$(readlink -f "$0")")"
 #cmd="$pikerudir/../target/release/pikeru -m $mode -t 'File Picker' -p \"$path\""
 
-cmd="/usr/local/bin/pikeru -m $mode -t 'File Picker' -p \"$path\""
+cmd="pikeru -m $mode -t 'File Picker' -p \"$path\""
 
 # iced has a problem with crashing when no gpu is available so disable and retry if that happens
 [ -r "$HOME/.cache/pikeru/no_gpu" ] && export ICED_BACKEND=tiny-skia
