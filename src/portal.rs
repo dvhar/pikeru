@@ -405,7 +405,18 @@ impl Config {
         let mut indexer_exts = "".to_string();
         let mut indexer_enabled = false;
         let mut log_level = "info".to_string();
-        let txt = std::fs::read_to_string(conf_path).unwrap();
+        let txt = match std::fs::read_to_string(&conf_path) {
+            Ok(content) => content,
+            Err(err) => {
+                eprintln!("Error reading configuration file at {:?}: {}", conf_path, err);
+                match err.kind() {
+                    std::io::ErrorKind::NotFound => eprintln!("The configuration file does not exist."),
+                    std::io::ErrorKind::PermissionDenied => eprintln!("Permission denied when trying to read the configuration file."),
+                    _ => eprintln!("An unexpected error occurred while reading the configuration file."),
+                }
+                std::process::exit(1);
+            }
+        };
         let mut section = Section::Global;
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
             match line {
