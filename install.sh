@@ -60,7 +60,6 @@ else
 	cargo build -r || exit 1
 	cargo build -r --bin portal || exit 1
 	mkdir -p $confdir
-	[[ -r "$confdir/config" ]] || cp -u xdg_portal/config $confdir/config
 	sudo "$0"
 	set -x
 	systemctl --user daemon-reload
