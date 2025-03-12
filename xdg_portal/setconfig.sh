@@ -57,8 +57,9 @@ EOF
 "
 fi
 
-mkdir -p "$HOME/.config/xdg-desktop-portal-pikeru"
-[[ -r "$HOME/.config/xdg-desktop-portal-pikeru/config" ]] || cat << EOF >> $xdgpconf/config
+xdgpconf="$HOME/.config/xdg-desktop-portal-pikeru"
+mkdir -p "$xdgpconf"
+[[ -r "$xdgpconf/config" ]] || cat << EOF > $xdgpconf/config
 # off, error, warn, info, debug, trace
 log_level = info
 
