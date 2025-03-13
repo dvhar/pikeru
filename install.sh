@@ -63,6 +63,5 @@ else
 	sudo "$0"
 	set -x
 	systemctl --user daemon-reload
-	systemctl --user restart xdg-desktop-portal-pikeru.service || exit 1
 	bash ./xdg_portal/setconfig.sh
 fi
