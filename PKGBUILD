@@ -9,17 +9,14 @@ url="https://github.com/dvhar/pikeru"
 license=('MIT')
 depends=('ffmpeg' 'xdg-desktop-portal' 'sqlite')
 makedepends=('cargo' 'clang' 'scdoc')
-optdepends=('epub-thumbnailer (from epub-thumbnailer-git aur package): epub thumbnail support' 'pdftoppm (from package poppler): pdf thumbnail suppoert')
+optdepends=('epub-thumbnailer-git: epub thumbnail support' 'poppler: pdf thumbnail support')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/dvhar/$pkgname/archive/refs/tags/$pkgver.tar.gz")
 sha512sums=('2297975357470281bd9ddfd605fe60cc9e5260053ae5545e55aecc52cb7de30d5067e2f82e2e377d2dd4e38895b283a5b1fc42bb471a3c64fdb12777a62f68e5')
 options=()
 
 build() {
   cd "$pkgname-$pkgver"
-  unset LDFLAGS
-  unset FCFLAGS
   unset CFLAGS
-  unset RUSTFLAGS
   cargo build --release --locked
   cargo build --release --locked --bin portal
 }
@@ -56,7 +53,6 @@ package() {
   # Generate and install portal file
   sed "s/@cur_desktop@/$(_get_desktop)/" "xdg_portal/pikeru.portal.in" > "$pkgdir/usr/share/xdg-desktop-portal/portals/pikeru.portal"
 
-  echo "Installation complete"
-  echo "\033[1mTo enable the pikeru file picker for your user, run 'pikeru -e'\033[0m"
+  echo "To enable the pikeru file picker for your user, run 'pikeru -e'"
 }
 
