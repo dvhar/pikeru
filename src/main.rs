@@ -815,7 +815,7 @@ impl Application for FilePicker {
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
             Message::Thumbsize(size) => {
-                self.conf.thumb_size = (size / 5.0).round() * 5.0;
+                self.conf.thumb_size = (size / 10.0).round() * 10.0;
                 self.conf.need_update = true;
             },
             Message::InoCreate(file) => {

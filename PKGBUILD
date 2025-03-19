@@ -3,12 +3,13 @@
 pkgname=pikeru
 pkgver=1.3
 pkgrel=1
-pkgdesc="A file picker with proper thumbnails and search"
+pkgdesc="A system file picker with proper thumbnails and search"
 arch=('x86_64')
 url="https://github.com/dvhar/pikeru"
 license=('MIT')
 depends=('ffmpeg' 'xdg-desktop-portal' 'sqlite')
 makedepends=('cargo' 'clang' 'scdoc')
+optdepends=('epub-thumbnailer (from epub-thumbnailer-git aur package): epub thumbnail support' 'pdftoppm (from package poppler): pdf thumbnail suppoert')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/dvhar/$pkgname/archive/refs/tags/$pkgver.tar.gz")
 sha512sums=('2297975357470281bd9ddfd605fe60cc9e5260053ae5545e55aecc52cb7de30d5067e2f82e2e377d2dd4e38895b283a5b1fc42bb471a3c64fdb12777a62f68e5')
 options=()
@@ -23,7 +24,7 @@ build() {
   cargo build --release --locked --bin portal
 }
 
-get_desktop(){
+_get_desktop(){
     [ -z "$XDG_CURRENT_DESKTOP" ] && return
     tail -n1 xdg_portal/pikeru.portal.in|grep -q $XDG_CURRENT_DESKTOP && return
     echo ";$XDG_CURRENT_DESKTOP"
@@ -53,6 +54,9 @@ package() {
   scdoc < "xdg_portal/xdg-desktop-portal-pikeru.5.scd" > "$pkgdir/usr/share/man/man5/xdg-desktop-portal-pikeru.5"
 
   # Generate and install portal file
-  sed "s/@cur_desktop@/$(get_desktop)/" "xdg_portal/pikeru.portal.in" > "$pkgdir/usr/share/xdg-desktop-portal/portals/pikeru.portal"
+  sed "s/@cur_desktop@/$(_get_desktop)/" "xdg_portal/pikeru.portal.in" > "$pkgdir/usr/share/xdg-desktop-portal/portals/pikeru.portal"
+
+  echo "Installation complete"
+  echo "\033[1mTo enable the pikeru file picker for your user, run 'pikeru -e'\033[0m"
 }
 
