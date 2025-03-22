@@ -16,7 +16,7 @@ options=()
 
 build() {
   cd "$pkgname-$pkgver"
-  unset CFLAGS
+  export CFLAGS="$(sed 's/-flto=auto//g' <<< "$CFLAGS")"
   cargo build --release --locked
   cargo build --release --locked --bin portal
 }
