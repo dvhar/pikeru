@@ -1,17 +1,17 @@
 # Maintener: dvhar <jnk at davosaur dot com>
 
 pkgname=pikeru
-pkgver=1.3
+pkgver=1.4
 pkgrel=1
 pkgdesc="A system file picker with proper thumbnails and search"
 arch=('x86_64')
 url="https://github.com/dvhar/pikeru"
 license=('MIT')
-depends=('ffmpeg' 'xdg-desktop-portal' 'sqlite', 'poppler')
+depends=('ffmpeg' 'xdg-desktop-portal' 'sqlite' 'poppler')
 makedepends=('cargo' 'clang' 'scdoc')
 optdepends=('epub-thumbnailer-git: epub thumbnail support')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/dvhar/$pkgname/archive/refs/tags/$pkgver.tar.gz")
-sha512sums=('2297975357470281bd9ddfd605fe60cc9e5260053ae5545e55aecc52cb7de30d5067e2f82e2e377d2dd4e38895b283a5b1fc42bb471a3c64fdb12777a62f68e5')
+sha512sums=('453781d073660325076ab1c96d99b760333cfc44938cf660c2fe38abbf80d6092483e827b572ab0d970d3f51174785830d09756fb3088d0a374da459e001a6ac')
 options=()
 install="${pkgname}.install"
 
@@ -30,6 +30,9 @@ _get_desktop(){
 
 package() {
   cd "$pkgname-$pkgver"
+
+  install -dm755 "$pkgdir/usr/share/man/man5"
+  install -dm755 "$pkgdir/usr/share/xdg-desktop-portal/portals"
   install -Dm755 "target/release/pikeru" "$pkgdir/usr/bin/pikeru"
   install -Dm755 "target/release/portal" "$pkgdir/usr/lib/xdg-desktop-portal-pikeru"
   install -Dm755 "xdg_portal/pikeru-wrapper.sh" "$pkgdir/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh"
