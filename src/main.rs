@@ -1188,7 +1188,9 @@ impl Application for FilePicker {
                 self.load_dir();
                 self.show_goto = false;
                 self.recurse_state = RecState::Stop;
-                self.recurse_updater.as_ref().unwrap().send(RecMsg::NewNav(self.dirs.clone(), self.nav_id)).unwrap();
+                if let Err(e) = self.recurse_updater.as_ref().unwrap().send(RecMsg::NewNav(self.dirs.clone(), self.nav_id)) {
+                    eprintln!("Recursive search error: {}", e);
+                }
                 let _ = self.update(Message::Sort(self.conf.sort_by));
                 let mut cmds = vec![scrollable::snap_to(self.scroll_id.clone(), scrollable::RelativeOffset::START)];
                 if !self.conf.saving() { cmds.push(text_input::focus(self.search_id.clone())); }
@@ -2791,7 +2793,7 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                                     ignores[i].push(Arc::new(gitignore::Gitignore::new(local_ignore).0));
                                 }
                             }
-                            rd.map(|f| f.unwrap().path()).for_each(|path| {
+                            rd.filter_map(|r| match r { Ok(d) => Some(d.path()), Err(_) => None, }).for_each(|path| {
                                 let ignored = ignores[i].iter().any(|g|match g.matched(&path, path.is_dir()) {
                                     Match::Ignore(_) => true,
                                     _ => false,
