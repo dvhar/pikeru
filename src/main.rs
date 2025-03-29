@@ -173,7 +173,12 @@ impl Config {
         enum S { Commands, Settings, Bookmarks, Ignore }
         let mut section = S::Commands;
         let mut bookmarks = vec![];
-        let mut cmds = vec![];
+        let mut cmds = vec![Cmd::builtin("Delete"),
+                            Cmd::builtin("Rename"),
+                            //Cmd::builtin("Cut"),
+                            //Cmd::builtin("Copy"),
+                            //Cmd::builtin("Paste"),
+                        ];
         let mut respect_gitignore = true;
         let mut icon_view = true;
         let mut gitignore = ".git/\n".to_string();
@@ -354,7 +359,8 @@ enum Message {
     UpDir,
     DownDir,
     NewDir(bool),
-    NewDirInput(String),
+    Rename,
+    NewPathInput(String),
     Init((USender<FItem>, USender<Inochan>, USender<SearchEvent>, USender<RecMsg>)),
     NextItem(FItem),
     LoadThumbs,
@@ -475,16 +481,20 @@ struct Bookmark {
     path: String,
     id: CId,
 }
+
 #[derive(Debug)]
 struct Cmd {
     label: String,
     cmd: String,
+    builtin: bool,
 }
 
+#[derive(PartialEq)]
 enum FModal {
     None,
     NewDir,
     OverWrite,
+    Rename(String),
     Error(String),
     EditBookmark(usize),
 }
@@ -697,7 +707,7 @@ struct FilePicker {
     recurse_updater: Option<USender<RecMsg>>,
     save_filename: Option<String>,
     select_button: String,
-    new_dir: String,
+    new_path: String,
     new_bm_label: String,
     new_bm_path: String,
     modal: FModal,
@@ -782,7 +792,7 @@ impl Application for FilePicker {
                 save_filename,
                 select_button,
                 modal: FModal::None,
-                new_dir: String::new(),
+                new_path: String::new(),
                 dir_history: vec![],
                 new_bm_path: String::new(),
                 new_bm_label: String::new(),
@@ -1215,8 +1225,36 @@ impl Application for FilePicker {
                 self.dir_history.push(dirs);
                 return self.update(Message::LoadDir);
             },
+            Message::Rename => {
+                if self.new_path.is_empty() {
+                    return Command::none()
+                }
+                if let Some(ref mut item) = self.items.iter_mut().find(|i|i.sel) {
+                    match OsCmd::new("mv").arg(&item.path).arg(&self.new_path).output() {
+                        Ok(output) if output.status.success() => {
+                            (item.label, item.hidden) = make_label(&self.new_path);
+                            item.path = mem::take(&mut self.new_path);
+                        },
+                        Err(e) => {
+                            let err = format!("Error renaming {} to {}: {}", item.path, self.new_path, e);
+                            eprintln!("{}", err);
+                            self.modal = FModal::Error(err);
+                        },
+                        _ => {
+                            let err = format!("Error renaming {} to {}", item.path, self.new_path);
+                            eprintln!("{}", err);
+                            self.modal = FModal::Error(err);
+                        },
+                    }
+                }
+                self.new_path.clear();
+                match self.modal {
+                    FModal::Error(_) => {},
+                    _ => self.modal = FModal::None,
+                }
+            }
             Message::NewDir(confirmed) => if confirmed {
-                    let path = Path::new(&self.dirs[0]).join(&self.new_dir);
+                    let path = Path::new(&self.dirs[0]).join(&self.new_path);
                     if let Err(e) = std::fs::create_dir_all(&path) {
                         let msg = format!("Error creating directory: {:?}", e);
                         self.modal = FModal::Error(msg);
@@ -1226,7 +1264,7 @@ impl Application for FilePicker {
                 } else {
                     self.modal = FModal::NewDir;
                 },
-            Message::NewDirInput(dir) => self.new_dir = dir,
+            Message::NewPathInput(path) => self.new_path = path,
             Message::CloseModal => self.modal = FModal::None,
             Message::MiddleClick(iidx) => self.click_item(iidx, false, true, false),
             Message::LeftPreClick(iidx) => self.clicktimer.preclick(iidx),
@@ -1681,6 +1719,25 @@ impl Application for FilePicker {
                     .on_esc(Message::CloseModal)
                     .align_y(alignment::Vertical::Center)
                     .into(),
+                FModal::Rename(ref filename) => modal(mainview, Some(Card::new(
+                        Text::new("Rename or move"),
+                        column![
+                            TextInput::new(filename, &self.new_path)
+                                .on_input(Message::NewPathInput)
+                                .on_submit(Message::Rename)
+                                .on_paste(Message::NewPathInput),
+                            row![
+                                Button::new("Rename").on_press(Message::Rename).style(style::top_but_theme()),
+                                Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_theme()),
+                            ].spacing(5.0)
+                        ]
+                        ).max_width(500.0)
+                        .on_close(Message::CloseModal))
+                    )
+                    .backdrop(Message::CloseModal)
+                    .on_esc(Message::CloseModal)
+                    .align_y(alignment::Vertical::Center)
+                    .into(),
                 FModal::Error(ref msg) => modal(mainview, Some(Card::new(
                             Text::new("Error"), text(msg)).max_width(500.0))
                     )
@@ -1702,10 +1759,10 @@ impl Application for FilePicker {
                 FModal::NewDir => modal(mainview, Some(Card::new(
                         Text::new("Enter new directory name"),
                         column![
-                            TextInput::new("Untitled", self.new_dir.as_str())
-                                .on_input(Message::NewDirInput)
+                            TextInput::new("Untitled", self.new_path.as_str())
+                                .on_input(Message::NewPathInput)
                                 .on_submit(Message::NewDir(true))
-                                .on_paste(Message::NewDirInput),
+                                .on_paste(Message::NewPathInput),
                             row![
                                 Button::new("Create").on_press(Message::NewDir(true)).style(style::top_but_theme()),
                                 Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_theme()),
@@ -1748,6 +1805,53 @@ fn top_icon(img: svg::Handle, msg: Message) -> Element<'static, Message> {
                 .width(40.0))
         .style(style::top_but_theme())
         .on_press(msg).into()
+}
+
+fn make_label(path: &str) -> (String, bool) {
+    let mut label = path.rsplitn(2,'/').next().unwrap().to_string();
+    let hidden = label.starts_with('.');
+    let len = label.len();
+    if len > 20 {
+        let mut line_len = 0;
+        let mut split = 0;
+        for (i, w) in label.split_word_bound_indices().rev() {
+            if line_len + w.len() > 20 {
+                if line_len == 0 {
+                    split = len - 20.min(len);
+                    while  split > 0 && (label.as_bytes()[split] & 0b11000000) == 0b10000000 {
+                        split -= 1;
+                    }
+                }
+                break;
+            }
+            split = i;
+            line_len += w.len();
+        }
+        let len = split;
+        line_len = 0;
+        let mut start = 0;
+        for (i, w) in label[..split].split_word_bound_indices().rev() {
+            if line_len + w.len() > 20 {
+                if line_len == 0 {
+                    start = len - 20.min(len);
+                    while  start > 0 && (label.as_bytes()[start] & 0b11000000) == 0b10000000 {
+                        start -= 1;
+                    }
+                }
+                break;
+            }
+            start = i;
+            line_len += w.len();
+        }
+        if start == split {
+            label = label[start..].to_string();
+        } else {
+            label = format!("{}{}\n{}", if start == 0 { "" } else { "..." },
+                &label[start..split],
+                &label[split..]);
+        }
+    }
+    (label, hidden)
 }
 
 impl FItem {
@@ -1907,50 +2011,7 @@ impl FItem {
 
         };
         let path = pth.to_string_lossy();
-        let mut label = path.rsplitn(2,'/').next().unwrap().to_string();
-        let hidden = label.starts_with('.');
-
-        let len = label.len();
-        if len > 20 {
-            let mut line_len = 0;
-            let mut split = 0;
-            for (i, w) in label.split_word_bound_indices().rev() {
-                if line_len + w.len() > 20 {
-                    if line_len == 0 {
-                        split = len - 20.min(len);
-                        while  split > 0 && (label.as_bytes()[split] & 0b11000000) == 0b10000000 {
-                            split -= 1;
-                        }
-                    }
-                    break;
-                }
-                split = i;
-                line_len += w.len();
-            }
-            let len = split;
-            line_len = 0;
-            let mut start = 0;
-            for (i, w) in label[..split].split_word_bound_indices().rev() {
-                if line_len + w.len() > 20 {
-                    if line_len == 0 {
-                        start = len - 20.min(len);
-                        while  start > 0 && (label.as_bytes()[start] & 0b11000000) == 0b10000000 {
-                            start -= 1;
-                        }
-                    }
-                    break;
-                }
-                start = i;
-                line_len += w.len();
-            }
-            if start == split {
-                label = label[start..].to_string();
-            } else {
-                label = format!("{}{}\n{}", if start == 0 { "" } else { "..." },
-                    &label[start..split],
-                    &label[split..]);
-            }
-        }
+        let (label, hidden) = make_label(&path);
         let unicode = label.bytes().any(|c| c & 0b10000000 != 0);
         FItem(Box::new(FItemb {
             path: path.to_string(),
@@ -2320,39 +2381,62 @@ impl FilePicker {
         self.displayed.len() / maxcols + if self.displayed.len() % maxcols != 0 { 1 } else { 0 }
     }
 
-    fn run_command(self: &Self, icmd: usize) {
-        let cmd = self.conf.cmds[icmd].cmd.as_str();
+    fn run_command(self: &mut Self, icmd: usize) {
+        let cmd = &self.conf.cmds[icmd];
         self.items.iter().filter(|item| item.sel).for_each(|item| {
-            let path = Path::new(item.path.as_str());
-            let fname = path.file_name().unwrap().to_string_lossy();
-            let part = match fname.splitn(2, '.').next() {
-                Some(s) => s,
-                None => &fname,
-            };
-            let quoted_fname = shquote(fname.as_ref());
-            let quoted_part = shquote(part.as_ref());
-            let dir = path.parent().unwrap();
-            let filecmd = cmd.replace("[path]", shquote(&item.path).as_str())
-                .replace("[dir]", &shquote(&dir.to_string_lossy()).as_str())
-                .replace("[Dir]", dir.to_string_lossy().as_ref())
-                .replace("[ext]", format!(".{}", &match path.extension() {
-                    Some(s)=>s.to_string_lossy(),
-                    None=> std::borrow::Cow::Borrowed(""),
-                }).as_str())
-                .replace("[name]", &quoted_fname)
-                .replace("[Name]", &fname)
-                .replace("[part]", &quoted_part)
-                .replace("[Part]", part);
-            let cwd = dir.to_owned();
-            eprintln!("CMD:{}", filecmd);
-            tokio::task::spawn_blocking(move || {
-                match OsCmd::new("bash").arg("-c").arg(filecmd).current_dir(cwd).output() {
-                    Ok(output) => eprintln!("{}{}",
-                                            unsafe{std::str::from_utf8_unchecked(&output.stdout)},
-                                            unsafe{std::str::from_utf8_unchecked(&output.stderr)}),
-                    Err(e) => eprintln!("Error running command: {}", e)
+            if cmd.builtin {
+                match cmd.label.as_str() {
+                    "Delete" => if let Err(e) = OsCmd::new("rm").arg("-rf").arg(&item.path).output() {
+                        eprintln!("Error deleting {}: {}", item.path, e);
+                    },
+                    "Rename" => {
+                        if self.modal == FModal::None {
+                            self.new_path = item.path.clone();
+                            self.modal = FModal::Rename(item.path.clone());
+                        } else {
+                            self.modal = FModal::Error("Select only one file to rename".into());
+                        }
+                    },
+                    "Cut" => {
+                    },
+                    "Copy" => {
+                    },
+                    "Paste" => {
+                    },
+                    &_ => {},
+                }
+            } else {
+                let path = Path::new(item.path.as_str());
+                let fname = path.file_name().unwrap().to_string_lossy();
+                let part = match fname.splitn(2, '.').next() {
+                    Some(s) => s,
+                    None => &fname,
                 };
-            });
+                let quoted_fname = shquote(fname.as_ref());
+                let quoted_part = shquote(part.as_ref());
+                let dir = path.parent().unwrap();
+                let filecmd = cmd.cmd.replace("[path]", shquote(&item.path).as_str())
+                    .replace("[dir]", &shquote(&dir.to_string_lossy()).as_str())
+                    .replace("[Dir]", dir.to_string_lossy().as_ref())
+                    .replace("[ext]", format!(".{}", &match path.extension() {
+                        Some(s)=>s.to_string_lossy(),
+                        None=> std::borrow::Cow::Borrowed(""),
+                    }).as_str())
+                    .replace("[name]", &quoted_fname)
+                    .replace("[Name]", &fname)
+                    .replace("[part]", &quoted_part)
+                    .replace("[Part]", part);
+                let cwd = dir.to_owned();
+                eprintln!("CMD:{}", filecmd);
+                tokio::task::spawn_blocking(move || {
+                    match OsCmd::new("bash").arg("-c").arg(filecmd).current_dir(cwd).output() {
+                        Ok(output) => eprintln!("{}{}",
+                                                unsafe{std::str::from_utf8_unchecked(&output.stdout)},
+                                                unsafe{std::str::from_utf8_unchecked(&output.stderr)}),
+                        Err(e) => eprintln!("Error running command: {}", e)
+                    };
+                });
+            }
         });
     }
 
@@ -2572,6 +2656,15 @@ impl Cmd {
         Cmd {
             label: label.into(),
             cmd: cmd.into(),
+            builtin: false,
+        }
+    }
+
+    fn builtin(label: &str) -> Self {
+        Cmd {
+            label: label.into(),
+            cmd: Default::default(),
+            builtin: true,
         }
     }
 }
