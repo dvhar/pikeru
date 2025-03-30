@@ -278,7 +278,7 @@ impl Config {
 # [part] is the filename without path or extension
 # [ext] is the file extension, including the period
 [Commands]\n");
-        self.cmds.iter().for_each(|cmd| {
+        self.cmds.iter().skip(5).for_each(|cmd| {
             conf.push_str(&cmd.label);
             conf.push_str(" = ");
             conf.push_str(&cmd.cmd);
