@@ -2338,6 +2338,7 @@ async fn watch_inotify(mut rx: UReceiver<Inochan>, tx: USender<Inochan>) {
                         ls.iter().for_each(|dir|{
                             watches.insert(estream.watches().add(dir,
                                                                  WatchMask::CREATE|
+                                                                 WatchMask::MOVED_TO|
                                                                  WatchMask::CLOSE_WRITE|
                                                                  WatchMask::DELETE).unwrap(),
                                            Dir{name:dir.to_string(), created:Default::default()});
