@@ -115,7 +115,10 @@ fn main() -> iced::Result {
     let mut conf = Config::new();
     conf.update(false);
     video_rs::init().unwrap();
-    FilePicker::run(iced::Settings::with_flags(conf))
+    let mut settings = iced::Settings::with_flags(conf);
+    settings.window.level = iced::window::Level::AlwaysOnTop;
+    settings.window.position = iced::window::Position::Centered;
+    FilePicker::run(settings)
 }
 
 struct Config {
