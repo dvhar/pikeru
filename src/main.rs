@@ -93,6 +93,10 @@ fn cli(flags: &getopts::Matches) {
         IndexProxy::pause_resume(true);
         std::process::exit(0);
     }
+    if flags.opt_present("v") {
+        println!("1.5");
+        std::process::exit(0);
+    }
     let cmd = if flags.opt_present("d") {
         include_str!("../xdg_portal/unsetconfig.sh")
     } else if flags.opt_present("e") {
@@ -159,6 +163,7 @@ impl Config {
         opts.optflag("d", "disable", "Configure xdg portal to not use pikeru as your system filepicker");
         opts.optflag("e", "enable", "Configure xdg portal to use pikeru as your system filepicker");
         opts.optflag("h", "help", "Show usage information");
+        opts.optflag("v", "version", "Show pikeru version");
         let matches = match opts.parse(&args) {
             Ok(m) => m,
             Err(e) => die!("Bad args: {}", e),
