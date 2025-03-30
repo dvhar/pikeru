@@ -24,7 +24,7 @@ video-rs = { version = "0.7.3", features = ["ndarray"] }
 ndarray = "0.15.6"
 getopts = "0.2.21"
 iced_aw = { version = "0.9.3", features = ["menu","context_menu"] }
-inotify = "0.10.2"
+inotify = "0.11"
 md-5 = "0.10.6"
 fuzzy-matcher = "0.3.7"
 zbus = { version = "4.2.2", features = ["tokio"] }

@@ -175,9 +175,9 @@ impl Config {
         let mut bookmarks = vec![];
         let mut cmds = vec![Cmd::builtin("Delete"),
                             Cmd::builtin("Rename"),
-                            //Cmd::builtin("Cut"),
-                            //Cmd::builtin("Copy"),
-                            //Cmd::builtin("Paste"),
+                            Cmd::builtin("Cut"),
+                            Cmd::builtin("Copy"),
+                            Cmd::builtin("Paste"),
                         ];
         let mut respect_gitignore = true;
         let mut icon_view = true;
@@ -721,6 +721,8 @@ struct FilePicker {
     row_sizes: RefCell<RowSizes>,
     pos_state: RefCell<Measurements>,
     search_id: text_input::Id,
+    clipboard_paths: Vec<String>,
+    clipboard_cut: bool,
 }
 
 impl Application for FilePicker {
@@ -805,6 +807,8 @@ impl Application for FilePicker {
                 row_sizes: RefCell::new(RowSizes::new()),
                 pos_state: RefCell::new(Measurements::default()),
                 search_id: search_id.clone(),
+                clipboard_paths: vec![],
+                clipboard_cut: false,
             },
             Command::batch({
                 let mut cmds = vec![iced::window::resize(iced::window::Id::MAIN, window_size)];
@@ -1460,7 +1464,16 @@ impl Application for FilePicker {
         responsive(|size| {
             let view_menu = |items| Menu::new(items).max_width(180.0).offset(15.0).spacing(3.0);
             let cmd_list = self.conf.cmds.iter().enumerate().map(
-                |(i,cmd)|Item::new(menu_button(cmd.label.as_str(), Message::RunCmd(i)))).collect();
+                |(i,cmd)|{
+                    if self.clipboard_paths.is_empty() && cmd.label == "Paste" {
+                        Item::new(Button::new(container(text(cmd.label.as_str()).width(Length::Fill)
+                                    .horizontal_alignment(alignment::Horizontal::Center)))
+                            .padding(0.0)
+                            .style(style::top_but_theme()))
+                    } else {
+                        Item::new(menu_button(cmd.label.as_str(), Message::RunCmd(i)))
+                    }
+                }).collect();
             let bookmarks = self.conf.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
                         let bm_button = container(Button::new(
                                     container(
@@ -1785,6 +1798,7 @@ fn menu_button(txt: &str, msg: Message) -> Element<'static, Message> {
                 .width(Length::Fill)
                 .horizontal_alignment(alignment::Horizontal::Center)))
         .style(style::top_but_theme())
+        .padding(0.0)
         .on_press(msg).into()
 }
 fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
@@ -2290,6 +2304,7 @@ async fn watch_inotify(mut rx: UReceiver<Inochan>, tx: USender<Inochan>) {
                     Some(eres) => {
                         let ev = eres.unwrap();
                         let create_file = ev.mask == EventMask::CREATE;
+                        let moved_file = ev.mask == EventMask::MOVED_TO;
                         let create_dir = ev.mask == EventMask::CREATE|EventMask::ISDIR;
                         let write_file = ev.mask.contains(EventMask::CLOSE_WRITE);
                         let deleted = ev.mask.contains(EventMask::DELETE);
@@ -2305,6 +2320,8 @@ async fn watch_inotify(mut rx: UReceiver<Inochan>, tx: USender<Inochan>) {
                                         tx.send(Inochan::Create(path)).unwrap();
                                     } else if deleted {
                                         tx.send(Inochan::Delete(path)).unwrap();
+                                    } else if moved_file {
+                                        tx.send(Inochan::Create(path)).unwrap();
                                     }
                             },
                             _ => {},
@@ -2383,6 +2400,17 @@ impl FilePicker {
 
     fn run_command(self: &mut Self, icmd: usize) {
         let cmd = &self.conf.cmds[icmd];
+        if cmd.builtin && cmd.label == "Paste" {
+            if self.dirs.len() != 1 {
+                self.modal = FModal::Error("Cannot paste when multiple directories are open".into());
+                return;
+            }
+            self.clipboard_paths.iter_mut().for_each(|path| {
+                tokio::spawn(paste(mem::take(path), self.dirs[0].clone(), self.clipboard_cut));
+            });
+            self.clipboard_paths.clear();
+            return;
+        }
         self.items.iter().filter(|item| item.sel).for_each(|item| {
             if cmd.builtin {
                 match cmd.label.as_str() {
@@ -2398,10 +2426,12 @@ impl FilePicker {
                         }
                     },
                     "Cut" => {
+                        self.clipboard_paths.push(item.path.clone());
+                        self.clipboard_cut = true;
                     },
                     "Copy" => {
-                    },
-                    "Paste" => {
+                        self.clipboard_paths.push(item.path.clone());
+                        self.clipboard_cut = false;
                     },
                     &_ => {},
                 }
@@ -2599,6 +2629,11 @@ impl FilePicker {
         self.conf.update(false);
         process::exit(0);
     }
+}
+
+async fn paste(path: String, dest: String, cut: bool) {
+    let _ = tokio::process::Command::new(if cut { "mv" } else { "cp" })
+        .arg(path).arg(dest).output().await;
 }
 
 impl Icons {
