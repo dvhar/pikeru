@@ -678,6 +678,12 @@ struct Measurements {
     max_cols: usize,
 }
 
+#[derive(Default)]
+struct NewPath {
+    full_path: String,
+    basename: String,
+}
+
 struct FilePicker {
     conf: Config,
     scroll_id: scrollable::Id,
@@ -707,7 +713,7 @@ struct FilePicker {
     recurse_updater: Option<USender<RecMsg>>,
     save_filename: Option<String>,
     select_button: String,
-    new_path: String,
+    new_path: NewPath,
     new_bm_label: String,
     new_bm_path: String,
     modal: FModal,
@@ -794,7 +800,7 @@ impl Application for FilePicker {
                 save_filename,
                 select_button,
                 modal: FModal::None,
-                new_path: String::new(),
+                new_path: Default::default(),
                 dir_history: vec![],
                 new_bm_path: String::new(),
                 new_bm_label: String::new(),
@@ -1230,35 +1236,35 @@ impl Application for FilePicker {
                 return self.update(Message::LoadDir);
             },
             Message::Rename => {
-                if self.new_path.is_empty() {
+                if self.new_path.basename.is_empty() {
                     return Command::none()
                 }
                 if let Some(ref mut item) = self.items.iter_mut().find(|i|i.sel) {
-                    match OsCmd::new("mv").arg(&item.path).arg(&self.new_path).output() {
+                    match OsCmd::new("mv").arg(&item.path).arg(&self.new_path.full_path).output() {
                         Ok(output) if output.status.success() => {
-                            (item.label, item.hidden) = make_label(&self.new_path);
-                            item.path = mem::take(&mut self.new_path);
+                            (item.label, item.hidden) = make_label(&self.new_path.full_path);
+                            item.path = mem::take(&mut self.new_path.full_path);
                         },
                         Err(e) => {
-                            let err = format!("Error renaming {} to {}: {}", item.path, self.new_path, e);
+                            let err = format!("Error renaming {} to {}: {}", item.path, self.new_path.basename, e);
                             eprintln!("{}", err);
                             self.modal = FModal::Error(err);
                         },
                         _ => {
-                            let err = format!("Error renaming {} to {}", item.path, self.new_path);
+                            let err = format!("Error renaming {} to {}", item.path, self.new_path.basename);
                             eprintln!("{}", err);
                             self.modal = FModal::Error(err);
                         },
                     }
                 }
-                self.new_path.clear();
+                self.new_path.reset();
                 match self.modal {
                     FModal::Error(_) => {},
                     _ => self.modal = FModal::None,
                 }
             }
             Message::NewDir(confirmed) => if confirmed {
-                    let path = Path::new(&self.dirs[0]).join(&self.new_path);
+                    let path = Path::new(&self.dirs[0]).join(&self.new_path.basename);
                     if let Err(e) = std::fs::create_dir_all(&path) {
                         let msg = format!("Error creating directory: {:?}", e);
                         self.modal = FModal::Error(msg);
@@ -1266,9 +1272,10 @@ impl Application for FilePicker {
                         self.modal = FModal::None;
                     }
                 } else {
+                    self.new_path.reset();
                     self.modal = FModal::NewDir;
                 },
-            Message::NewPathInput(path) => self.new_path = path,
+            Message::NewPathInput(path) => self.new_path.update(path),
             Message::CloseModal => self.modal = FModal::None,
             Message::MiddleClick(iidx) => self.click_item(iidx, false, true, false),
             Message::LeftPreClick(iidx) => self.clicktimer.preclick(iidx),
@@ -1468,7 +1475,7 @@ impl Application for FilePicker {
                     if self.clipboard_paths.is_empty() && cmd.label == "Paste" {
                         Item::new(Button::new(container(text(cmd.label.as_str()).width(Length::Fill)
                                     .horizontal_alignment(alignment::Horizontal::Center)))
-                            .padding(0.0)
+                            .padding(1.0)
                             .style(style::top_but_theme()))
                     } else {
                         Item::new(menu_button(cmd.label.as_str(), Message::RunCmd(i)))
@@ -1733,9 +1740,9 @@ impl Application for FilePicker {
                     .align_y(alignment::Vertical::Center)
                     .into(),
                 FModal::Rename(ref filename) => modal(mainview, Some(Card::new(
-                        Text::new("Rename or move"),
+                        Text::new("Rename File"),
                         column![
-                            TextInput::new(filename, &self.new_path)
+                            TextInput::new(filename, &self.new_path.basename)
                                 .on_input(Message::NewPathInput)
                                 .on_submit(Message::Rename)
                                 .on_paste(Message::NewPathInput),
@@ -1772,7 +1779,7 @@ impl Application for FilePicker {
                 FModal::NewDir => modal(mainview, Some(Card::new(
                         Text::new("Enter new directory name"),
                         column![
-                            TextInput::new("Untitled", self.new_path.as_str())
+                            TextInput::new("Untitled", self.new_path.basename.as_str())
                                 .on_input(Message::NewPathInput)
                                 .on_submit(Message::NewDir(true))
                                 .on_paste(Message::NewPathInput),
@@ -1793,12 +1800,27 @@ impl Application for FilePicker {
     }
 }
 
+impl NewPath {
+    fn reset(&mut self) {
+        self.full_path.clear();
+        self.basename.clear();
+    }
+
+    fn update(&mut self, input: String) {
+        self.basename = input;
+        if !self.full_path.is_empty() {
+            self.full_path = Path::new(&self.full_path).parent().unwrap()
+                .join(&self.basename).to_string_lossy().to_string();
+        }
+    }
+}
+
 fn menu_button(txt: &str, msg: Message) -> Element<'static, Message> {
     Button::new(container(text(txt)
                 .width(Length::Fill)
                 .horizontal_alignment(alignment::Horizontal::Center)))
         .style(style::top_but_theme())
-        .padding(0.0)
+        .padding(1.0)
         .on_press(msg).into()
 }
 fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
@@ -2292,6 +2314,7 @@ async fn watch_inotify(mut rx: UReceiver<Inochan>, tx: USender<Inochan>) {
     let ino = Inotify::init().expect("Error initializing inotify instance");
     let evbuf = [0; 1024];
     let mut estream = ino.into_event_stream(evbuf).unwrap();
+    let mut last_moved: u32 = 0;
     struct Dir {
         name: String,
         created: HashSet<std::ffi::OsString>,
@@ -2303,11 +2326,19 @@ async fn watch_inotify(mut rx: UReceiver<Inochan>, tx: USender<Inochan>) {
                 match eopt {
                     Some(eres) => {
                         let ev = eres.unwrap();
+                        eprintln!("{:?}", ev);
+                        let mut moved_file = false;
+                        if ev.cookie != last_moved {
+                            moved_file = ev.mask.contains(EventMask::MOVED_TO);
+                        }
+                        if ev.mask.contains(EventMask::MOVED_FROM) {
+                            last_moved = ev.cookie;
+                        }
                         let create_file = ev.mask == EventMask::CREATE;
-                        let moved_file = ev.mask == EventMask::MOVED_TO;
                         let create_dir = ev.mask == EventMask::CREATE|EventMask::ISDIR;
                         let write_file = ev.mask.contains(EventMask::CLOSE_WRITE);
-                        let deleted = ev.mask.contains(EventMask::DELETE);
+                        let deleted = ev.mask.contains(EventMask::DELETE) || ev.mask.contains(EventMask::MOVED_FROM);
+                        eprintln!("delete:{}", deleted);
                         match(ev.name, watches.get_mut(&ev.wd)) {
                             (Some(name),Some(dir)) => {
                                 let path = Path::new(&dir.name).join(name.clone()).to_string_lossy().to_string();
@@ -2319,6 +2350,7 @@ async fn watch_inotify(mut rx: UReceiver<Inochan>, tx: USender<Inochan>) {
                                         dir.created.remove(&name);
                                         tx.send(Inochan::Create(path)).unwrap();
                                     } else if deleted {
+                                        eprintln!("deleted");
                                         tx.send(Inochan::Delete(path)).unwrap();
                                     } else if moved_file {
                                         tx.send(Inochan::Create(path)).unwrap();
@@ -2339,6 +2371,7 @@ async fn watch_inotify(mut rx: UReceiver<Inochan>, tx: USender<Inochan>) {
                             watches.insert(estream.watches().add(dir,
                                                                  WatchMask::CREATE|
                                                                  WatchMask::MOVED_TO|
+                                                                 WatchMask::MOVED_FROM|
                                                                  WatchMask::CLOSE_WRITE|
                                                                  WatchMask::DELETE).unwrap(),
                                            Dir{name:dir.to_string(), created:Default::default()});
@@ -2420,7 +2453,8 @@ impl FilePicker {
                     },
                     "Rename" => {
                         if self.modal == FModal::None {
-                            self.new_path = item.path.clone();
+                            self.new_path.basename = item.path.rsplitn(2, '/').next().unwrap().to_string();
+                            self.new_path.full_path = item.path.clone();
                             self.modal = FModal::Rename(item.path.clone());
                         } else {
                             self.modal = FModal::Error("Select only one file to rename".into());
