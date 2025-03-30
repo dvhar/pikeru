@@ -546,6 +546,7 @@ impl FilePicker {
                    *self.prev_path.lock().unwrap() = par_dir;
                 }
             }
+            trace!("Selected: {}", line);
             format!("file://{}",line)
         }).collect::<Vec<_>>();
         let mut ret = HashMap::new();
