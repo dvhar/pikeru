@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [ -f /etc/arch-release ]; then
+if [[ ! $(whoami) = root ]] && [ -f /etc/arch-release ]; then
     echo "Arch Linux detected!"
     if [ -f ./PKGBUILD ]; then
         read -p "PKGBUILD file found. Would you like to install using 'makepkg -si' instead? (y/n): " choice
