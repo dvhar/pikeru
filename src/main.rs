@@ -1275,6 +1275,12 @@ impl Application for FilePicker {
                 let mut cmds = vec![scrollable::snap_to(self.scroll_id.clone(), scrollable::RelativeOffset::START)];
                 if self.conf.saving() {
                     cmds.push(text_input::focus(self.filepath_id.clone()));
+                    let mut extlen = match Path::new(self.pathbar.as_str()).extension() {
+                        Some(s)=>s.to_string_lossy().len(),
+                        None=> std::borrow::Cow::Borrowed("").len(),
+                    };
+                    if extlen > 0 && self.pathbar.len() > extlen+2 { extlen += 1; }
+                    cmds.push(text_input::move_cursor_to(self.filepath_id.clone(), self.pathbar.len()-extlen));
                 } else {
                     cmds.push(text_input::focus(self.search_id.clone()));
                 }
