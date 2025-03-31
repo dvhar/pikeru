@@ -780,6 +780,7 @@ struct FilePicker {
     row_sizes: RefCell<RowSizes>,
     pos_state: RefCell<Measurements>,
     search_id: text_input::Id,
+    filepath_id: text_input::Id,
     clipboard_paths: Vec<String>,
     clipboard_cut: bool,
 }
@@ -822,6 +823,7 @@ impl Application for FilePicker {
         let saving = conf.saving();
         let enable_sel_button = conf.saving() || conf.dir();
         let search_id = text_input::Id::unique();
+        let filepath_id = text_input::Id::unique();
         (
             Self {
                 conf,
@@ -866,12 +868,17 @@ impl Application for FilePicker {
                 row_sizes: RefCell::new(RowSizes::new()),
                 pos_state: RefCell::new(Measurements::default()),
                 search_id: search_id.clone(),
+                filepath_id: filepath_id.clone(),
                 clipboard_paths: vec![],
                 clipboard_cut: false,
             },
             Command::batch({
                 let mut cmds = vec![iced::window::resize(iced::window::Id::MAIN, window_size)];
-                if !saving { cmds.push(text_input::focus(search_id)); }
+                if saving {
+                    cmds.push(text_input::focus(filepath_id));
+                } else {
+                    cmds.push(text_input::focus(search_id));
+                }
                 cmds
             })
         )
@@ -1266,7 +1273,11 @@ impl Application for FilePicker {
                 }
                 let _ = self.update(Message::Sort(self.conf.sort_by));
                 let mut cmds = vec![scrollable::snap_to(self.scroll_id.clone(), scrollable::RelativeOffset::START)];
-                if !self.conf.saving() { cmds.push(text_input::focus(self.search_id.clone())); }
+                if self.conf.saving() {
+                    cmds.push(text_input::focus(self.filepath_id.clone()));
+                } else {
+                    cmds.push(text_input::focus(self.search_id.clone()));
+                }
                 return Command::batch(cmds);
             },
             Message::DownDir => {
@@ -1745,7 +1756,8 @@ impl Application for FilePicker {
                     .on_paste(Message::PathTxtInput)
                     .on_submit(Message::Select(SelType::TxtEntr))
                     .width(Length::FillPortion(8))
-                    .padding(2.0),
+                    .padding(2.0)
+                    .id(self.filepath_id.clone()),
                 TextInput::new("search", self.searchbar.as_str())
                     .on_input(Message::SearchTxtInput)
                     .on_paste(Message::SearchTxtInput)
@@ -2379,7 +2391,6 @@ async fn watch_inotify(mut rx: UReceiver<Inochan>, tx: USender<Inochan>) {
                 match eopt {
                     Some(eres) => {
                         let ev = eres.unwrap();
-                        eprintln!("{:?}", ev);
                         let mut moved_file = false;
                         if ev.cookie != last_moved {
                             moved_file = ev.mask.contains(EventMask::MOVED_TO);
@@ -2391,7 +2402,6 @@ async fn watch_inotify(mut rx: UReceiver<Inochan>, tx: USender<Inochan>) {
                         let create_dir = ev.mask == EventMask::CREATE|EventMask::ISDIR;
                         let write_file = ev.mask.contains(EventMask::CLOSE_WRITE);
                         let deleted = ev.mask.contains(EventMask::DELETE) || ev.mask.contains(EventMask::MOVED_FROM);
-                        eprintln!("delete:{}", deleted);
                         match(ev.name, watches.get_mut(&ev.wd)) {
                             (Some(name),Some(dir)) => {
                                 let path = Path::new(&dir.name).join(name.clone()).to_string_lossy().to_string();
@@ -2403,7 +2413,6 @@ async fn watch_inotify(mut rx: UReceiver<Inochan>, tx: USender<Inochan>) {
                                         dir.created.remove(&name);
                                         tx.send(Inochan::Create(path)).unwrap();
                                     } else if deleted {
-                                        eprintln!("deleted");
                                         tx.send(Inochan::Delete(path)).unwrap();
                                     } else if moved_file {
                                         tx.send(Inochan::Create(path)).unwrap();
