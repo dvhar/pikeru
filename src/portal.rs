@@ -506,9 +506,9 @@ impl FilePicker {
         let multi = if multi { 1 } else { 0 };
         let savenum = if save  { 1 } else { 0 };
         let cmd = if save {
-            format!("{} {} {} {} \"{}\"", self.cmd, multi, dir, savenum, tilda(&self.home,path))
+            format!("PK_XDG=1 {} {} {} {} \"{}\"", self.cmd, multi, dir, savenum, tilda(&self.home,path))
         } else {
-            format!("POSTPROCESS_DIR=\"{}\" POSTPROCESSOR=\"{}\" {} {} {} {} {}",
+            format!("PK_XDG=1 POSTPROCESS_DIR=\"{}\" POSTPROCESSOR=\"{}\" {} {} {} {} {}",
                     self.postproc_dir, self.postprocessor, self.cmd, multi, dir, savenum,
                     shquote(tilda(&self.home,&self.prev_path.lock().unwrap()).as_ref()))
         };

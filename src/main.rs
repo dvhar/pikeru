@@ -1,4 +1,5 @@
 use unicode_segmentation::UnicodeSegmentation;
+use std::fmt;
 use resvg;
 use tiny_skia;
 use iced_gif;
@@ -118,11 +119,30 @@ fn cli(flags: &getopts::Matches) {
 fn main() -> iced::Result {
     let mut conf = Config::new();
     conf.update(false);
+    let resizeable = conf.resizeable == TriBool::True;
     video_rs::init().unwrap();
     let mut settings = iced::Settings::with_flags(conf);
     settings.window.level = iced::window::Level::AlwaysOnTop;
     settings.window.position = iced::window::Position::Centered;
+    settings.window.resizable = resizeable;
     FilePicker::run(settings)
+}
+
+#[derive(PartialEq)]
+enum TriBool {
+    True,
+    False,
+    OnlyPortal,
+}
+
+impl fmt::Display for TriBool {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TriBool::True => write!(f, "true"),
+            TriBool::False => write!(f, "false"),
+            TriBool::OnlyPortal => write!(f, "sometimes"),
+        }
+    }
 }
 
 struct Config {
@@ -140,6 +160,7 @@ struct Config {
     respect_gitignore: bool,
     icon_view: bool,
     home: String,
+    resizeable: TriBool,
 }
 
 impl Config {
@@ -162,6 +183,8 @@ impl Config {
         opts.optflag("b", "resume", "Resume the semantic search indexer");
         opts.optflag("d", "disable", "Configure xdg portal to not use pikeru as your system filepicker");
         opts.optflag("e", "enable", "Configure xdg portal to use pikeru as your system filepicker");
+        opts.optflag("u", "unresizeable", "Make window unresizable to avoid tiling it on tiling window managers");
+        opts.optflag("r", "resizeable", "Make window resizable (default)");
         opts.optflag("h", "help", "Show usage information");
         opts.optflag("v", "version", "Show pikeru version");
         let matches = match opts.parse(&args) {
@@ -194,7 +217,8 @@ impl Config {
         let mut thumb_size = 160.0;
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dpi_scale: f32 = 1.0;
-        let mut opts_missing = 6;
+        let mut opts_missing = 7;
+        let mut resizeable = TriBool::True;
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
             match line {
                 "[Commands]" => section = S::Commands,
@@ -213,6 +237,14 @@ impl Config {
                             "dpi_scale" => { opts_missing -= 1; dpi_scale = v.parse().unwrap() },
                             "respect_gitignore" => { opts_missing -= 1; respect_gitignore = v.parse().unwrap() },
                             "icon_view" => { opts_missing -= 1; icon_view = v.parse().unwrap() },
+                            "resizeable" => {
+                                opts_missing -= 1;
+                                resizeable = match v.to_lowercase().as_str() {
+                                    "true" => TriBool::True,
+                                    "false" => TriBool::False,
+                                    _ => TriBool::OnlyPortal,
+                                }
+                            },
                             "window_size" => {
                                 opts_missing -= 1;
                                 if !match str::split_once(v, 'x') {
@@ -251,6 +283,17 @@ impl Config {
             bookmarks.push(Bookmark::new("Documents", Path::new(&home).join("Documents").to_string_lossy().as_ref()));
             bookmarks.push(Bookmark::new("Pictures", Path::new(&home).join("Pictures").to_string_lossy().as_ref()));
         }
+        if matches.opt_present("u") {
+            resizeable = TriBool::False;
+        } else if matches.opt_present("r") {
+            resizeable = TriBool::True;
+        } else if resizeable == TriBool::OnlyPortal {
+            if let Ok(_) = std::env::var("PK_XDG") {
+                resizeable = TriBool::False;
+            } else {
+                resizeable = TriBool::True;
+            }
+        }
         Config {
             mode: Mode::from(matches.opt_str("m")),
             path: matches.opt_str("p").unwrap_or(pwd),
@@ -266,6 +309,7 @@ impl Config {
             icon_view,
             need_update: opts_missing > 0,
             home,
+            resizeable,
         }
     }
 
@@ -291,13 +335,14 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\n",
+                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n",
                 self.dpi_scale,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
                 match self.sort_by { 1=>"name_asc", 2=>"name_desc", 3=>"age_asc", 4=>"age_desc", _=>"" },
                 self.respect_gitignore,
-                self.icon_view).as_str());
+                self.icon_view,
+                self.resizeable).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
 # The respect_gitignore setting only toggles .gitignore files, not this section.\n[SearchIgnore]\n");
         conf.push_str(self.gitignore.as_str());
