@@ -332,8 +332,8 @@ enum Section {
     Global,
 }
 fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
-    if dir.contains('~') {
-        let expanded = dir.replace("~", &home);
+    if dir.trim_start().starts_with('~') {
+        let expanded = dir.replacen("~", &home, 1);
         return Cow::from(expanded)
     }
     Cow::from(dir)
