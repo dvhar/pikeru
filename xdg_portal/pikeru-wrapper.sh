@@ -30,8 +30,6 @@ path="$4"
 
 [ -z "$path" ] && path="$HOME"
 
-#echo "'$1' '$2' '$3' '$path' '$5'" >> /tmp/pk.log
-
 if [ $directory = 1 ]; then
     mode=dir
 elif [ $multiple = 1 ]; then
@@ -43,17 +41,12 @@ else
 fi
 
 
-#pikerudir="$(dirname "$(readlink -f "$0")")"
-#cmd="$pikerudir/../target/release/pikeru -m $mode -t 'File Picker' -p \"$path\""
-
 cmd="pikeru -m $mode -t 'File Picker' -p \"$path\""
 
 # iced has a problem with crashing when no gpu is available so disable and retry if that happens
 [ -r "$HOME/.cache/pikeru/no_gpu" ] && export ICED_BACKEND=tiny-skia
-echo "$cmd" >> /tmp/pk.log
 output="$(eval "$cmd")"
 if [ $? = 139 ] && [ ! -r "$HOME/.cache/pikeru/no_gpu" ]; then
-    echo "Iced GUI gpu library crashed. Fixing now..." >> /tmp/pk.log
     touch "$HOME/.cache/pikeru/no_gpu"
     export ICED_BACKEND=tiny-skia
     output="$(eval "$cmd")"
