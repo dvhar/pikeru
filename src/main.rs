@@ -119,7 +119,7 @@ fn cli(flags: &getopts::Matches) {
 fn main() -> iced::Result {
     let mut conf = Config::new();
     conf.update(false);
-    let resizeable = conf.resizeable == TriBool::True;
+    let resizeable = conf.resizeable_flag.unwrap_or(conf.resizeable == TriBool::True);
     video_rs::init().unwrap();
     let mut settings = iced::Settings::with_flags(conf);
     settings.window.level = iced::window::Level::AlwaysOnTop;
@@ -161,6 +161,7 @@ struct Config {
     icon_view: bool,
     home: String,
     resizeable: TriBool,
+    resizeable_flag: Option::<bool>,
 }
 
 impl Config {
@@ -219,6 +220,7 @@ impl Config {
         let mut dpi_scale: f32 = 1.0;
         let mut opts_missing = 7;
         let mut resizeable = TriBool::True;
+        let mut resizeable_flag: Option::<bool> = None;
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
             match line {
                 "[Commands]" => section = S::Commands,
@@ -284,9 +286,9 @@ impl Config {
             bookmarks.push(Bookmark::new("Pictures", Path::new(&home).join("Pictures").to_string_lossy().as_ref()));
         }
         if matches.opt_present("u") {
-            resizeable = TriBool::False;
+            resizeable_flag = Some(false);
         } else if matches.opt_present("r") {
-            resizeable = TriBool::True;
+            resizeable_flag = Some(true);
         } else if resizeable == TriBool::OnlyPortal {
             if let Ok(_) = std::env::var("PK_XDG") {
                 resizeable = TriBool::False;
@@ -310,6 +312,7 @@ impl Config {
             need_update: opts_missing > 0,
             home,
             resizeable,
+            resizeable_flag,
         }
     }
 
