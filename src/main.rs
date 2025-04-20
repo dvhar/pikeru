@@ -781,6 +781,7 @@ struct FilePicker {
     pos_state: RefCell<Measurements>,
     search_id: text_input::Id,
     filepath_id: text_input::Id,
+    unfocus_id: text_input::Id,
     clipboard_paths: Vec<String>,
     clipboard_cut: bool,
 }
@@ -824,6 +825,7 @@ impl Application for FilePicker {
         let enable_sel_button = conf.saving() || conf.dir();
         let search_id = text_input::Id::unique();
         let filepath_id = text_input::Id::unique();
+        let unfocus_id = text_input::Id::unique();
         (
             Self {
                 conf,
@@ -869,6 +871,7 @@ impl Application for FilePicker {
                 pos_state: RefCell::new(Measurements::default()),
                 search_id: search_id.clone(),
                 filepath_id: filepath_id.clone(),
+                unfocus_id,
                 clipboard_paths: vec![],
                 clipboard_cut: false,
             },
@@ -1044,17 +1047,16 @@ impl Application for FilePicker {
             Message::PageDown => {
                 let current = self.scroll_offset.y;
                 let end = if self.conf.icon_view {
-                    match self.row_sizes.borrow().rows.last() {
-                        None => self.content_height,
-                        Some(r) => r.end_pos,
-                    }
+                    self.row_sizes.borrow().rows.last().map_or(self.content_height, |r|r.end_pos)
                 } else {
                     self.displayed.len() as f32 * ROW_HEIGHT
                 };
-                let offset = scrollable::AbsoluteOffset{x:0.0, y:(current + self.content_height)
-                    .min(end - self.content_height)};
-                    self.update_scroll(offset.y);
-                    return scrollable::scroll_to(self.scroll_id.clone(), offset);
+                let mut newpos = current + self.content_height;
+                let max = end - self.content_height;
+                if max >= 0.0 { newpos = newpos.min(max); }
+                let offset = scrollable::AbsoluteOffset{x:0.0, y:newpos};
+                self.update_scroll(offset.y);
+                return scrollable::scroll_to(self.scroll_id.clone(), offset);
             },
             Message::DropBookmark(idx, cursor_pos) => {
                 return iced_drop::zones_on_point(
@@ -1355,6 +1357,7 @@ impl Application for FilePicker {
                     },
                     ClickType::Pass => {},
                 }
+                return text_input::focus(self.unfocus_id.clone());
             },
             Message::RightClick(iidx) => {
                 if iidx >= 0 {
@@ -1370,6 +1373,7 @@ impl Application for FilePicker {
                     self.view_image = (0, Preview::None);
                     return scrollable::scroll_to(self.scroll_id.clone(), self.scroll_offset);
                 }
+                return text_input::focus(self.unfocus_id.clone());
             },
             Message::NextImage(step) => {
                 match self.view_image.1 {
