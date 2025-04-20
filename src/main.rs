@@ -119,7 +119,7 @@ fn cli(flags: &getopts::Matches) {
 fn main() -> iced::Result {
     let mut conf = Config::new();
     conf.update(false);
-    let resizeable = conf.resizeable_flag.unwrap_or(conf.resizeable == TriBool::True);
+    let resizeable = conf.resizeable_flag.unwrap_or(conf.resizeable.is_true());
     video_rs::init().unwrap();
     let mut settings = iced::Settings::with_flags(conf);
     settings.window.level = iced::window::Level::AlwaysOnTop;
@@ -132,7 +132,7 @@ fn main() -> iced::Result {
 enum TriBool {
     True,
     False,
-    OnlyPortal,
+    OnlyNotPortal,
 }
 
 impl fmt::Display for TriBool {
@@ -140,8 +140,20 @@ impl fmt::Display for TriBool {
         match self {
             TriBool::True => write!(f, "true"),
             TriBool::False => write!(f, "false"),
-            TriBool::OnlyPortal => write!(f, "sometimes"),
+            TriBool::OnlyNotPortal => write!(f, "sometimes"),
         }
+    }
+}
+impl TriBool {
+    fn is_true(&self) -> bool {
+        if *self == TriBool::OnlyNotPortal {
+            if let Ok(_) = std::env::var("PK_XDG") {
+                return false;
+            } else {
+                return true;
+            }
+        }
+        *self == TriBool::True
     }
 }
 
@@ -244,7 +256,7 @@ impl Config {
                                 resizeable = match v.to_lowercase().as_str() {
                                     "true" => TriBool::True,
                                     "false" => TriBool::False,
-                                    _ => TriBool::OnlyPortal,
+                                    _ => TriBool::OnlyNotPortal,
                                 }
                             },
                             "window_size" => {
@@ -289,12 +301,6 @@ impl Config {
             resizeable_flag = Some(false);
         } else if matches.opt_present("r") {
             resizeable_flag = Some(true);
-        } else if resizeable == TriBool::OnlyPortal {
-            if let Ok(_) = std::env::var("PK_XDG") {
-                resizeable = TriBool::False;
-            } else {
-                resizeable = TriBool::True;
-            }
         }
         Config {
             mode: Mode::from(matches.opt_str("m")),
