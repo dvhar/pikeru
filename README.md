@@ -48,6 +48,10 @@ The filepicker and the portal that launches the filepicker each have their own c
     * Postprocessor for selected files
     * Semantic search indexer
 
+### How do I make pikeru a floating window when using a tiling window manager?
+* Set `resizeable` to `false` or `sometimes` in ~/.config/pikeru.conf. If you know a solution for the Iced gui library that doesn't make it unresizeble, tell me.
+* Alternatively, configure your window manager to give pikeru a floating window by setting rules based on the window title.
+
 ## Install Dependencies
 
 ### Ubuntu:

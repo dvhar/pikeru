@@ -75,9 +75,12 @@ postprocess_dir=/tmp/pk_postprocess
 
 
 [indexer]
-# this section tells xdg-desktop-portal-pikeru how to build an index for semantic search.
-# The example values here are for a stable-diffusion-webui server running on localhost that
-# is used to generate searchable text for files in any directory opened by pikeru.
+# This section tells xdg-desktop-portal-pikeru how to build an index for semantic search.
+# The example values here are for a caption generating server running on localhost that
+# is used to generate searchable text for image files in any directory opened by pikeru.
+# See how to install the caption server with indexer/caption_server/README.md in pikeru's
+# git repo. It uses the same api as some version of stable diffusion webui, so you may use
+# that instead if you want.
 # Set log_level above to trace to see the searchable text results.
 
 enable = false
