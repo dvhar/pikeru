@@ -301,7 +301,9 @@ impl Indexer {
     }
     async fn configure(&mut self, _respect_gitignore: bool, ignore: String) {
         trace!("Got gitignore configure request");
-        self.tx.send(Msg::Ignore(ignore)).unwrap();
+        if let Err(e) = self.tx.send(Msg::Ignore(ignore)) {
+            error!("Configure request error: {}", e);
+        }
     }
 
 }
