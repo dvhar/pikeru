@@ -231,7 +231,10 @@ impl Config {
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dpi_scale: f32 = 1.0;
         let mut opts_missing = 7;
-        let mut resizeable = TriBool::True;
+        let mut resizeable = match std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("".to_string()).as_str() {
+            "i3"|"sway"|"dwm"|"dwl"|"Hyprland"|"bspwm"|"awesome"|"xmonad"|"qtile"|"spectrwm" => TriBool::OnlyNotPortal,
+            _ => TriBool::True,
+        };
         let mut resizeable_flag: Option::<bool> = None;
         for line in txt.lines().map(|s|s.trim()).filter(|s|s.len()>0 && !s.starts_with('#')) {
             match line {
