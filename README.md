@@ -50,7 +50,7 @@ The filepicker and the portal that launches the filepicker each have their own c
 
 ### How do I make pikeru a floating window when using a tiling window manager?
 * Pikeru should handle this automatically, but if not, set `resizeable` to `false` or `sometimes` in ~/.config/pikeru.conf.
-* Alternatively, configure your window manager to give pikeru a floating window by setting rules based on the window title.
+* Alternatively, configure your window manager to give pikeru a floating window by setting rules based on the window title. The first option will make it a floating window, but on some systems also makes it unresizable, so this option may be preferable. This is more likely to be an issue on X11.
 
 ## Install Dependencies
 
