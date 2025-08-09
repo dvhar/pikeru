@@ -1274,6 +1274,7 @@ impl Application for FilePicker {
             }
             Message::LoadDir => {
                 self.view_image = (0, Preview::None);
+                self.last_clicked.new = false;
                 self.update_scroll(0.0);
                 self.pathbar = match &self.save_filename {
                     Some(fname) => Path::new(&self.dirs[0]).join(fname).to_string_lossy().to_string(),
