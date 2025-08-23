@@ -6,18 +6,17 @@ Pikeru is a file picker, file searcher, and image viewer for linux that works on
 
 
 ## Special features other filepickers don't have
-* Semantic file search can search images by visual content in addition to file name.
+* Search images by semantic content in addition to file name.
 * Select multiple directories and click `Open` to view the contents of all of them at the same time.
 * Right click an image to view it. Scroll the image to view the next and previous images.
-* `Cmd` menu shows commands specified in the config. Click one to run it on the selected files.
-* Set a postprocessor script to convert, resize, compress or do anything else with selected files automatically.
+* Command menu shows commands specified in the config. Click one to run it on the selected files.
+* Set a postprocessor script to convert or do anything else with selected files automatically.
 
 ## Installation and Usage
 
-First install the dependencies at the bottom of the readme
-
 ### Install the filepicker and make applications use it
-* Run `./install.sh` to build and install the filepicker and xdg portal.
+* On arch, you can install the `pikeru` AUR package and then run `pikeru -e` to enable it.
+* Otherwise, install the dependencies at the bottom of the readme and Run `./install.sh`.
 * To make firefox use the portal, open `about:config` and set `widget.use-xdg-desktop-portal.file-picker` to `1`. Chromium-based browsers should use it by default.
 
 ### What if I want my old filepicker back?
@@ -63,6 +62,9 @@ sudo apt install build-essential scdoc pkg-config libavutil-dev libavformat-dev 
 ```
 sudo pacman -S scdoc xdg-desktop-portal ffmpeg clang
 ```
+
+#### Optional:
+To enable pdf and epub thumbnails, make sure `pdftoppm` and `epub-thumbnailer` are installed.
 
 ## License
 MIT License
