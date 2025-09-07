@@ -22,6 +22,7 @@ use tokio::{
         UnboundedSender as USender,
         unbounded_channel,
     },
+    sync::Mutex as AsyncMtx,
     time,
     time::sleep,
     time::Duration,
@@ -37,17 +38,17 @@ use ignore::{gitignore,Match};
 struct Shtate {
     idx_running: bool,
     picker_open: bool,
-    paused: bool,
 }
 
 enum Msg {
     Start,
     Dirs(Vec<String>),
     Ignore(String),
+    ClearQueue,
 }
 
 struct IdxManager {
-    shtate: Arc<Mutex<Shtate>>,
+    shtate: Arc<AsyncMtx<Shtate>>,
     cmd: String,
     check: String,
     exts: Vec<&'static str>,
@@ -75,11 +76,9 @@ async fn index_loop(mut mgr: IdxManager, mut chan: UReceiver<Msg>, enabled: bool
         }
         match msg {
             Msg::Start => {
-                if !mgr.shtate.lock().unwrap().paused {
-                    debug!("Starting index");
-                }
-                mgr.shtate.lock().unwrap().idx_running = true;
-                while !mgr.shtate.lock().unwrap().picker_open {
+                info!("Starting index round");
+                mgr.shtate.lock().await.idx_running = true;
+                while {let state = mgr.shtate.lock().await; state.idx_running && !state.picker_open} {
                     if let Some(dir) = done_map.iter().find(|v|!v.1) {
                         if mgr.update_dir(dir.0).await {
                             done_map.entry(dir.0.to_string()).and_modify(|v| *v = true);
@@ -94,7 +93,7 @@ async fn index_loop(mut mgr: IdxManager, mut chan: UReceiver<Msg>, enabled: bool
                         break;
                     }
                 }
-                mgr.shtate.lock().unwrap().idx_running = false;
+                mgr.shtate.lock().await.idx_running = false;
             },
             Msg::Dirs(dirs) => {
                 debug!("Got dirs");
@@ -102,7 +101,11 @@ async fn index_loop(mut mgr: IdxManager, mut chan: UReceiver<Msg>, enabled: bool
             },
             Msg::Ignore(txt) => {
                 mgr.update_ignore(txt);
-            }
+            },
+            Msg::ClearQueue => {
+                done_map.clear();
+                info!("Cleared indexing queue");
+            },
         }
     }
 }
@@ -123,7 +126,7 @@ enum Entry {
 
 impl IdxManager {
 
-    fn new(shtate: Arc<Mutex<Shtate>>,
+    fn new(shtate: Arc<AsyncMtx<Shtate>>,
            config: &mut Config,
            con: Arc<Mutex<rusqlite::Connection>>) -> Self {
         match con.lock() {
@@ -235,6 +238,9 @@ impl IdxManager {
         match std::fs::read_dir(dir) {
             Ok(read_dir) => {
                 for dir_entry in read_dir {
+                    if !self.shtate.lock().await.idx_running {
+                        break;
+                    }
                     let path = dir_entry.unwrap().path();
                     match path.extension() {
                         Some(ext) => {
@@ -246,10 +252,6 @@ impl IdxManager {
                                 let mut online = true;
                                 let mut tries_left = 10;
                                 loop {
-                                    if self.shtate.lock().unwrap().paused {
-                                        sleep(Duration::from_secs(60)).await;
-                                        continue;
-                                    }
                                     if online && self.update_file(path.as_path(), dir).await {
                                         break;
                                     } else  {
@@ -278,23 +280,22 @@ impl IdxManager {
 #[allow(dead_code)]
 struct Indexer {
     tx: USender<Msg>,
-    shtate: Arc<Mutex<Shtate>>,
+    shtate: Arc<AsyncMtx<Shtate>>,
     con: Arc<Mutex<rusqlite::Connection>>,
 }
 
 #[interface(name = "org.freedesktop.impl.portal.SearchIndexer")]
 impl Indexer {
-    async fn pause_resume(&self, active: bool) {
-        if active {
-            eprintln!("Resumed indexer");
-        } else {
-            eprintln!("Paused indexer");
+    async fn clear_queue(&self) {
+        debug!("Got clear queue message");
+        self.shtate.lock().await.idx_running = false;
+        if let Err(e) = self.tx.send(Msg::ClearQueue) {
+            error!("Failed to send clear queue: {}", e);
         }
-        self.shtate.lock().unwrap().paused = !active;
     }
     async fn update(&self, dirs: Vec<String>) {
         self.tx.send(Msg::Dirs(dirs)).unwrap(); 
-        let st = self.shtate.lock().unwrap();
+        let st = self.shtate.lock().await;
         if !st.idx_running && !st.picker_open {
             self.tx.send(Msg::Start).unwrap();
         }
@@ -308,7 +309,7 @@ impl Indexer {
 
 }
 impl Indexer {
-    fn new(tx: USender<Msg>, shtate: Arc<Mutex<Shtate>>, con: Arc<Mutex<rusqlite::Connection>>) -> Self {
+    fn new(tx: USender<Msg>, shtate: Arc<AsyncMtx<Shtate>>, con: Arc<Mutex<rusqlite::Connection>>) -> Self {
         Self {
             tx,
             shtate,
@@ -324,7 +325,7 @@ struct FilePicker {
     def_save_dir: String,
     cmd: String,
     home: String,
-    shtate: Arc<Mutex<Shtate>>,
+    shtate: Arc<AsyncMtx<Shtate>>,
     db: Arc<Mutex<rusqlite::Connection>>,
     tx: USender<Msg>,
 }
@@ -489,7 +490,7 @@ impl Config {
 
 impl FilePicker {
 
-    fn new(conf: &mut Config, shtate: Arc<Mutex<Shtate>>, tx: USender<Msg>, db: Arc<Mutex<rusqlite::Connection>>) -> Self {
+    fn new(conf: &mut Config, shtate: Arc<AsyncMtx<Shtate>>, tx: USender<Msg>, db: Arc<Mutex<rusqlite::Connection>>) -> Self {
         Self {
             prev_path: Mutex::new(take(&mut conf.prev_path)),
             postproc_dir: take(&mut conf.postproc_dir),
@@ -516,7 +517,7 @@ impl FilePicker {
         };
         self.db.lock().unwrap().cache_flush().unwrap();
         debug!("CMD:{}", cmd);
-        self.shtate.lock().unwrap().picker_open = true;
+        self.shtate.lock().await.picker_open = true;
         let output = match tokio::process::Command::new("sh").arg("-c").arg(cmd).output().await {
             Ok(out) => {
                 if out.stderr.len() > 0 {
@@ -531,14 +532,12 @@ impl FilePicker {
             },
             Err(e) => {eprintln!("Process error: {}", e); "".to_owned()},
         };
-        match self.shtate.lock() {
-            Ok(mut mtx) => {
-                mtx.picker_open = false;
-                if !mtx.idx_running {
-                    self.tx.send(Msg::Start).unwrap();
-                }
-            },
-            Err(e) => eprintln!("MTX error: {}", e),
+        {
+            let mut state = self.shtate.lock().await;
+            state.picker_open = false;
+            if !state.idx_running {
+                self.tx.send(Msg::Start).unwrap();
+            }
         }
         let mut gotfirst = false;
         let arr = output.lines().map(|line| {
@@ -615,7 +614,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut config = Config::new();
     eprintln!("Running {:#?}", config);
     let idxfile = Path::new(&config.home).join(".cache").join("pikeru").join("index.db");
-    let sht = Arc::new(Mutex::new(Shtate::default()));
+    let sht = Arc::new(AsyncMtx::new(Shtate::default()));
     let (tx, rx) = unbounded_channel::<Msg>();
     std::fs::create_dir_all(idxfile.parent().unwrap()).unwrap();
     let db = Arc::new(Mutex::new(rusqlite::Connection::open(idxfile).unwrap()));

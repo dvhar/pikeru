@@ -87,11 +87,7 @@ macro_rules! die {
 
 fn cli(flags: &getopts::Matches) {
     if flags.opt_present("c") {
-        IndexProxy::pause_resume(false);
-        std::process::exit(0);
-    }
-    if flags.opt_present("b") {
-        IndexProxy::pause_resume(true);
+        IndexProxy::clear_queue();
         std::process::exit(0);
     }
     if flags.opt_present("v") {
@@ -192,8 +188,7 @@ impl Config {
         opts.optopt("t", "title", "Title of the filepicker window", "NAME");
         opts.optopt("m", "mode", "Mode of file selection. Default is files", "[file, files, save, dir]");
         opts.optopt("p", "path", "Initial path", "PATH");
-        opts.optflag("c", "pause", "Pause the semantic search indexer");
-        opts.optflag("b", "resume", "Resume the semantic search indexer");
+        opts.optflag("c", "clear", "Clear the semantic search indexer queue");
         opts.optflag("d", "disable", "Configure xdg portal to not use pikeru as your system filepicker");
         opts.optflag("e", "enable", "Configure xdg portal to use pikeru as your system filepicker");
         opts.optflag("u", "unresizeable", "Make window unresizable to avoid tiling it on tiling window managers");
@@ -593,7 +588,7 @@ enum RecState {
 )]
 trait Indexer {
     async fn update(&mut self, path: &Vec<&str>) -> Result<()>;
-    async fn pause_resume(&self, active: bool) -> Result<()>;
+    async fn clear_queue(&self) -> Result<()>;
     async fn configure(&mut self, respect_gitignore: bool, ignore: &str) -> Result<()>;
 }
 struct IndexProxy<'a> {
@@ -622,13 +617,12 @@ impl<'a> IndexProxy<'a> {
         }
     }
 
-    fn pause_resume(active: bool) {
+    fn clear_queue() {
         let conn = blocking::Connection::session().unwrap();
         let prox = IndexerProxyBlocking::new(&conn).unwrap();
-        match (active, prox.pause_resume(active)) {
-            (_,Err(e)) => eprintln!("Error:{}", e),
-            (false, Ok(())) => eprintln!("Paused indexer"),
-            (true, Ok(())) => eprintln!("Resumed indexer"),
+        match prox.clear_queue() {
+            Err(e) => eprintln!("Error:{}", e),
+            Ok(_) => eprintln!("Cleared indexing queue."),
         }
     }
 
