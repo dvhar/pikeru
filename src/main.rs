@@ -201,8 +201,17 @@ impl Config {
             Err(e) => die!("Bad args: {}", e),
         };
         if matches.opt_present("h") {
-            println!("{}\n{}",opts.usage(&args[0]),
-                "File picker config file is ~/.config/pikeru.conf.\nThe portal config file, which includes the semantic search indexer and postprocessor, is by default ~/.config/xdg-desktop-portal-pikeru/config.\nTo handle pdf and epub thumbnails, make sure pdftoppm and epub-thumbnailer are installed.");
+            let cando_pdf = std::process::Command::new("which").arg("pdftoppm").output().map_or(false, |output| output.status.success());
+            let cando_epub = std::process::Command::new("which").arg("epub-thumbnailer").output().map_or(false, |output| output.status.success());
+            let extra_thumbs = match (cando_pdf, cando_epub) {
+                (true,true) => "",
+                (true,false) => "To handle epub thumbnails, install epub-thumbnailer.",
+                (false,true) => "To handle pdf thumbnails, install pdftoppm.",
+                (false,false) => "To handle pdf and epub thumbnails, install pdftoppm and epub-thumbnailer.",
+            };
+            println!("{}\n{}\n{}",opts.usage(&args[0]),
+                "File picker config file is ~/.config/pikeru.conf.\nThe portal config file, which includes the semantic search indexer and postprocessor, is by default ~/.config/xdg-desktop-portal-pikeru/config.",
+                extra_thumbs);
             std::process::exit(0);
         }
 
@@ -2759,10 +2768,8 @@ impl Icons {
     fn new(thumbsize: f32) -> Self {
         let home = std::env::var("HOME").unwrap();
         let tpath = Path::new(&home).join(".cache").join("pikeru").join("thumbnails");
-        let cando_pdf = std::process::Command::new("which")
-            .arg("pdftoppm").output().map_or(false, |output| output.status.success());
-        let cando_epub = std::process::Command::new("which")
-            .arg("epub-thumbnailer").output().map_or(false, |output| output.status.success());
+        let cando_pdf = std::process::Command::new("which").arg("pdftoppm").output().map_or(false, |output| output.status.success());
+        let cando_epub = std::process::Command::new("which").arg("epub-thumbnailer").output().map_or(false, |output| output.status.success());
         Self {
             folder: Self::prerender_svg(include_bytes!("../assets/folder7.svg"), thumbsize),
             unknown:  Self::prerender_svg(include_bytes!("../assets/file6.svg"), thumbsize),
