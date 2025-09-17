@@ -1997,7 +1997,12 @@ impl FItem {
     fn display_row(&self, last_clicked: &LastClicked) -> (bool, Element<'static, Message>) {
         let mut row = Row::new();
         let idx = self.items_idx;
-        row = row.push(text(self.path.rsplitn(2,'/').next().unwrap()).width(Length::FillPortion(70)));
+        if let Some(h) = &self.thumb_handle {
+            let img = image(h.clone()).width(Length::Fixed(25.0));
+            row = row.push(img);
+        }
+        row = row.push(container(text(self.path.rsplitn(2,'/').next().unwrap()).width(Length::FillPortion(70)))
+            .padding(Padding{ right: 0.0, left: 5.0, top: 0.0, bottom: 0.0 }));
         if !self.isdir() {
             let bytes = self.size as f64;
             let sz = if bytes > 1073741824.0 { format!("{:.2} GB", bytes/1073741824.0 ) }
@@ -2047,9 +2052,8 @@ impl FItem {
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
             .width(Length::Fixed(thumbsize));
-        match &self.thumb_handle {
-            Some(h) => col = col.push(image(h.clone())),
-            _ => {},
+        if let Some(h) = &self.thumb_handle {
+            col = col.push(image(h.clone()));
         }
         let shape = if self.unicode { text::Shaping::Advanced } else { text::Shaping::Basic };
         col = col.push(text(self.label.as_str()).size(13).shaping(shape));
