@@ -207,6 +207,7 @@ impl Config {
 
         let home = std::env::var("HOME").unwrap();
         let confpath = Path::new(&home).join(".config").join("pikeru.conf").to_string_lossy().to_string();
+        let tpath = Path::new(&home).join(".cache").join("pikeru").join("thumbnails");
         let txt = std::fs::read_to_string(confpath).unwrap_or("".to_string());
         #[derive(PartialEq)]
         enum S { Commands, Settings, Bookmarks, Ignore }
@@ -220,14 +221,14 @@ impl Config {
                         ];
         let mut respect_gitignore = true;
         let mut icon_view = true;
-        let mut gitignore = ".git/\n".to_string();
+        let mut gitignore = format!("{}\n{}/*\n", ".git/".to_string(), tpath.to_string_lossy());
         let mut sort_by = 1;
         let mut thumb_size = 160.0;
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dpi_scale: f32 = 1.0;
         let mut opts_missing = 7;
         let mut resizeable = match std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("".to_string()).as_str() {
-            "i3"|"sway"|"dwm"|"dwl"|"Hyprland"|"bspwm"|"awesome"|"xmonad"|"qtile"|"spectrwm" => TriBool::OnlyNotPortal,
+            "i3"|"sway"|"dwm"|"dwl"|"Hyprland"|"bspwm"|"awesome"|"xmonad"|"qtile"|"spectrwm"|"herbstluftwm"|"notion" => TriBool::OnlyNotPortal,
             _ => TriBool::True,
         };
         let mut resizeable_flag: Option::<bool> = None;

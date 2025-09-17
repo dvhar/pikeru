@@ -38,8 +38,10 @@ use ignore::{gitignore,Match};
 struct Shtate {
     idx_running: bool,
     picker_open: bool,
+    respect_gitignore: bool,
 }
 
+#[derive(Debug)]
 enum Msg {
     Start,
     Dirs(Vec<String>),
@@ -55,6 +57,29 @@ struct IdxManager {
     con: Arc<Mutex<rusqlite::Connection>>,
     ignore: gitignore::Gitignore,
     igtxt: String,
+}
+
+fn build_cumulative_gitignore(start_dir: &Path) -> gitignore::Gitignore {
+    let mut dirs = Vec::new();
+    let mut cur = start_dir;
+    loop {
+        dirs.push(cur.to_path_buf());
+        if let Some(parent) = cur.parent() {
+            cur = parent;
+        } else {
+            break;
+        }
+    }
+    dirs.reverse();
+    let mut builder = gitignore::GitignoreBuilder::new("");
+    for dir in dirs {
+        let gi_path = dir.join(".gitignore");
+        if gi_path.is_file() {
+            trace!("Building with gitignore: {:?}\n{}", gi_path, std::fs::read_to_string(&gi_path).unwrap());
+            builder.add(gi_path);
+        }
+    }
+    builder.build().unwrap()
 }
 
 async fn index_loop(mut mgr: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
@@ -74,13 +99,14 @@ async fn index_loop(mut mgr: IdxManager, mut chan: UReceiver<Msg>, enabled: bool
         if !online {
             continue;
         }
+        trace!("Processing Msg: {:?}", msg);
         match msg {
             Msg::Start => {
-                info!("Starting index round");
+                debug!("Starting index round");
                 mgr.shtate.lock().await.idx_running = true;
                 while {let state = mgr.shtate.lock().await; state.idx_running && !state.picker_open} {
                     if let Some(dir) = done_map.iter().find(|v|!v.1) {
-                        if mgr.update_dir(dir.0).await {
+                        if mgr.update_dir(dir.0).await != DirResult::Fail {
                             done_map.entry(dir.0.to_string()).and_modify(|v| *v = true);
                         } else {
                             error!("Indexing batch failed");
@@ -96,7 +122,7 @@ async fn index_loop(mut mgr: IdxManager, mut chan: UReceiver<Msg>, enabled: bool
                 mgr.shtate.lock().await.idx_running = false;
             },
             Msg::Dirs(dirs) => {
-                debug!("Got dirs");
+                trace!("Got dirs");
                 dirs.into_iter().for_each(|dir|{done_map.entry(dir).or_default();});
             },
             Msg::Ignore(txt) => {
@@ -122,6 +148,13 @@ enum Entry {
     None,
     Old,
     Done,
+}
+
+#[derive(PartialEq)]
+enum DirResult {
+    Fail,
+    Success,
+    Ignore,
 }
 
 impl IdxManager {
@@ -232,8 +265,15 @@ impl IdxManager {
         return self.indexer_online().await;
     }
 
-    /// returns false if giving up
-    async fn update_dir(self: &Self, dir: &String) -> bool {
+    async fn update_dir(self: &Self, dir: &String) -> DirResult {
+        let local_ignore = if self.shtate.lock().await.respect_gitignore {
+            build_cumulative_gitignore(Path::new(dir))
+        } else {
+            gitignore::Gitignore::empty()
+        };
+        if let Match::Ignore(_) = local_ignore.matched(dir, true) {
+            return DirResult::Ignore;
+        }
         trace!("Updating dir:{}", dir);
         match std::fs::read_dir(dir) {
             Ok(read_dir) => {
@@ -245,12 +285,14 @@ impl IdxManager {
                     match path.extension() {
                         Some(ext) => {
                             if self.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
-                                match self.ignore.matched(&path, path.is_dir()) {
-                                    Match::Ignore(_) => continue,
-                                    _ => {},
+                                if let Match::Ignore(_) = self.ignore.matched(&path, path.is_dir()) {
+                                    continue;
+                                }
+                                if let Match::Ignore(_) = local_ignore.matched(&path, false) {
+                                    continue;
                                 }
                                 let mut online = true;
-                                let mut tries_left = 10;
+                                let mut tries_left = 5;
                                 loop {
                                     if online && self.update_file(path.as_path(), dir).await {
                                         break;
@@ -260,7 +302,7 @@ impl IdxManager {
                                         sleep(Duration::from_secs(60)).await;
                                         online = self.indexer_online().await;
                                         if !online && tries_left == 0 {
-                                            return false;
+                                            return DirResult::Fail;
                                         }
                                     }
                                 };
@@ -272,7 +314,7 @@ impl IdxManager {
             },
             Err(e) => error!("Error reading dir {}: {}", dir, e),
         }
-        return true;
+        return DirResult::Success;
     }
 
 }
@@ -300,8 +342,9 @@ impl Indexer {
             self.tx.send(Msg::Start).unwrap();
         }
     }
-    async fn configure(&mut self, _respect_gitignore: bool, ignore: String) {
-        trace!("Got gitignore configure request");
+    async fn configure(&mut self, respect_gitignore: bool, ignore: String) {
+        trace!("Got gitignore configure request: {}", ignore);
+        self.shtate.lock().await.respect_gitignore = respect_gitignore;
         if let Err(e) = self.tx.send(Msg::Ignore(ignore)) {
             error!("Configure request error: {}", e);
         }
