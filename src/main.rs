@@ -188,6 +188,7 @@ impl Config {
         opts.optopt("t", "title", "Title of the filepicker window", "NAME");
         opts.optopt("m", "mode", "Mode of file selection. Default is files", "[file, files, save, dir]");
         opts.optopt("p", "path", "Initial path", "PATH");
+        opts.optopt("g", "geom", "window size", "WxH");
         opts.optflag("c", "clear", "Clear the semantic search indexer queue");
         opts.optflag("d", "disable", "Configure xdg portal to not use pikeru as your system filepicker");
         opts.optflag("e", "enable", "Configure xdg portal to use pikeru as your system filepicker");
@@ -266,9 +267,7 @@ impl Config {
                                         (_,_) => false,
                                     }
                                     None => false,
-                                } {
-                                    eprintln!("window_size must have format WIDTHxHEIGHT");
-                                }
+                                } { eprintln!("window_size must have format WIDTHxHEIGHT"); }
                             }
                             "sort_by" => {
                                 opts_missing -= 1;
@@ -286,7 +285,15 @@ impl Config {
             }
         }
         cli(&matches);
-        let tpath = Path::new(&home).join(".cache").join("pikeru").join("thumbnails");
+        if let Some(g) = matches.opt_str("g") {
+            if !match str::split_once(g.as_str(), 'x') {
+                Some(wh) => match (wh.0.parse::<f32>(), wh.1.parse::<f32>()) {
+                    (Ok(w),Ok(h)) => {window_size = Size {width: w, height: h}; true},
+                    (_,_) => false,
+                }
+                None => false,
+            } { eprintln!("geometry flag must have format WIDTHxHEIGHT"); }
+        }
         if let Err(_) = tpath.metadata() {
             std::fs::create_dir_all(&tpath).unwrap();
         };
