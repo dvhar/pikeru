@@ -24,7 +24,7 @@ use iced::{
     mouse::ScrollDelta,
     keyboard::Event::{KeyPressed,KeyReleased},
     keyboard::Key,
-    keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace,PageUp,PageDown},
+    keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace,PageUp,PageDown,Space},
     keyboard::key::Named,
     widget::{
         horizontal_space, vertical_space, checkbox, slider,
@@ -469,6 +469,7 @@ enum Message {
     NextRecurse(Vec<FItem>, u8),
     PageUp,
     PageDown,
+    Spacebar,
     Dummy,
 }
 
@@ -1081,6 +1082,20 @@ impl Application for FilePicker {
                 self.update_scroll(offset.y);
                 return scrollable::scroll_to(self.scroll_id.clone(), offset);
             },
+            Message::Spacebar => {
+                match self.view_image.1 {
+                    Preview::None => {
+                        if let Some(sel) = self.items.iter().find(|&item|item.sel) {
+                            if sel.ftype == FType::Image {
+                                self.view_image = (sel.items_idx, sel.preview());
+                            }
+                        }
+                    }, _ => {
+                        self.view_image = (0, Preview::None);
+                        return scrollable::scroll_to(self.scroll_id.clone(), self.scroll_offset);
+                    }
+                }
+            },
             Message::DropBookmark(idx, cursor_pos) => {
                 return iced_drop::zones_on_point(
                     move |zones| Message::HandleZones(idx, zones),
@@ -1555,6 +1570,7 @@ impl Application for FilePicker {
                     Keyboard(KeyPressed{ key: Key::Named(Backspace), .. }) => Some(Message::UpDir),
                     Keyboard(KeyPressed{ key: Key::Named(PageUp), .. }) => Some(Message::PageUp),
                     Keyboard(KeyPressed{ key: Key::Named(PageDown), .. }) => Some(Message::PageDown),
+                    Keyboard(KeyPressed{ key: Key::Named(Space), .. }) => Some(Message::Spacebar),
                     _ => None,
                 }
             } else { None }

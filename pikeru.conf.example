@@ -25,6 +25,7 @@ respect_gitignore = true
 # The respect_gitignore setting only toggles .gitignore files, not this section.
 [SearchIgnore]
 .git/
+/home/a/.cache/pikeru/thumbnails/*
 
 [Bookmarks]
 Home = /home/a
