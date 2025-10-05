@@ -32,7 +32,7 @@ Pikeru is a file picker, file searcher, and image viewer for linux that works on
 * A caption generator is included in `indexer/caption_server` which can run on this computer or separate server to generate searchable text for images.
 * The example configuration uses `indexer/img_indexer.py` to communicate with the caption generator and build the search index.
 * Pikeru's xdg portal daemon uses the provided command to build a semantic search index of any directory opened or searched by the filepicker so that next time you search that directory, you can search files by semantic content instead of just file name.
-* You can pause the indexer with `pikeru -c` and resume it with `pikeru -b`.
+* You can clear the indexer queue with `pikeru -c` if you don't want it to index the current batch.
 * More details are in the man page for xdg-desktop-portal-pikeru.
 
 ### What's configured where
