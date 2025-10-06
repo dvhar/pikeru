@@ -20,8 +20,8 @@ num_cpus = "1.16.0"
 tokio = { version = "1.37.0", features = ["full"] }
 img = { package = "image", version = "0.25.1" }
 itertools = "0.12.1"
-video-rs = { version = "0.7.3", features = ["ndarray"] }
-ndarray = "0.15.6"
+video-rs = { version = "0.10.5", features = ["ndarray"] }
+ndarray = "0.16.1"
 getopts = "0.2.21"
 iced_aw = { version = "0.9.3", features = ["menu","context_menu"] }
 inotify = "0.11"

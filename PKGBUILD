@@ -2,7 +2,7 @@
 
 pkgname=pikeru
 pkgver=1.8
-pkgrel=1
+pkgrel=2
 pkgdesc="A system file picker with proper thumbnails and search"
 arch=('x86_64')
 url="https://github.com/dvhar/pikeru"
