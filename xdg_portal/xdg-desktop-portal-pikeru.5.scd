@@ -125,12 +125,7 @@ portal to build an index that enables searching files by semantic content.
 **pikeru** has several command line flags for controlling the portal
 
 pikeru -c
-	Pause the indexer.
-
-
-pikeru -b
-	Resume the indexer if paused.
-
+	Clear the indexing queue to skip processing any current files.
 
 pikeru -d
 	Configure xdg-desktop-portal to not use pikeru as the system file picker.
