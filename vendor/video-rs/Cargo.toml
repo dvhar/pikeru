@@ -1,0 +1,26 @@
+[package]
+name = "video-rs"
+description = "High-level video toolkit based on ffmpeg."
+keywords = ["video", "ffmpeg", "encoding", "decoding", "muxing"]
+categories = ["multimedia", "multimedia::video"]
+version = "0.10.5"
+authors = ["Oddity.ai Developers <hello@oddity.ai>"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+repository = "https://github.com/oddity-ai/video-rs"
+readme = "README.md"
+
+[dependencies]
+ffmpeg-next = { version = "8.0", features = [
+	"format",
+	"codec",
+	"software-resampling",
+	"software-scaling",
+	"static"
+] }
+ndarray = { version = "0.16", optional = true }
+tracing = "0.1"
+url = "2"
+
+[package.metadata.docs.rs]
+all-features = true
