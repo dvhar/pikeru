@@ -303,6 +303,12 @@ impl Config {
                 None => false,
             } { eprintln!("geometry flag must have format WIDTHxHEIGHT"); }
         }
+
+        // TODO: weird error at 1024x768: fix it to get rid of this workaround
+        if window_size.width == 1024.0 && window_size.height == 768.0 {
+            window_size.height = 767.0;
+        }
+
         if let Err(_) = tpath.metadata() {
             std::fs::create_dir_all(&tpath).unwrap();
         };
