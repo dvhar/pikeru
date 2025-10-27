@@ -198,6 +198,8 @@ impl Config {
         opts.optflag("e", "enable", "Configure xdg portal to use pikeru as your system filepicker");
         opts.optflag("u", "unresizeable", "Make window unresizable to avoid tiling it on tiling window managers");
         opts.optflag("r", "resizeable", "Make window resizable (default)");
+        opts.optflag("l", "list", "Start in list view mode");
+        opts.optflag("n", "icon", "Start in icon view mode");
         opts.optflag("h", "help", "Show usage information");
         opts.optflag("v", "version", "Show pikeru version");
         let matches = match opts.parse(&args) {
@@ -214,7 +216,7 @@ impl Config {
                 (false,false) => "To handle pdf and epub thumbnails, install pdftoppm and epub-thumbnailer.",
             };
             println!("{}\n{}\n{}",opts.usage(&args[0]),
-                "File picker config file is ~/.config/pikeru.conf.\nThe portal config file, which includes the semantic search indexer and postprocessor, is by default ~/.config/xdg-desktop-portal-pikeru/config.",
+                "File picker config file is ~/.config/pikeru.conf.\nThe portal config file which includes the semantic search indexer and postprocessor, is by default ~/.config/xdg-desktop-portal-pikeru/config.",
                 extra_thumbs);
             std::process::exit(0);
         }
@@ -326,6 +328,11 @@ impl Config {
             resizeable_flag = Some(false);
         } else if matches.opt_present("r") {
             resizeable_flag = Some(true);
+        }
+        if matches.opt_present("l") {
+            icon_view = false;
+        } else if matches.opt_present("n") {
+            icon_view = true;
         }
         Config {
             mode: Mode::from(matches.opt_str("m")),

@@ -9,9 +9,15 @@ mkdir -p $dir
 
 while read file; do
 	case "${file,,}" in
-		*.webp|*.avif)
+		*.webp)
 			base="$(basename "$file")"
 			converted="$dir/${base%.webp}.jpg"
+			convert "$file" "$converted"
+			echo "$converted"
+			;;
+		*.avif)
+			base="$(basename "$file")"
+			converted="$dir/${base%.avif}.jpg"
 			convert "$file" "$converted"
 			echo "$converted"
 			;;
