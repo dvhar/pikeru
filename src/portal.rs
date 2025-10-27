@@ -362,7 +362,7 @@ impl Indexer {
 }
 
 struct FilePicker {
-    prev_path: Mutex<String>,
+    prev_path: AsyncMtx<String>,
     postproc_dir: String,
     postprocessor: String,
     def_save_dir: String,
@@ -392,7 +392,7 @@ struct Config {
     postproc_dir: String,
     postprocessor: String,
     def_save_dir: String,
-    filecmd: String,
+    file_cmd: String,
     indexer_cmd: String,
     indexer_check: String,
     indexer_exts: String,
@@ -521,7 +521,7 @@ impl Config {
             postproc_dir: tilda(&home, &postproc_dir).to_string(),
             postprocessor: tilda(&home, &postprocessor).to_string(),
             def_save_dir: tilda(&home, &def_save_dir).to_string(),
-            filecmd: tilda(&home, &fp_cmd).to_string(),
+            file_cmd: tilda(&home, &fp_cmd).to_string(),
             indexer_cmd: tilda(&home, &indexer_cmd).to_string(),
             indexer_check: tilda(&home, &indexer_check).to_string(),
             indexer_exts,
@@ -535,11 +535,11 @@ impl FilePicker {
 
     fn new(conf: &mut Config, shtate: Arc<AsyncMtx<Shtate>>, tx: USender<Msg>, db: Arc<Mutex<rusqlite::Connection>>) -> Self {
         Self {
-            prev_path: Mutex::new(take(&mut conf.prev_path)),
+            prev_path: AsyncMtx::new(take(&mut conf.prev_path)),
             postproc_dir: take(&mut conf.postproc_dir),
             postprocessor: take(&mut conf.postprocessor),
             def_save_dir: take(&mut conf.def_save_dir),
-            cmd: take(&mut conf.filecmd),
+            cmd: take(&mut conf.file_cmd),
             home: take(&mut conf.home),
             shtate,
             db,
@@ -556,7 +556,7 @@ impl FilePicker {
         } else {
             format!("PK_XDG=1 POSTPROCESS_DIR=\"{}\" POSTPROCESSOR=\"{}\" {} {} {} {} {}",
                     self.postproc_dir, self.postprocessor, self.cmd, multi, dir, savenum,
-                    shquote(tilda(&self.home,&self.prev_path.lock().unwrap()).as_ref()))
+                    shquote(tilda(&self.home,&self.prev_path.lock().await).as_ref()))
         };
         self.db.lock().unwrap().cache_flush().unwrap();
         debug!("CMD:{}", cmd);
@@ -583,16 +583,17 @@ impl FilePicker {
             }
         }
         let mut gotfirst = false;
-        let arr = output.lines().map(|line| {
+        let mut arr = Vec::new();
+        for line in output.lines() {
             if !gotfirst {
                 gotfirst = true;
                 if let Some(par_dir) = self.get_dir(line) {
-                   *self.prev_path.lock().unwrap() = par_dir;
+                    *self.prev_path.lock().await = par_dir;
                 }
             }
             trace!("Selected: {}", line);
-            format!("file://{}",line)
-        }).collect::<Vec<_>>();
+            arr.push(format!("file://{}", line));
+        }
         let mut ret = HashMap::new();
         let status = if arr.is_empty() { 1 } else {
             ret.insert("uris".to_string(), Value::from(arr).try_to_owned().unwrap());
