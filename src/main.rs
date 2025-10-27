@@ -117,7 +117,9 @@ fn main() -> iced::Result {
     conf.update(false);
     let resizeable = conf.resizeable_flag.unwrap_or(conf.resizeable.is_true());
     video_rs::init().unwrap();
+    let id = mem::take(&mut conf.id);
     let mut settings = iced::Settings::with_flags(conf);
+    settings.id = Some(id);
     settings.window.level = iced::window::Level::AlwaysOnTop;
     settings.window.position = iced::window::Position::Centered;
     settings.window.resizable = resizeable;
@@ -155,6 +157,7 @@ impl TriBool {
 
 struct Config {
     title: String,
+    id: String,
     path: String,
     mode: Mode,
     sort_by: i32,
@@ -186,6 +189,7 @@ impl Config {
         let mut opts = Options::new();
         let pwd = std::env::var("PWD").unwrap();
         opts.optopt("t", "title", "Title of the filepicker window", "NAME");
+        opts.optopt("i", "id", "ID of the filepicker window (default 'pikeru')", "ID");
         opts.optopt("m", "mode", "Mode of file selection. Default is files", "[file, files, save, dir]");
         opts.optopt("p", "path", "Initial path", "PATH");
         opts.optopt("g", "geom", "window size", "WxH");
@@ -327,6 +331,7 @@ impl Config {
             mode: Mode::from(matches.opt_str("m")),
             path: matches.opt_str("p").unwrap_or(pwd),
             title: matches.opt_str("t").unwrap_or("File Picker".to_string()),
+            id: matches.opt_str("i").unwrap_or("pikeru".to_string()),
             cmds,
             bookmarks,
             sort_by,
