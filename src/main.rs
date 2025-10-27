@@ -243,8 +243,8 @@ impl Config {
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dpi_scale: f32 = 1.0;
         let mut opts_missing = 7;
-        let mut resizeable = match std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("".to_string()).as_str() {
-            "i3"|"sway"|"dwm"|"dwl"|"Hyprland"|"bspwm"|"awesome"|"xmonad"|"qtile"|"spectrwm"|"herbstluftwm"|"notion" => TriBool::OnlyNotPortal,
+        let mut resizeable = match std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("".to_string()).to_lowercase().as_str() {
+            "i3"|"sway"|"dwm"|"dwl"|"hyprland"|"bspwm"|"awesome"|"xmonad"|"qtile"|"spectrwm"|"herbstluftwm"|"notion" => TriBool::OnlyNotPortal,
             _ => TriBool::True,
         };
         let mut resizeable_flag: Option::<bool> = None;
@@ -1330,8 +1330,9 @@ impl Application for FilePicker {
                 if self.conf.saving() {
                     cmds.push(text_input::focus(self.filepath_id.clone()));
                     let mut extlen = Path::new(self.pathbar.as_str()).extension().map_or(0, |s|s.len());
-                    if extlen > 0 && self.pathbar.len() > extlen+2 { extlen += 1; }
-                    cmds.push(text_input::move_cursor_to(self.filepath_id.clone(), self.pathbar.len()-extlen));
+                    let pathlen = self.pathbar.chars().count();
+                    if extlen > 0 && pathlen > extlen+1 { extlen += 1; }
+                    cmds.push(text_input::move_cursor_to(self.filepath_id.clone(), pathlen-extlen));
                 } else {
                     cmds.push(text_input::focus(self.search_id.clone()));
                 }
