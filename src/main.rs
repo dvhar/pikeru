@@ -310,11 +310,6 @@ impl Config {
             } { eprintln!("geometry flag must have format WIDTHxHEIGHT"); }
         }
 
-        // TODO: weird error at 1024x768: fix it to get rid of this workaround
-        if window_size.width == 1024.0 && window_size.height == 768.0 {
-            window_size.height = 767.0;
-        }
-
         if let Err(_) = tpath.metadata() {
             std::fs::create_dir_all(&tpath).unwrap();
         };
@@ -1833,7 +1828,7 @@ impl Application for FilePicker {
                     .padding(Padding::from([2.0, 5.0]))
                 ]
             ].align_items(iced::Alignment::End).width(Length::Fill);
-            let send = clicked_offscreen || ps.total_width != size.width || ps.total_height != size.height;
+            let send = clicked_offscreen || ps.total_width != size.width || ps.total_height != size.height || self.content_height == 0.0;
             let mainview = column![
                 ctrlbar,
                 row![bookmarks, wrapper::locator(content).send_info(move|a,b|Message::PositionInfo(
