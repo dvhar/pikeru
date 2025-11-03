@@ -173,6 +173,7 @@ struct Config {
     home: String,
     resizeable: TriBool,
     resizeable_flag: Option::<bool>,
+    keep_open: bool,
 }
 
 impl Config {
@@ -200,6 +201,7 @@ impl Config {
         opts.optflag("r", "resizeable", "Make window resizable (default)");
         opts.optflag("l", "list", "Start in list view mode");
         opts.optflag("n", "icon", "Start in icon view mode");
+        opts.optflag("k", "keep", "Keep window open to select more files");
         opts.optflag("h", "help", "Show usage information");
         opts.optflag("v", "version", "Show pikeru version");
         let matches = match opts.parse(&args) {
@@ -334,6 +336,7 @@ impl Config {
             path: matches.opt_str("p").unwrap_or(pwd),
             title: matches.opt_str("t").unwrap_or("File Picker".to_string()),
             id: matches.opt_str("i").unwrap_or("pikeru".to_string()),
+            keep_open: matches.opt_present("k"),
             cmds,
             bookmarks,
             sort_by,
@@ -1519,7 +1522,10 @@ impl Application for FilePicker {
                     }
                 }
             },
-            Message::Cancel => self.exit(),
+            Message::Cancel => {
+                self.conf.update(false);
+                process::exit(0);
+            },
         }
         Command::none()
     }
@@ -2235,7 +2241,7 @@ impl FItem {
         if (imgtype == ImgType::Pdf && !icons.cando_pdf) || (imgtype == ImgType::Epub && !icons.cando_epub) {
             return Some(icons.doc.clone());
         }
-        if fdir.to_string_lossy() == icons.thumb_dir {
+        if fdir == Path::new(&icons.thumb_dir) {
             let mut buffer = Vec::new();
             let mut file = File::open(self.path.as_str()).await.unwrap();
             file.read_to_end(&mut buffer).await.unwrap_or(0);
@@ -2788,6 +2794,9 @@ impl FilePicker {
     }
 
     fn exit(self: &mut Self) {
+        if self.conf.keep_open {
+            return;
+        }
         self.conf.update(false);
         process::exit(0);
     }
