@@ -217,7 +217,7 @@ impl Config {
                 (false,true) => "To handle pdf thumbnails, install pdftoppm.",
                 (false,false) => "To handle pdf and epub thumbnails, install pdftoppm and epub-thumbnailer.",
             };
-            println!("{}\n{}\n{}",opts.usage(&args[0]),
+            println!("{}\n{}\n{}",opts.usage("pikeru"),
                 "File picker config file is ~/.config/pikeru.conf.\nThe portal config file which includes the semantic search indexer and postprocessor, is by default ~/.config/xdg-desktop-portal-pikeru/config.",
                 extra_thumbs);
             std::process::exit(0);
