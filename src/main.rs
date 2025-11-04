@@ -2628,9 +2628,10 @@ impl FilePicker {
                 eprintln!("CMD:{}", filecmd);
                 tokio::task::spawn_blocking(move || {
                     match OsCmd::new("bash").arg("-c").arg(filecmd).current_dir(cwd).output() {
-                        Ok(output) => eprintln!("{}{}",
+                        Ok(output) if !output.status.success() => eprintln!("{}{}",
                                                 unsafe{std::str::from_utf8_unchecked(&output.stdout)},
                                                 unsafe{std::str::from_utf8_unchecked(&output.stderr)}),
+                        Ok(_) => {},
                         Err(e) => eprintln!("Error running command: {}", e)
                     };
                 });
