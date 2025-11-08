@@ -91,7 +91,7 @@ fn cli(flags: &getopts::Matches) {
         std::process::exit(0);
     }
     if flags.opt_present("v") {
-        println!("1.8");
+        println!("1.9");
         std::process::exit(0);
     }
     let cmd = if flags.opt_present("d") {
@@ -200,7 +200,7 @@ impl Config {
         opts.optflag("d", "disable", "Configure xdg portal to not use pikeru as your system filepicker");
         opts.optflag("e", "enable", "Configure xdg portal to use pikeru as your system filepicker");
         opts.optflag("u", "unresizeable", "Make window unresizable to avoid tiling it on tiling window managers");
-        opts.optflag("r", "resizeable", "Make window resizable (default)");
+        opts.optflag("r", "resizeable", "Make window resizable");
         opts.optflag("l", "list", "Start in list view mode");
         opts.optflag("n", "icon", "Start in icon view mode");
         opts.optflag("k", "keep", "Keep window open to select more files");
