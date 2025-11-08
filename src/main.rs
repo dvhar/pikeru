@@ -174,6 +174,7 @@ struct Config {
     resizeable: TriBool,
     resizeable_flag: Option::<bool>,
     keep_open: bool,
+    forget_changes: bool,
 }
 
 impl Config {
@@ -202,6 +203,7 @@ impl Config {
         opts.optflag("l", "list", "Start in list view mode");
         opts.optflag("n", "icon", "Start in icon view mode");
         opts.optflag("k", "keep", "Keep window open to select more files");
+        opts.optflag("f", "forget", "Don't update the config with any changed settings");
         opts.optflag("h", "help", "Show usage information");
         opts.optflag("v", "version", "Show pikeru version");
         let matches = match opts.parse(&args) {
@@ -337,6 +339,7 @@ impl Config {
             title: matches.opt_str("t").unwrap_or("File Picker".to_string()),
             id: matches.opt_str("i").unwrap_or("pikeru".to_string()),
             keep_open: matches.opt_present("k"),
+            forget_changes: matches.opt_present("f"),
             cmds,
             bookmarks,
             sort_by,
@@ -354,7 +357,7 @@ impl Config {
     }
 
     fn update(self: &mut Config, force: bool) {
-        if !self.need_update && !force {
+        if self.forget_changes || !self.need_update && !force {
             return;
         }
         self.need_update = false;
