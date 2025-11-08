@@ -175,6 +175,7 @@ struct Config {
     resizeable_flag: Option::<bool>,
     keep_open: bool,
     forget_changes: bool,
+    do_index: bool,
 }
 
 impl Config {
@@ -204,6 +205,7 @@ impl Config {
         opts.optflag("n", "icon", "Start in icon view mode");
         opts.optflag("k", "keep", "Keep window open to select more files");
         opts.optflag("f", "forget", "Don't update the config with any changed settings");
+        opts.optflag("x", "noindex", "Don't update the semantic search index with visited directories");
         opts.optflag("h", "help", "Show usage information");
         opts.optflag("v", "version", "Show pikeru version");
         let matches = match opts.parse(&args) {
@@ -340,6 +342,7 @@ impl Config {
             id: matches.opt_str("i").unwrap_or("pikeru".to_string()),
             keep_open: matches.opt_present("k"),
             forget_changes: matches.opt_present("f"),
+            do_index: !matches.opt_present("x"),
             cmds,
             bookmarks,
             sort_by,
@@ -635,12 +638,14 @@ struct IndexProxy<'a> {
 }
 impl<'a> IndexProxy<'a> {
 
-    async fn new() -> Self {
-        let proxy = async {
-            let conn = Connection::session().await.ok()?;
-            let prox = IndexerProxy::new(&conn).await.ok()?;
-            Some(prox)
-        }.await;
+    async fn new(do_index: bool) -> Self {
+        let proxy = if do_index {
+            async {
+                let conn = Connection::session().await.ok()?;
+                let prox = IndexerProxy::new(&conn).await.ok()?;
+                Some(prox)
+            }.await
+        } else { None };
         let home = std::env::var("HOME").unwrap();
         let idxfile = Path::new(&home).join(".cache").join("pikeru").join("index.db");
         let sql = match rusqlite::Connection::open(&idxfile) {
@@ -1177,7 +1182,7 @@ impl Application for FilePicker {
                 self.ino_updater = Some(txino);
                 self.thumb_sender = Some(fichan);
                 tokio::spawn(recursive_add(recurse_cmds, more_files, txrec.clone(), txsrch,
-                                           self.conf.gitignore.clone(), self.conf.respect_gitignore));
+                                           self.conf.gitignore.clone(), self.conf.respect_gitignore, self.conf.do_index));
                 self.recurse_updater = Some(txrec);
                 tokio::spawn(search_loop(search_cmds, search_res));
                 return self.update(Message::LoadDir);
@@ -1706,12 +1711,10 @@ impl Application for FilePicker {
                         for i in first_idx..num_rows {
                             let cur_row = &rs.rows[i];
                             let past_bot = cur_row.pos > bot;
-                            if num_rows <= rs.num_ready {
-                                if past_bot {
-                                    let last_pos = rs.rows.last().unwrap().end_pos;
-                                    rows = rows.push(vertical_space().height(last_pos - cur_row.pos));
-                                    break;
-                                }
+                            if num_rows <= rs.num_ready && past_bot {
+                                let last_pos = rs.rows.last().unwrap().end_pos;
+                                rows = rows.push(vertical_space().height(last_pos - cur_row.pos));
+                                break;
                             }
                             let mut row_all_ready = next_ready;
                             let mut row_none_ready = true;
@@ -3050,12 +3053,13 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                        selfy: USender<RecMsg>,
                        semchan: USender<SearchEvent>,
                        gitignore_txt: String,
-                       respect_gitignore: bool) {
+                       respect_gitignore: bool,
+                       do_index: bool) {
     let mut nav_id = 0;
     let mut recursive = true;
     let mut dirs = vec![];
     let mut ignores: Vec<Vec<Arc<gitignore::Gitignore>>> = vec![];
-    let mut indexer = IndexProxy::new().await;
+    let mut indexer = IndexProxy::new(do_index).await;
     indexer.configure(respect_gitignore, gitignore_txt.as_str()).await;
     let mut ig_builder = gitignore::GitignoreBuilder::new("");
     gitignore_txt.lines().for_each(|line|{ig_builder.add_line(None, line).unwrap();});
