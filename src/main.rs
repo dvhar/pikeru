@@ -2234,10 +2234,10 @@ impl FItem {
             Err(_) => 0,
         };
         if cache_path.is_file() && cmtime >= fmtime {
-            let mut file = File::open(cache_path).await.unwrap();
+            let mut file = File::open(cache_path).await.ok()?;
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer).await.unwrap_or(0);
-            let img = load_from_memory(buffer.as_ref()).unwrap();
+            let img = load_from_memory(buffer.as_ref()).ok()?;
             let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
             return Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
         }
@@ -2246,9 +2246,9 @@ impl FItem {
         }
         if fdir == Path::new(&icons.thumb_dir) {
             let mut buffer = Vec::new();
-            let mut file = File::open(self.path.as_str()).await.unwrap();
+            let mut file = File::open(self.path.as_str()).await.ok()?;
             file.read_to_end(&mut buffer).await.unwrap_or(0);
-            let img = load_from_memory(buffer.as_ref()).unwrap();
+            let img = load_from_memory(buffer.as_ref()).ok()?;
             let thumb = img.thumbnail(thumbsize, thumbsize);
             let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
             Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
@@ -2263,7 +2263,7 @@ impl FItem {
                         Ok(mut file) => {
                             let mut buffer = Vec::new();
                             file.read_to_end(&mut buffer).await.unwrap_or(0);
-                            let img = load_from_memory(buffer.as_ref()).unwrap();
+                            let img = load_from_memory(buffer.as_ref()).ok()?;
                             let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
                             Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
                         },
@@ -2286,7 +2286,7 @@ impl FItem {
                         Ok(mut file) => {
                             let mut buffer = Vec::new();
                             file.read_to_end(&mut buffer).await.unwrap_or(0);
-                            let img = load_from_memory(buffer.as_ref()).unwrap();
+                            let img = load_from_memory(buffer.as_ref()).ok()?;
                             let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
                             Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
                         },
@@ -2316,11 +2316,11 @@ impl FItem {
                                 let numpix = w * h * 4;
                                 let transforem = tiny_skia::Transform::from_scale(scale, scale);
                                 let mut pixels = vec![0; numpix as usize];
-                                let mut pixmap = tiny_skia::PixmapMut::from_bytes(&mut pixels, w, h).unwrap();
+                                let mut pixmap = tiny_skia::PixmapMut::from_bytes(&mut pixels, w, h)?;
                                 resvg::render(&tree, transforem, &mut pixmap);
                                 let encoder = webp::Encoder::from_rgba(pixels.as_ref(), w, h);
-                                let wp = encoder.encode_simple(false, 50.0).unwrap();
-                                std::fs::write(cache_path, &*wp).unwrap();
+                                let wp = encoder.encode_simple(false, 50.0).ok()?;
+                                std::fs::write(cache_path, &*wp).ok()?;
                                 Some(Handle::from_pixels(w, h, pixels))
                             },
                             Err(e) => {
@@ -2335,8 +2335,8 @@ impl FItem {
                                 let thumb = img.thumbnail(thumbsize, thumbsize);
                                 let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
                                 let encoder = webp::Encoder::from_rgba(rgba.as_ref(), w, h);
-                                let wp = encoder.encode_simple(false, 50.0).unwrap();
-                                std::fs::write(cache_path, &*wp).unwrap();
+                                let wp = encoder.encode_simple(false, 50.0).ok()?;
+                                std::fs::write(cache_path, &*wp).ok()?;
                                 Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
                             },
                             Err(e) => {
