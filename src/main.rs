@@ -176,6 +176,7 @@ struct Config {
     keep_open: bool,
     forget_changes: bool,
     do_index: bool,
+    show_hidden: bool,
 }
 
 impl Config {
@@ -248,7 +249,8 @@ impl Config {
         let mut thumb_size = 160.0;
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dpi_scale: f32 = 1.0;
-        let mut opts_missing = 7;
+        let mut show_hidden = false;
+        let mut opts_missing = 8;
         let mut resizeable = match std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("".to_string()).to_lowercase().as_str() {
             "i3"|"sway"|"dwm"|"dwl"|"hyprland"|"bspwm"|"awesome"|"xmonad"|"qtile"|"spectrwm"|"herbstluftwm"|"notion" => TriBool::OnlyNotPortal,
             _ => TriBool::True,
@@ -271,6 +273,7 @@ impl Config {
                             "thumbnail_size" => { opts_missing -= 1; thumb_size = v.parse().unwrap() },
                             "dpi_scale" => { opts_missing -= 1; dpi_scale = v.parse().unwrap() },
                             "respect_gitignore" => { opts_missing -= 1; respect_gitignore = v.parse().unwrap() },
+                            "show_hidden" => { opts_missing -= 1; show_hidden = v.parse().unwrap() },
                             "icon_view" => { opts_missing -= 1; icon_view = v.parse().unwrap() },
                             "resizeable" => {
                                 opts_missing -= 1;
@@ -356,6 +359,7 @@ impl Config {
             home,
             resizeable,
             resizeable_flag,
+            show_hidden,
         }
     }
 
@@ -381,14 +385,15 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n",
+                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n",
                 self.dpi_scale,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
                 match self.sort_by { 1=>"name_asc", 2=>"name_desc", 3=>"age_asc", 4=>"age_desc", _=>"" },
                 self.respect_gitignore,
                 self.icon_view,
-                self.resizeable).as_str());
+                self.show_hidden,
+                self.resizeable,).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
 # The respect_gitignore setting only toggles .gitignore files, not this section.\n[SearchIgnore]\n");
         conf.push_str(self.gitignore.as_str());
@@ -806,7 +811,6 @@ struct FilePicker {
     shift_pressed: bool,
     nav_id: u8,
     view_id: u8,
-    show_hidden: bool,
     view_image: (usize, Preview),
     scroll_offset: scrollable::AbsoluteOffset,
     ino_updater: Option<USender<Inochan>>,
@@ -896,7 +900,6 @@ impl Application for FilePicker {
                 scroll_id: scrollable::Id::unique(),
                 nav_id: 0,
                 view_id: 0,
-                show_hidden: false,
                 view_image: (0, Preview::None),
                 scroll_offset: scrollable::AbsoluteOffset{x: 0.0, y: 0.0},
                 ino_updater: None,
@@ -989,7 +992,8 @@ impl Application for FilePicker {
                 }
             },
             Message::ShowHidden(show) => {
-                self.show_hidden = show;
+                self.conf.show_hidden = show;
+                self.conf.need_update = true;
                 if !show {
                     self.enable_sel_button = self.conf.saving() || self.conf.dir() || self.items.iter().any(|item|item.sel);
                 }
@@ -1194,7 +1198,7 @@ impl Application for FilePicker {
                     self.recurse_state = RecState::Stop;
                     let mut have_sel = false;
                     self.displayed = self.items[..self.end_idx].iter().enumerate().filter_map(|(i,item)| {
-                        if self.show_hidden || !item.hidden {
+                        if self.conf.show_hidden || !item.hidden {
                             have_sel |= item.sel;
                             Some(i)
                         } else {None}
@@ -1234,7 +1238,7 @@ impl Application for FilePicker {
                     let mut new_displayed = vec![];
                     let paths = next_items.iter_mut().enumerate().map(|(i,fitem)| {
                         fitem.items_idx = self.items.len() + i;
-                        if self.show_hidden || !fitem.hidden {
+                        if self.conf.show_hidden || !fitem.hidden {
                             new_displayed.push(fitem.items_idx);
                         }
                         fitem.path.clone()
@@ -1808,7 +1812,7 @@ impl Application for FilePicker {
                                     (menu_button("Sort Z-A",Message::Sort(2)))
                                     (menu_button("Sort Newest first",Message::Sort(3)))
                                     (menu_button("Sort Oldest first",Message::Sort(4)))
-                                    (checkbox("Show Hidden", self.show_hidden).on_toggle(Message::ShowHidden))
+                                    (checkbox("Show Hidden", self.conf.show_hidden).on_toggle(Message::ShowHidden))
                                     (checkbox("Recursive Search", self.recursive_search).on_toggle(Message::SetRecursive))
                                     (text(format!("Thumbnail size:{}", self.conf.thumb_size)))
                                     (slider(50.0..=500.0, self.conf.thumb_size, Message::Thumbsize))
@@ -2746,7 +2750,7 @@ impl FilePicker {
                     inodirs.push(dir.clone());
                     rd.map(|f| f.unwrap().path()).for_each(|path| {
                         ret.push(FItem::new(path.into(), self.nav_id));
-                        if self.show_hidden || !ret.last().unwrap().hidden {
+                        if self.conf.show_hidden || !ret.last().unwrap().hidden {
                             displayed.push(ret.len()-1);
                         }
                     });
