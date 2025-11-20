@@ -281,34 +281,36 @@ impl IdxManager {
                     if !self.shtate.lock().await.idx_running {
                         break;
                     }
-                    let path = dir_entry.unwrap().path();
-                    match path.extension() {
-                        Some(ext) => {
-                            if self.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
-                                if let Match::Ignore(_) = self.ignore.matched(&path, path.is_dir()) {
-                                    continue;
-                                }
-                                if let Match::Ignore(_) = local_ignore.matched(&path, false) {
-                                    continue;
-                                }
-                                let mut online = true;
-                                let mut tries_left = 5;
-                                loop {
-                                    if online && self.update_file(path.as_path(), dir).await {
-                                        break;
-                                    } else  {
-                                        warn!("Retrying {:?} in a minute...", path);
-                                        tries_left -= 1;
-                                        sleep(Duration::from_secs(60)).await;
-                                        online = self.indexer_online().await;
-                                        if !online && tries_left == 0 {
-                                            return DirResult::Fail;
-                                        }
+                    if let Ok(de) = dir_entry {
+                        let path = de.path();
+                        match path.extension() {
+                            Some(ext) => {
+                                if self.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
+                                    if let Match::Ignore(_) = self.ignore.matched(&path, path.is_dir()) {
+                                        continue;
                                     }
-                                };
-                            }
-                        },
-                        None => {},
+                                    if let Match::Ignore(_) = local_ignore.matched(&path, false) {
+                                        continue;
+                                    }
+                                    let mut online = true;
+                                    let mut tries_left = 5;
+                                    loop {
+                                        if online && self.update_file(path.as_path(), dir).await {
+                                            break;
+                                        } else  {
+                                            warn!("Retrying {:?} in a minute...", path);
+                                            tries_left -= 1;
+                                            sleep(Duration::from_secs(60)).await;
+                                            online = self.indexer_online().await;
+                                            if !online && tries_left == 0 {
+                                                return DirResult::Fail;
+                                            }
+                                        }
+                                    };
+                                }
+                            },
+                            None => {},
+                        }
                     }
                 }
             },
