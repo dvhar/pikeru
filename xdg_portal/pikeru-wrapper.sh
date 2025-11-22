@@ -20,7 +20,6 @@
 # If nothing is printed, then the operation is assumed to have been canceled.
 #
 # Notes:
-# Chrome doesn't provide the previous path via portal so need to do that here.
 # Mime filters not yet implemented in this xdg portal backend.
 
 multiple="$1"

@@ -10,8 +10,9 @@ files with the Pikeru file picker and create a searchable index for it
 xdg-desktop-portal-pikeru allows applications to choose files via xdg-desktop-portal using your
 favorite filepiker, Pikeru.
 
-It will try to load the configuration file from these locations before going
-with default settings:
+The config file provided by a fresh installation is
+$XDG_CONFIG_HOME/xdg-desktop-portal-pikeru/config.
+On startup, it will try to load the config file from these locations:
 
 - $XDG_CONFIG_HOME/xdg-desktop-portal-pikeru/$XDG_CURRENT_DESKTOP
 - $XDG_CONFIG_HOME/xdg-desktop-portal-pikeru/config
@@ -20,10 +21,8 @@ with default settings:
 
 _$XDG_CONFIG_HOME_ defaults to _~/.config_.
 _$XDG_CURRENT_DESKTOP_ can be a colon seperated list. Each element of that list will be tried.
-The installer script for pikeru creates a config file for you at
-~/.config/xdg-desktop-portal-pikeru/config.
 
-The configuration files use the INI file format. Example:
+The configuration file uses the INI file format. Example:
 
 ```
 log_level = info
@@ -70,7 +69,7 @@ chacacter will be expanded to your home directory.
 **default_save_dir** = _directory_
 	Default directory to save file paths in, if the invoking program does not provide one.
 
-	The default value is ~/Downloads or /tmp.
+	The default value is ~/Downloads.
 
 **postprocess_dir** = _directory_
 	Default directory to save post-processed files to when using a postprocess
@@ -85,8 +84,7 @@ chacacter will be expanded to your home directory.
 	lines of files as input and prints lines of files as output, which can be
 	the same ones.
 
-	There is no default value, but you can point it to xdg_portal/postprocess.example.sh in
-	the pikeru repository, or adapt that script to your needs.
+	This is empty by default, but an example is provided that you can uncomment.
 
 ## INDEXER OPTIONS
 
@@ -119,6 +117,12 @@ portal to build an index that enables searching files by semantic content.
 	the list will not be indexed.
 
 	Default value is a list of image formats that stable diffusion can handle.
+
+# THE OTHER CONFIG FILE
+
+In addition to the portal's config file, the SearchIgnore section of pikeru's
+config file (~/.config/pikeru.conf) can control which patterns you want to get
+indexed when visiting a directory. It uses gitignore syntax.
 
 # REMOTE CONTROL
 

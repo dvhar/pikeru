@@ -368,8 +368,8 @@ impl Config {
             return;
         }
         self.need_update = false;
-        let mut conf = String::from("# Commands from the cmd menu will substitute the follwong values from the selected files before running,
-# as seen in the convert examples. Paths and filenames are already quoted for you when using lowercase like [path],
+        let mut conf = String::from("# Commands from the cmd menu will substitute the follwong values from the selected files before running.
+# Paths and filenames are already quoted for you when using lowercase like [path],
 # or unquoted when capitalized like [Path].
 # [path] is full file path
 # [name] is the filename without full path

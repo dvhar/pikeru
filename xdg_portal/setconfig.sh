@@ -64,14 +64,14 @@ mkdir -p "$xdgpconf"
 log_level = info
 
 [filepicker]
-cmd=/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
-default_save_dir=~/Downloads
+cmd = /usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
+default_save_dir = ~/Downloads
 
 # Point postprocessor to a script to automatically process files before upload.
 # Replace the empty config value with the commented one to use the example script.
-#postprocessor=/usr/share/xdg-desktop-portal-pikeru/postprocess.example.sh
+#postprocessor = /usr/share/xdg-desktop-portal-pikeru/postprocess.example.sh
 postprocessor=
-postprocess_dir=/tmp/pk_postprocess
+postprocess_dir = /tmp/pk_postprocess
 
 
 [indexer]
