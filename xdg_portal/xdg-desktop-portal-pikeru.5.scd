@@ -8,10 +8,11 @@ files with the Pikeru file picker and create a searchable index for it
 # DESCRIPTION
 
 xdg-desktop-portal-pikeru allows applications to choose files via xdg-desktop-portal using your
-favorite filepiker, Pikeru.
+favorite file picker, Pikeru.
 
-The config file provided by a fresh installation is
-$XDG_CONFIG_HOME/xdg-desktop-portal-pikeru/config.
+# CONFIG AND PIKERU LAUNCHER LOCATIONS
+
+The config file provided by a fresh installation is $XDG_CONFIG_HOME/xdg-desktop-portal-pikeru/config.
 On startup, it will try to load the config file from these locations:
 
 - $XDG_CONFIG_HOME/xdg-desktop-portal-pikeru/$XDG_CURRENT_DESKTOP
@@ -120,9 +121,9 @@ portal to build an index that enables searching files by semantic content.
 
 # THE OTHER CONFIG FILE
 
-In addition to the portal's config file, the SearchIgnore section of pikeru's
-config file (~/.config/pikeru.conf) can control which patterns you want to get
-indexed when visiting a directory. It uses gitignore syntax.
+The [SearchIgnore] section of pikeru's config file (~/.config/pikeru.conf) can
+control which patterns you want to get indexed when visiting a directory. It
+uses gitignore syntax.
 
 # REMOTE CONTROL
 
