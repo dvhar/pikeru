@@ -51,12 +51,12 @@ if [ ! -z "$origconf" ]; then
 	execute "sed '/FileChooser/d' '$origconf' > '$portalfile'"
 	execute "echo 'org.freedesktop.impl.portal.FileChooser=pikeru' >> '$portalfile'"
 else
-	execute "cat << EOF > '$portalfile'
-	[preferred]
-	default=auto
-	org.freedesktop.impl.portal.FileChooser=pikeru
-	EOF
-	"
+execute "cat << EOF > '$portalfile'
+[preferred]
+default=auto
+org.freedesktop.impl.portal.FileChooser=pikeru
+EOF
+"
 fi
 
 # Generate list of places to check for config
