@@ -5,6 +5,7 @@
 
 xhome="${XDG_CONFIG_HOME:-$HOME/.config}"
 
+# find config for xdg-desktop-portal
 findconf(){
 	xcd=${XDG_CURRENT_DESKTOP,,}
 	desktops=(${xcd//:/ })
@@ -30,14 +31,14 @@ findconf(){
 }
 
 execute(){
-    echo "$*"
-    eval "$*"
+	echo "$*"
+	eval "$*"
 }
 
+# backup old config if necessary
 xdir="$xhome/xdg-desktop-portal"
 portalfile="$xdir/portals.conf"
 mkdir -p "$xdir"
-
 if [ -f "$portalfile" ] && ! grep -q pikeru "$portalfile" ; then
 	origconf="${portalfile}.orig"
 	execute "mv '$portalfile' '$origconf'"
@@ -45,21 +46,46 @@ else
 	origconf="$(findconf)"
 fi
 
+# create higher priority config for xdg-desktop-portal with pikeru as FileChooser
 if [ ! -z "$origconf" ]; then
 	execute "sed '/FileChooser/d' '$origconf' > '$portalfile'"
 	execute "echo 'org.freedesktop.impl.portal.FileChooser=pikeru' >> '$portalfile'"
 else
-execute "cat << EOF > '$portalfile'
-[preferred]
-default=auto
-org.freedesktop.impl.portal.FileChooser=pikeru
-EOF
-"
+	execute "cat << EOF > '$portalfile'
+	[preferred]
+	default=auto
+	org.freedesktop.impl.portal.FileChooser=pikeru
+	EOF
+	"
 fi
 
-xdgpconf="$HOME/.config/xdg-desktop-portal-pikeru"
-mkdir -p "$xdgpconf"
-[[ -r "$xdgpconf/config" ]] || cat << EOF > $xdgpconf/config
+# Generate list of places to check for config
+xcd="${XDG_CURRENT_DESKTOP:-}"
+desktop_list=(${xcd//:/ }) # Split on colons
+	declare -a config_locations
+	for d in "${desktop_list[@]}"; do
+		[ -n "$d" ] && config_locations+=("$xhome/xdg-desktop-portal-pikeru/$d")
+	done
+	config_locations+=("$xhome/xdg-desktop-portal-pikeru/config")
+	for d in "${desktop_list[@]}"; do
+		[ -n "$d" ] && config_locations+=("/etc/xdg/xdg-desktop-portal-pikeru/$d")
+	done
+	config_locations+=("/etc/xdg/xdg-desktop-portal-pikeru/config")
+
+# Check if a config file exists in any of the locations
+config_found=0
+for path in "${config_locations[@]}"; do
+	if [ -f "$path" ]; then
+		config_found=1
+		break
+	fi
+done
+
+# install config file for xdg-desktop-portal-pikeru if none found
+if [ $config_found -eq 0 ]; then
+	xdgpconf="$xhome/xdg-desktop-portal-pikeru"
+	mkdir -p "$xdgpconf"
+	cat << EOF > "$xdgpconf/config"
 # off, error, warn, info, debug, trace
 log_level = info
 
@@ -94,6 +120,7 @@ check = curl http://127.0.0.1:7860/sdapi/v1/interrogate
 # comma-separate list of file types that 'cmd' can process.
 extensions = png,jpg,jpeg,gif,webp,tiff,bmp
 EOF
+fi
 
 execute "systemctl --user restart xdg-desktop-portal.service"
-echo -e "XDG portal has been configured to use pikeru. Config file is ${portalfile}.\nYou can revert it with 'pikeru -d' and re-enable pikeru with 'pikeru -e'"
+echo -e "XDG portal has been configured to use pikeru. The config file for enabling pikeru portal is ${portalfile}.\nYou can revert it with 'pikeru -d' and re-enable pikeru with 'pikeru -e'"
