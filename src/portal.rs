@@ -8,6 +8,7 @@ use zbus::{
     }
 };
 use std::{
+    fs,
     error::Error, future::pending,
     collections::HashMap,
     borrow::Cow,
@@ -403,6 +404,32 @@ struct Config {
 
 impl Config {
 
+    fn create_default_config(target_path: &std::path::Path) {
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent).expect("Unable to create config directory");
+        }
+        let content = r#"
+# off, error, warn, info, debug, trace
+log_level = info
+
+[filepicker]
+cmd = /usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
+default_save_dir = ~/Downloads
+
+# Point postprocessor to a script to automatically process files before upload.
+#postprocessor = /usr/share/xdg-desktop-portal-pikeru/postprocess.example.sh
+postprocessor=
+postprocess_dir = /tmp/pk_postprocess
+
+[indexer]
+enable = false
+cmd = python /usr/share/xdg-desktop-portal-pikeru/img_indexer.py http://127.0.0.1:7860/sdapi/v1/interrogate
+check = curl http://127.0.0.1:7860/sdapi/v1/interrogate
+extensions = png,jpg,jpeg,gif,webp,tiff,bmp
+"#;
+        fs::write(target_path, content.trim_start()).expect("Unable to create config file");
+    }
+
     fn find_config() -> String {
         let home = std::env::var("HOME").unwrap();
         let xdg_home = std::env::var("XDG_CONFIG_HOME").unwrap_or("".to_string());
@@ -413,6 +440,7 @@ impl Config {
         let mut filenames = cdt.split(':').collect::<Vec<&str>>();
         filenames.push("config");
         for dir in [&xdg_home, &conf_home, &sysconf] {
+            if dir.is_empty() { continue; }
             for file in &filenames {
                 let cpath = Path::new(dir).join("xdg-desktop-portal-pikeru").join(&file);
                 if !cpath.is_file() {
@@ -421,8 +449,11 @@ impl Config {
                 return cpath.to_string_lossy().to_string();
             }
         }
-        eprintln!("No config file");
-        String::new()
+        let xdg_home = std::env::var("XDG_CONFIG_HOME").unwrap_or(conf_home);
+        let conf_path = Path::new(&xdg_home).join("xdg-desktop-portal-pikeru").join("config");
+        eprintln!("No config file found, creating a new one.");
+        Config::create_default_config(conf_path.as_path());
+        conf_path.to_string_lossy().to_string()
     }
 
     fn new() -> Self {
