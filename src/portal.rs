@@ -40,13 +40,14 @@ struct Shtate {
     idx_running: bool,
     picker_open: bool,
     respect_gitignore: bool,
+    current_searchignore: String,
 }
 
 #[derive(Debug)]
 enum Msg {
     Start,
     Dirs(Vec<String>),
-    Ignore(String),
+    Ignore,
     ClearQueue,
 }
 
@@ -80,7 +81,7 @@ fn build_cumulative_gitignore(start_dir: &Path) -> gitignore::Gitignore {
             builder.add(gi_path);
         }
     }
-    builder.build().unwrap()
+    builder.build().unwrap_or(gitignore::Gitignore::new("").0)
 }
 
 async fn index_loop(mut mgr: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
@@ -126,8 +127,8 @@ async fn index_loop(mut mgr: IdxManager, mut chan: UReceiver<Msg>, enabled: bool
                 trace!("Got dirs");
                 dirs.into_iter().for_each(|dir|{done_map.entry(dir).or_default();});
             },
-            Msg::Ignore(txt) => {
-                mgr.update_ignore(txt);
+            Msg::Ignore => {
+                mgr.update_ignore().await;
             },
             Msg::ClearQueue => {
                 done_map.clear();
@@ -190,13 +191,20 @@ impl IdxManager {
         }
     }
 
-    fn update_ignore(self: &mut Self, txt: String) {
+    async fn update_ignore(self: &mut Self) {
+        let txt = self.shtate.lock().await.current_searchignore.clone();
         if txt == self.igtxt {
             return
         }
         let mut builder = gitignore::GitignoreBuilder::new("");
         txt.lines().for_each(|line|{builder.add_line(None, line).unwrap();});
-        self.ignore = builder.build().unwrap();
+        self.ignore = match builder.build() {
+            Ok(gi) => gi,
+            Err(e) => {
+                warn!("Bad gitignore: {}: {}", e, txt);
+                gitignore::Gitignore::new("").0
+            },
+        };
         self.igtxt = txt;
     }
 
@@ -210,15 +218,21 @@ impl IdxManager {
     fn already_done(self: &Self, dir: &String, fname: &str, mtime: f32) -> Entry {
         let con = self.con.lock().unwrap();
         let mut query = con.prepare("select mtime from descriptions where dir = ?1 and fname = ?2").unwrap();
-        let ret = match query.query([dir.as_str(), fname.as_ref()]).unwrap().next().unwrap() {
-            Some(r) => {
-                let prev_time: f32 = r.get(0).unwrap();
-                match prev_time == mtime {
-                    true => Entry::Done,
-                    false => Entry::Old,
-                }
+        let ret = match query.query([dir.as_str(), fname.as_ref()]).unwrap().next() {
+            Ok(q) => match q {
+                Some(r) => {
+                    let prev_time: f32 = r.get(0).unwrap();
+                    match prev_time == mtime {
+                        true => Entry::Done,
+                        false => Entry::Old,
+                    }
+                },
+                None => Entry::None,
             },
-            None => Entry::None,
+            Err(e) => {
+                error!("sqlite error: {}", e);
+                Entry::Done
+            }
         };
         ret
     }
@@ -345,10 +359,14 @@ impl Indexer {
             self.tx.send(Msg::Start).unwrap();
         }
     }
-    async fn configure(&mut self, respect_gitignore: bool, ignore: String) {
-        trace!("Got gitignore configure request: {}", ignore);
-        self.shtate.lock().await.respect_gitignore = respect_gitignore;
-        if let Err(e) = self.tx.send(Msg::Ignore(ignore)) {
+    async fn configure(&mut self, respect_gitignore: bool, search_ignore: String) {
+        trace!("Got gitignore configure request: {}", search_ignore);
+        {
+            let mut state = self.shtate.lock().await;
+            state.respect_gitignore = respect_gitignore;
+            state.current_searchignore = search_ignore;
+        }
+        if let Err(e) = self.tx.send(Msg::Ignore) {
             error!("Configure request error: {}", e);
         }
     }
@@ -617,11 +635,22 @@ impl FilePicker {
         }
         let mut gotfirst = false;
         let mut arr = Vec::new();
+        let mut builder = gitignore::GitignoreBuilder::new("");
+        self.shtate.lock().await.current_searchignore.lines().for_each(|line|{
+            let _ = builder.add_line(None, line);
+        });
+        let ignorer = builder.build().ok();
         for line in output.lines() {
             if !gotfirst {
                 gotfirst = true;
                 if let Some(par_dir) = self.get_dir(line) {
-                    *self.prev_path.lock().await = par_dir;
+                    let mut update_prevpath = true;
+                    if let Some(ref gi) = ignorer {
+                        update_prevpath = match gi.matched(&par_dir, true) {Match::Ignore(_) => false, _ => true};
+                    }
+                    if update_prevpath {
+                        *self.prev_path.lock().await = par_dir;
+                    }
                 }
             }
             trace!("Selected: {}", line);
