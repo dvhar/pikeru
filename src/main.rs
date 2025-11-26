@@ -17,8 +17,8 @@ mod style;
 use iced::{
     advanced::widget::Id,
     Rectangle, Padding,
-    color, Background, alignment, executor, subscription,
-    Application, Command, Length, Element, theme::Container,
+    alignment, executor, subscription,
+    Application, Command, Length, Element,
     mouse::Event::{ButtonPressed, WheelScrolled},
     mouse::Button::{Back,Forward},
     mouse::ScrollDelta,
@@ -28,7 +28,7 @@ use iced::{
     keyboard::key::Named,
     widget::{
         horizontal_space, vertical_space, checkbox, slider,
-        container::{Appearance, StyleSheet,Id as CId},
+        container::Id as CId,
         image, image::Handle, Column, Row, text, responsive,
         Scrollable, scrollable, scrollable::{Direction,Properties},
         Button, TextInput, Text,
@@ -2068,14 +2068,14 @@ impl FItem {
         let clickable = match (self.isdir(), self.sel) {
             (true, true) => {
                 let dr = iced_drop::droppable(row).on_drop(move |point,_| Message::DropBookmark(idx, point));
-                mouse_area(container(dr).height(ROW_HEIGHT).width(Length::Fill).style(get_sel_theme()))
+                mouse_area(container(dr).height(ROW_HEIGHT).width(Length::Fill).style(style::get_sel_theme()))
             },
             (true, false) => {
                 let dr = iced_drop::droppable(row).on_drop(move |point,_| Message::DropBookmark(idx, point));
                 mouse_area(container(dr).height(ROW_HEIGHT).width(Length::Fill))
             },
             (false, true) => {
-                mouse_area(container(row).height(ROW_HEIGHT).width(Length::Fill).style(get_sel_theme()))
+                mouse_area(container(row).height(ROW_HEIGHT).width(Length::Fill).style(style::get_sel_theme()))
             },
             (false, false) => {
                 mouse_area(container(row).height(ROW_HEIGHT).width(Length::Fill))
@@ -2107,14 +2107,14 @@ impl FItem {
         let clickable = match (self.isdir(), self.sel) {
             (true, true) => {
                 let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::DropBookmark(idx, point));
-                mouse_area(container(dr).style(get_sel_theme()).padding(1.0))
+                mouse_area(container(dr).style(style::get_sel_theme()).padding(1.0))
             },
             (true, false) => {
                 let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::DropBookmark(idx, point));
                 mouse_area(container(dr).padding(1.0))
             },
             (false, true) => {
-                mouse_area(container(col).style(get_sel_theme()).padding(1.0))
+                mouse_area(container(col).style(style::get_sel_theme()).padding(1.0))
             },
             (false, false) => {
                 mouse_area(container(col).padding(1.0))
@@ -2921,22 +2921,6 @@ impl ClickTimer {
     }
 }
 
-struct SelectedTheme;
-impl StyleSheet for SelectedTheme {
-    type Style = iced::Theme;
-    fn appearance(&self, _style: &Self::Style) -> Appearance {
-        let mut appearance = Appearance {
-            ..Appearance::default()
-        };
-        appearance.background = Some(Background::Color(color!(0x990000)));
-        appearance
-    }
-}
-fn get_sel_theme() -> Container {
-    Container::Custom(
-        Box::new(SelectedTheme) as Box<dyn StyleSheet<Style = iced::Theme>>
-    )
-}
 
 fn vid_frame(src: &str, thumbnail: Option<u32>, savepath: Option<&PathBuf>) -> Option<Handle> {
     let mut decoder = if let Some(thumbsize) = thumbnail {

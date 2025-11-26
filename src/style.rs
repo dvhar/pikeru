@@ -3,6 +3,9 @@ use iced::{
     widget::button::{Appearance as ButAppearance, StyleSheet as ButStyle},
     Color,
     gradient, Radians,
+    widget::container::{StyleSheet as ConStyle, Appearance as ConAppearance},
+    theme::Container as ConTheme,
+    Background,
 };
 
 struct TopButTheme;
@@ -78,5 +81,22 @@ pub fn side_but_theme() -> iced::theme::Button {
 pub fn flat_but_theme() -> iced::theme::Button {
     iced::theme::Button::Custom(
         Box::new(FlatButTheme) as Box<dyn ButStyle<Style = iced::Theme>>
+    )
+}
+
+struct SelectedTheme;
+impl ConStyle for SelectedTheme {
+    type Style = iced::Theme;
+    fn appearance(&self, _style: &Self::Style) -> ConAppearance {
+        let mut appearance = ConAppearance {
+            ..ConAppearance::default()
+        };
+        appearance.background = Some(Background::Color(color!(0x990000)));
+        appearance
+    }
+}
+pub fn get_sel_theme() -> ConTheme {
+    ConTheme::Custom(
+        Box::new(SelectedTheme) as Box<dyn ConStyle<Style = iced::Theme>>
     )
 }
