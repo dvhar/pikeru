@@ -435,14 +435,29 @@ cmd = /usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
 default_save_dir = ~/Downloads
 
 # Point postprocessor to a script to automatically process files before upload.
+# Replace the empty config value with the commented one to use the example script.
 #postprocessor = /usr/share/xdg-desktop-portal-pikeru/postprocess.example.sh
 postprocessor=
 postprocess_dir = /tmp/pk_postprocess
 
 [indexer]
+# This section tells xdg-desktop-portal-pikeru how to build an index for semantic search.
+# The example values here are for a caption generating server running on localhost that
+# is used to generate searchable text for image files in any directory opened by pikeru.
+# See how to install the caption server with indexer/caption_server/README.md in pikeru's
+# git repo. It uses the same api as some version of stable diffusion webui, so you may use
+# that instead if you want.
+# Set log_level above to trace to see the searchable text results.
+
 enable = false
+
+# bash command that will be given an additional filepath arg and prints searchable text to stdout.
 cmd = python /usr/share/xdg-desktop-portal-pikeru/img_indexer.py http://127.0.0.1:7860/sdapi/v1/interrogate
+
+# bash command that only returns status code 0 when the indexer is online
 check = curl http://127.0.0.1:7860/sdapi/v1/interrogate
+
+# comma-separated list of file types that 'cmd' can process.
 extensions = png,jpg,jpeg,gif,webp,tiff,bmp
 "#;
         fs::write(target_path, content.trim_start()).expect("Unable to create config file");
