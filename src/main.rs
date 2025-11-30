@@ -536,7 +536,7 @@ struct FItemb {
     path: String,
     label: String,
     ftype: FType,
-    thumb_handle: Option<Handle>,
+    thumb_handle: Option<(Handle,u32,u32)>,
     items_idx: usize,
     display_idx: usize,
     sel: bool,
@@ -754,7 +754,7 @@ impl RowSizes {
         self.next_send = 0;
         self.last_recv = 0;
         self.num_ready = 0;
-        self.view_counter += 1;
+        self.view_counter = self.view_counter.wrapping_add(1);
         if !samecols {
             self.cols = 0;
         }
@@ -951,6 +951,7 @@ impl Application for FilePicker {
             Message::Thumbsize(size) => {
                 self.conf.thumb_size = (size / 10.0).round() * 10.0;
                 self.conf.need_update = true;
+                self.row_sizes.borrow_mut().reset(false);
             },
             Message::InoCreate(file) => {
                 let mut item = FItem::new(file.as_str().into(), self.nav_id);
@@ -2044,7 +2045,7 @@ impl FItem {
         let mut row = Row::new();
         let idx = self.items_idx;
         if let Some(h) = &self.thumb_handle {
-            let img = image(h.clone()).width(Length::Fixed(25.0));
+            let img = image(h.0.clone()).width(Length::Fixed(25.0));
             row = row.push(img);
         }
         row = row.push(container(text(self.path.rsplitn(2,'/').next().unwrap()).width(Length::FillPortion(70)))
@@ -2098,8 +2099,17 @@ impl FItem {
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
             .width(Length::Fixed(thumbsize));
-        if let Some(h) = &self.thumb_handle {
-            col = col.push(image(h.clone()));
+        if let Some(handle) = &self.thumb_handle {
+            let (w, h) = (handle.1 as f32, handle.2 as f32);
+            let scale = thumbsize as f32 / w.max(h);
+            let w = w * scale;
+            let h = h * scale;
+            let im = if w > 0.0 && h > 0.0 {
+                image(handle.0.clone()).height(Length::Fixed(h)).width(w) 
+            } else {
+                image(handle.0.clone())
+            };
+            col = col.push(im);
         }
         let shape = if self.unicode { text::Shaping::Advanced } else { text::Shaping::Basic };
         col = col.push(text(self.label.as_str()).size(13).shaping(shape));
@@ -2139,7 +2149,7 @@ impl FItem {
         } else if self.vid {
             match vid_frame(self.path.as_str(), None, None) {
                 None => Preview::None,
-                Some(a) => Preview::Image(a),
+                Some(a) => Preview::Image(a.0),
             }
         } else if self.ftype == FType::Image {
             match std::fs::read(self.path.as_str()) {
@@ -2221,7 +2231,7 @@ impl FItem {
             path: &str,
             imgtype: ImgType,
             thumbsize: u32,
-            icons: Arc<Icons>) -> Option<Handle> {
+            icons: Arc<Icons>) -> Option<(Handle, u32, u32)> {
         let mut hasher = Md5::new();
         let p = Path::new(path);
         let fmetadata = p.metadata().unwrap();
@@ -2246,10 +2256,10 @@ impl FItem {
             file.read_to_end(&mut buffer).await.unwrap_or(0);
             let img = load_from_memory(buffer.as_ref()).ok()?;
             let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-            return Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+            return Some((Handle::from_pixels(w, h, rgba.as_raw().clone()),w,h))
         }
         if (imgtype == ImgType::Pdf && !icons.cando_pdf) || (imgtype == ImgType::Epub && !icons.cando_epub) {
-            return Some(icons.doc.clone());
+            return Some((icons.doc.clone(),0,0));
         }
         if fdir == Path::new(&icons.thumb_dir) {
             let mut buffer = Vec::new();
@@ -2258,7 +2268,7 @@ impl FItem {
             let img = load_from_memory(buffer.as_ref()).ok()?;
             let thumb = img.thumbnail(thumbsize, thumbsize);
             let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
-            Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+            Some((Handle::from_pixels(w, h, rgba.as_raw().clone()),w,h))
         } else if imgtype == ImgType::Vid {
             vid_frame(&path, Some(thumbsize), Some(&cache_path))
         } else if imgtype == ImgType::Epub {
@@ -2272,16 +2282,12 @@ impl FItem {
                             file.read_to_end(&mut buffer).await.unwrap_or(0);
                             let img = load_from_memory(buffer.as_ref()).ok()?;
                             let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-                            Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                            Some((Handle::from_pixels(w, h, rgba.as_raw().clone()),w,h))
                         },
-                        Err(_) => {
-                            None
-                        },
+                        Err(_) => None,
                     }
                 },
-                Err(_) => {
-                    None
-                },
+                Err(_) => None,
             }
         } else if imgtype == ImgType::Pdf {
             match OsCmd::new("pdftoppm")
@@ -2295,16 +2301,12 @@ impl FItem {
                             file.read_to_end(&mut buffer).await.unwrap_or(0);
                             let img = load_from_memory(buffer.as_ref()).ok()?;
                             let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-                            Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                            Some((Handle::from_pixels(w, h, rgba.as_raw().clone()),w,h))
                         },
-                        Err(_) => {
-                            None
-                        },
+                        Err(_) => None,
                     }
                 },
-                Err(_) => {
-                    None
-                },
+                Err(_) => None,
             }
         } else {
             let file = File::open(self.path.as_str()).await;
@@ -2328,7 +2330,7 @@ impl FItem {
                                 let encoder = webp::Encoder::from_rgba(pixels.as_ref(), w, h);
                                 let wp = encoder.encode_simple(false, 50.0).ok()?;
                                 std::fs::write(cache_path, &*wp).ok()?;
-                                Some(Handle::from_pixels(w, h, pixels))
+                                Some((Handle::from_pixels(w, h, pixels),w,h))
                             },
                             Err(e) => {
                                 eprintln!("Error decoding svg {}: {}", self.path, e);
@@ -2344,7 +2346,7 @@ impl FItem {
                                 let encoder = webp::Encoder::from_rgba(rgba.as_ref(), w, h);
                                 let wp = encoder.encode_simple(false, 50.0).ok()?;
                                 std::fs::write(cache_path, &*wp).ok()?;
-                                Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                                Some((Handle::from_pixels(w, h, rgba.as_raw().clone()),w,h))
                             },
                             Err(e) => {
                                 eprintln!("Error decoding image {}: {}", self.path, e);
@@ -2365,7 +2367,7 @@ impl FItem {
         if self.thumb_handle == None {
             match self.ftype {
                 FType::Dir => {
-                    self.thumb_handle = Some(icons.folder.clone());
+                    self.thumb_handle = Some((icons.folder.clone(),0,0));
                 },
                 _ => {
                     let ext = match self.path.rsplitn(2,'.').next() {
@@ -2377,7 +2379,7 @@ impl FItem {
                         "svg" => {
                             self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Svg, thumbsize, icons.clone()).await;
                             if self.thumb_handle == None {
-                                self.thumb_handle = Some(icons.error.clone());
+                                self.thumb_handle = Some((icons.error.clone(),0,0));
                                 FType::File
                             } else {
                                 self.svg = true;
@@ -2387,7 +2389,7 @@ impl FItem {
                         "png"|"jpg"|"jpeg"|"bmp"|"tiff"|"gif"|"webp" => {
                             self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Norm, thumbsize, icons.clone()).await;
                             if self.thumb_handle == None {
-                                self.thumb_handle = Some(icons.error.clone());
+                                self.thumb_handle = Some((icons.error.clone(),0,0));
                                 FType::File
                             } else {
                                 if ext == "gif" {
@@ -2399,7 +2401,7 @@ impl FItem {
                         "webm"|"mkv"|"mp4"|"m4b"|"av1"|"avi"|"avif"|"flv"|"wmv"|"m4v"|"mpeg"|"mov"|"jxl" => {
                             self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Vid, thumbsize, icons.clone()).await;
                             if self.thumb_handle == None {
-                                self.thumb_handle = Some(icons.error.clone());
+                                self.thumb_handle = Some((icons.error.clone(),0,0));
                                 FType::File
                             } else {
                                 self.vid = true;
@@ -2409,7 +2411,7 @@ impl FItem {
                         "pdf" => {
                             self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Pdf, thumbsize, icons.clone()).await;
                             if self.thumb_handle == None {
-                                self.thumb_handle = Some(icons.doc.clone());
+                                self.thumb_handle = Some((icons.doc.clone(),0,0));
                                 FType::File
                             } else {
                                 self.vid = true;
@@ -2419,7 +2421,7 @@ impl FItem {
                         "epub" => {
                             self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Epub, thumbsize, icons.clone()).await;
                             if self.thumb_handle == None {
-                                self.thumb_handle = Some(icons.doc.clone());
+                                self.thumb_handle = Some((icons.doc.clone(),0,0));
                                 FType::File
                             } else {
                                 self.vid = true;
@@ -2427,15 +2429,15 @@ impl FItem {
                             }
                         },
                         "txt"|"doc"|"docx"|"xls"|"xlsx" => {
-                            self.thumb_handle = Some(icons.doc.clone());
+                            self.thumb_handle = Some((icons.doc.clone(),0,0));
                             FType::File
                         },
                         "mp3"|"wav"|"ogg"|"flac"|"aac"|"wma"|"aiff"|"alac"|"opus"|"m4a" => {
-                            self.thumb_handle = Some(icons.audio.clone());
+                            self.thumb_handle = Some((icons.audio.clone(),0,0));
                             FType::File
                         },
                         _ => {
-                            self.thumb_handle = Some(icons.unknown.clone());
+                            self.thumb_handle = Some((icons.unknown.clone(),0,0));
                             FType::File
                         },
                     };
@@ -2922,7 +2924,7 @@ impl ClickTimer {
 }
 
 
-fn vid_frame(src: &str, thumbnail: Option<u32>, savepath: Option<&PathBuf>) -> Option<Handle> {
+fn vid_frame(src: &str, thumbnail: Option<u32>, savepath: Option<&PathBuf>) -> Option<(Handle,u32,u32)> {
     let mut decoder = if let Some(thumbsize) = thumbnail {
         DecoderBuilder::new(Location::File(src.into()))
             .with_resize(Resize::Fit(thumbsize, thumbsize)).build().ok()?
@@ -2947,7 +2949,7 @@ fn vid_frame(src: &str, thumbnail: Option<u32>, savepath: Option<&PathBuf>) -> O
                 let wp = encoder.encode_simple(false, 50.0).unwrap();
                 std::fs::write(out, &*wp).unwrap();
             }
-            Some(Handle::from_pixels(w, h, rgba))
+            Some((Handle::from_pixels(w, h, rgba),w,h))
         },
         Err(e) => {
             eprintln!("Error decoding {}: {}", src, e);
