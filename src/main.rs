@@ -1655,7 +1655,7 @@ impl Application for FilePicker {
             let mut clicked_offscreen = false;
             let mut ps = self.pos_state.borrow_mut();
             ps.max_cols = if self.conf.icon_view {
-                ((size.width-140.0) / self.conf.thumb_size).max(1.0) as usize
+                ((size.width-140.0) / (self.conf.thumb_size+2.0)).max(1.0) as usize
             } else { 1 };
             let content: iced::Element<'_, Self::Message> = match &self.view_image.1 {
                 Preview::Svg(handle) => {
@@ -2096,16 +2096,17 @@ impl FItem {
     }
 
     fn display_thumb(&self, last_clicked: &LastClicked, thumbsize: f32) -> (bool, Element<'static, Message>) {
+        const PAD: f32 = 2.0;
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
-            .width(Length::Fixed(thumbsize));
+            .width(Length::Fixed(thumbsize-PAD*2.0));
         if let Some(handle) = &self.thumb_handle {
             if let iced::advanced::image::Data::Rgba{width,height,..} = handle.data() {
                 let (w,h) = (*width as f32, *height as f32);
                 let scale = thumbsize as f32 / w.max(h);
                 let w = w * scale;
                 let h = h * scale;
-                let im = image(handle.clone()).height(Length::Fixed(h)).width(w);
+                let im = image(handle.clone()).height(h).width(w);
                 col = col.push(im);
             }
         }
@@ -2115,17 +2116,17 @@ impl FItem {
         let clickable = match (self.isdir(), self.sel) {
             (true, true) => {
                 let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::DropBookmark(idx, point));
-                mouse_area(container(dr).style(style::get_sel_theme()).padding(1.0))
+                mouse_area(container(dr).style(style::get_sel_theme()).padding(PAD))
             },
             (true, false) => {
                 let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::DropBookmark(idx, point));
-                mouse_area(container(dr).padding(1.0))
+                mouse_area(container(dr).padding(PAD))
             },
             (false, true) => {
-                mouse_area(container(col).style(style::get_sel_theme()).padding(1.0))
+                mouse_area(container(col).style(style::get_sel_theme()).padding(PAD))
             },
             (false, false) => {
-                mouse_area(container(col).padding(1.0))
+                mouse_area(container(col).padding(PAD))
             },
         }.on_release(Message::LeftClick(self.items_idx, false))
             .on_press(Message::LeftPreClick(self.items_idx))
