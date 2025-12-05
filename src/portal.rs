@@ -16,6 +16,7 @@ use std::{
     mem::take,
     sync::{Arc,Mutex},
 };
+use std::time::SystemTime;
 use rusqlite;
 use tokio::{
     sync::mpsc::{
@@ -384,6 +385,7 @@ impl Indexer {
 
 struct FilePicker {
     prev_path: AsyncMtx<String>,
+    prev_path_set_at: AsyncMtx<SystemTime>,
     postproc_dir: String,
     postprocessor: String,
     def_save_dir: String,
@@ -409,7 +411,6 @@ fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
 #[derive(Debug)]
 struct Config {
     home: String,
-    prev_path: String,
     postproc_dir: String,
     postprocessor: String,
     def_save_dir: String,
@@ -583,7 +584,6 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
             std::process::exit(1);
         }
         Self {
-            prev_path: home.clone(),
             postproc_dir: tilda(&home, &postproc_dir).to_string(),
             postprocessor: tilda(&home, &postprocessor).to_string(),
             def_save_dir: tilda(&home, &def_save_dir).to_string(),
@@ -601,7 +601,8 @@ impl FilePicker {
 
     fn new(conf: &mut Config, shtate: Arc<AsyncMtx<Shtate>>, tx: USender<Msg>, db: Arc<Mutex<rusqlite::Connection>>) -> Self {
         Self {
-            prev_path: AsyncMtx::new(take(&mut conf.prev_path)),
+            prev_path: AsyncMtx::new(conf.home.clone()),
+            prev_path_set_at: AsyncMtx::new(SystemTime::now()),
             postproc_dir: take(&mut conf.postproc_dir),
             postprocessor: take(&mut conf.postprocessor),
             def_save_dir: take(&mut conf.def_save_dir),
@@ -617,6 +618,14 @@ impl FilePicker {
         let dir = if dir   { 1 } else { 0 };
         let multi = if multi { 1 } else { 0 };
         let savenum = if save  { 1 } else { 0 };
+        {
+            const TIMEOUT: u64 = 60*60*24;
+            let mut prev_path_set_at = self.prev_path_set_at.lock().await;
+            if SystemTime::now().duration_since(*prev_path_set_at).unwrap_or_default().as_secs() > TIMEOUT {
+                *self.prev_path.lock().await = self.home.clone();
+                *prev_path_set_at = SystemTime::now();
+            }
+        }
         let cmd = if save {
             format!("PK_XDG=1 {} {} {} {} \"{}\"", self.cmd, multi, dir, savenum, tilda(&self.home,path))
         } else {
@@ -665,6 +674,7 @@ impl FilePicker {
                     }
                     if update_prevpath {
                         *self.prev_path.lock().await = par_dir;
+                        *self.prev_path_set_at.lock().await = SystemTime::now();
                     }
                 }
             }
