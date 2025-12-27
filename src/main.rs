@@ -2048,7 +2048,8 @@ impl FItem {
             let img = image(h.clone()).width(Length::Fixed(25.0));
             row = row.push(img);
         }
-        row = row.push(container(text(self.path.rsplitn(2,'/').next().unwrap()).width(Length::FillPortion(70)))
+        let shape = if self.unicode { text::Shaping::Advanced } else { text::Shaping::Basic };
+        row = row.push(container(text(self.path.rsplitn(2,'/').next().unwrap()).width(Length::FillPortion(70)).shaping(shape))
             .padding(Padding{ right: 0.0, left: 5.0, top: 0.0, bottom: 0.0 }));
         if !self.isdir() {
             let bytes = self.size as f64;
