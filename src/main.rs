@@ -2931,30 +2931,45 @@ fn vid_frame(src: &str, thumbnail: Option<u32>, savepath: Option<&PathBuf>) -> O
         Decoder::new(Location::File(src.into())).ok()?
     };
     let (w, h) = decoder.size_out();
-    let decoded = decoder.decode_iter().next()?;
-    match decoded {
-        Ok(frame) => {
+    // Scan up to 30 frames for a non-black one
+    let mut chosen_frame = None;
+    let mut brightest = -1.0;
+    for decoded in decoder.decode_iter().take(30) {
+        if let Ok(frame) = decoded {
             let rgb = frame.1.slice(ndarray::s![.., .., ..]).to_slice()?;
-            let mut rgba = vec![255; rgb.len() * 4 / 3];
-            for i in 0..rgb.len() / 3 { unsafe {
-                let i3 = i * 3;
-                let i4 = i * 4;
-                *rgba.get_unchecked_mut(i4) = *rgb.get_unchecked(i3);
-                *rgba.get_unchecked_mut(i4+1) = *rgb.get_unchecked(i3+1);
-                *rgba.get_unchecked_mut(i4+2) = *rgb.get_unchecked(i3+2);
-            }}
-            if let Some(out) = savepath {
-                let encoder = webp::Encoder::from_rgba(rgba.as_ref(), w, h);
-                let wp = encoder.encode_simple(false, 50.0).unwrap();
-                std::fs::write(out, &*wp).unwrap();
+            // Calculate average brightness
+            let avg_brightness_x_3 = rgb.chunks_exact(3)
+                .map(|pix| unsafe{*pix.get_unchecked(0)} as u32 +
+                        unsafe{*pix.get_unchecked(1)} as u32 +
+                        unsafe{*pix.get_unchecked(2)} as u32)
+                .sum::<u32>() as f32 / (rgb.len() as f32 / 3.0);
+            if avg_brightness_x_3 > 60.0 {
+                chosen_frame = Some(frame);
+                break;
+            } else if avg_brightness_x_3 > brightest {
+                brightest = avg_brightness_x_3;
+                chosen_frame = Some(frame);
             }
-            Some(Handle::from_pixels(w, h, rgba))
-        },
-        Err(e) => {
-            eprintln!("Error decoding {}: {}", src, e);
-            None
         }
     }
+    let frame = chosen_frame?;
+    let rgb = frame.1.slice(ndarray::s![.., .., ..]).to_slice()?;
+    let mut rgba = vec![255; rgb.len() * 4 / 3];
+    for i in 0..rgb.len() / 3 {
+        unsafe {
+            let i3 = i * 3;
+            let i4 = i * 4;
+            *rgba.get_unchecked_mut(i4) = *rgb.get_unchecked(i3);
+            *rgba.get_unchecked_mut(i4 + 1) = *rgb.get_unchecked(i3 + 1);
+            *rgba.get_unchecked_mut(i4 + 2) = *rgb.get_unchecked(i3 + 2);
+        }
+    }
+    if let Some(out) = savepath {
+        let encoder = webp::Encoder::from_rgba(rgba.as_ref(), w, h);
+        let wp = encoder.encode_simple(false, 50.0).unwrap();
+        std::fs::write(out, &*wp).unwrap();
+    }
+    Some(Handle::from_pixels(w, h, rgba))
 }
 
 async fn search_loop(mut commands: UReceiver<SearchEvent>,

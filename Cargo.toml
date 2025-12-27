@@ -1,6 +1,6 @@
 [package]
 name = "pikeru"
-version = "1.8.2"
+version = "1.11.0"
 edition = "2021"
 default-run = "pikeru"
 
@@ -21,7 +21,7 @@ tokio = { version = "1.37.0", features = ["full"] }
 img = { package = "image", version = "0.25.1" }
 itertools = "0.12.1"
 #video-rs = { version = "0.10.5", features = ["ndarray"] }
-video-rs = { path = "vendor/video-rs", features = ["ndarray"] }
+video-rs = { path = "video-rs", features = ["ndarray"] }
 ndarray = "0.16.1"
 getopts = "0.2.21"
 iced_aw = { version = "0.9.3", features = ["menu","context_menu"] }
