@@ -91,7 +91,7 @@ fn cli(flags: &getopts::Matches) {
         std::process::exit(0);
     }
     if flags.opt_present("v") {
-        println!("1.11");
+        println!("1.12");
         std::process::exit(0);
     }
     let cmd = if flags.opt_present("d") {
@@ -2398,7 +2398,7 @@ impl FItem {
                                 FType::Image
                             }
                         },
-                        "webm"|"mkv"|"mp4"|"m4b"|"av1"|"avi"|"avif"|"flv"|"wmv"|"m4v"|"mpeg"|"mov"|"jxl" => {
+                        "webm"|"mkv"|"mp4"|"m4b"|"av1"|"avi"|"avif"|"flv"|"wmv"|"m4v"|"mpeg"|"mov"|"jxl"|"ico" => {
                             self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Vid, thumbsize, icons.clone()).await;
                             if self.thumb_handle == None {
                                 self.thumb_handle = Some(icons.error.clone());
