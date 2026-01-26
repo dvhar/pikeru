@@ -541,7 +541,7 @@ struct FItemb {
     display_idx: usize,
     sel: bool,
     nav_id: u8,
-    mtime: u64,
+    mtime: i64,
     size: u64,
     view_id: u8,
     vid: bool,
@@ -2061,7 +2061,7 @@ impl FItem {
                 right: 15.0, left: 5.0, top: 0.0, bottom: 0.0
             }));
         }
-        let systime = std::time::UNIX_EPOCH + Duration::from_secs(self.mtime);
+        let systime = std::time::UNIX_EPOCH + Duration::from_secs(self.mtime.abs() as u64);
         let datetime: DateTime<Utc> = systime.into();
         let iso_8601_string = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
         row = row.push(container(Text::new(iso_8601_string)).padding(Padding{
@@ -2202,6 +2202,14 @@ impl FItem {
             Err(_) => (FType::NotExist, std::time::SystemTime::now(), 0),
 
         };
+        let msecs = mtime.duration_since(std::time::UNIX_EPOCH).map(|t|t.as_secs() as i64).unwrap_or_else(|e|{
+            let diff = e.duration();
+            let mut secs = diff.as_secs();
+            if diff.subsec_nanos() > 0 {
+                secs += 1;
+            }
+            -(secs as i64)
+        });
         let path = pth.to_string_lossy();
         let (label, hidden) = make_label(&path);
         let unicode = label.bytes().any(|c| c & 0b10000000 != 0);
@@ -2215,7 +2223,7 @@ impl FItem {
             sel: false,
             nav_id,
             view_id: 0,
-            mtime: mtime.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            mtime: msecs,
             vid: false,
             gif: false,
             svg: false,
