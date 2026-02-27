@@ -5,7 +5,8 @@
 # caption server.
 # This is invoked by xdg-desktop-portal-pikeru to build a semantic search index,
 # see usage info in its config file.
-import base64, requests, json, sys
+import base64, json, sys
+from urllib import request, error
 
 if len(sys.argv) < 3:
     quit(1)
@@ -14,9 +15,20 @@ with open(file, "rb") as image_file:
     img = base64.b64encode(image_file.read()).decode('utf-8')
 headers = {'accept': 'application/json', 'Content-Type': 'application/json'}
 data = {'image': img, 'model': 'clip'}
-response = requests.post(url, headers=headers, json=data)
-if response.status_code > 299:
-    print(response.text, file=sys.stderr)
+req = request.Request(
+    url,
+    data=json.dumps(data).encode('utf-8'),
+    headers=headers,
+    method='POST'
+)
+try:
+    with request.urlopen(req) as response:
+        resp_text = response.read().decode('utf-8')
+        response_dict = json.loads(resp_text)
+        print(response_dict.get('caption',''))
+except error.HTTPError as e:
+    print(e.read().decode(), file=sys.stderr)
     quit(1)
-response_dict: dict = json.loads(response.text)
-print(response_dict.get('caption',''))
+except Exception as e:
+    print(str(e), file=sys.stderr)
+    quit(1)

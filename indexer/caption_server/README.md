@@ -22,5 +22,5 @@ with stable-diffusion-webui's api. This server was made so you don't have to
 deal with unstable apis like that.
 
 ```
-python /path/to/img_indexer.py http://<your server>:7860/caption /path/to/image.jpg
+python /path/to/img_indexer.py http://<your_server>:7860/caption /path/to/image.jpg
 ```

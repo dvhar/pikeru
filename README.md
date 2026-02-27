@@ -18,6 +18,7 @@ Pikeru is a file picker, file searcher, and image viewer for linux that works on
 * On arch, you can install the `pikeru` AUR package and then run `pikeru -e` to enable it.
 * Otherwise, install the dependencies at the bottom of the readme and Run `./install.sh`.
 * To make firefox use the portal, open `about:config` and set `widget.use-xdg-desktop-portal.file-picker` to `1`. Chromium-based browsers should use it by default.
+* Set env vars for QT and GTK programs: `QT_QPA_PLATFORMTHEME=xdgdesktopportal` and `GTK_USE_PORTAL=1`
 
 ### What if I want my old filepicker back?
 * Run `pikeru -d` to disable pikeru and restore your old filepicker, and `pikeru -e` to re-enable pikeru.
