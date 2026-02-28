@@ -173,6 +173,7 @@ struct Config {
     forget_changes: bool,
     do_index: bool,
     show_hidden: bool,
+    show_sidebar: bool,
 }
 
 impl Config {
@@ -203,6 +204,7 @@ impl Config {
         opts.optflag("k", "keep", "Keep window open to select more files");
         opts.optflag("f", "forget", "Don't update the config with any changed settings");
         opts.optflag("x", "noindex", "Don't update the semantic search index with visited directories");
+        opts.optflag("s", "noside", "No sidebar");
         opts.optflag("h", "help", "Show usage information");
         opts.optflag("v", "version", "Show pikeru version");
         let matches = match opts.parse(&args) {
@@ -356,6 +358,7 @@ impl Config {
             resizeable,
             resizeable_flag,
             show_hidden,
+            show_sidebar: !matches.opt_present("s"),
         }
     }
 
@@ -1661,7 +1664,8 @@ impl Application for FilePicker {
                         Item::new(menu_button(cmd.label.as_str(), Message::RunCmd(i)))
                     }
                 }).collect();
-            let bookmarks = self.conf.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
+            let (sidebar, sidebar_width) = if self.conf.show_sidebar {
+                (Some(self.conf.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
                         let bm_button = container(Button::new(
                                     container(
                                         Text::new(bm.label.as_str())
@@ -1686,12 +1690,12 @@ impl Application for FilePicker {
                         });
                         col.push(ctx_menu)
                     }).push(container(vertical_space()).height(Length::Fill).width(Length::Fill)
-                            .id(CId::new("bookmarks"))).width(Length::Fixed(120.0));
-
+                            .id(CId::new("bookmarks"))).width(Length::Fixed(120.0))), 140.0)
+            } else { (None, 10.0) };
             let mut clicked_offscreen = false;
             let mut ps = self.pos_state.borrow_mut();
             ps.max_cols = if self.conf.icon_view {
-                ((size.width-140.0) / (self.conf.thumb_size+2.0)).max(1.0) as usize
+                ((size.width-sidebar_width) / (self.conf.thumb_size+2.0)).max(1.0) as usize
             } else { 1 };
             let content: iced::Element<'_, Self::Message> = match &self.view_image.1 {
                 Preview::Svg(handle) => {
@@ -1729,7 +1733,7 @@ impl Application for FilePicker {
                 },
                 Preview::None => {
                     if self.conf.icon_view {
-                        let thumb_width = (size.width-140.0) / ps.max_cols as f32;
+                        let thumb_width = (size.width-sidebar_width) / ps.max_cols as f32;
                         let num_rows = self.num_rows(ps.max_cols);
                         let top = self.scroll_offset.y - self.conf.thumb_size*1.1;
                         let bot = self.scroll_offset.y + self.content_height;
@@ -1885,8 +1889,12 @@ impl Application for FilePicker {
             let send = clicked_offscreen || ps.total_width != size.width || ps.total_height != size.height || self.content_height == 0.0;
             let mainview = column![
                 ctrlbar,
-                row![bookmarks, wrapper::locator(content).send_info(move|a,b|Message::PositionInfo(
-                        Pos::Content(clicked_offscreen),a,b), send)],
+                    {
+                        let mut r = Row::new();
+                        if let Some(sb) = sidebar { r = r.push(sb); }
+                        r.push(wrapper::locator(content).send_info(move|a,b|Message::PositionInfo(
+                               Pos::Content(clicked_offscreen),a,b), send))
+                    }
             ];
             ps.total_width = size.width;
             ps.total_height = size.height;
