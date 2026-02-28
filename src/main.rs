@@ -145,11 +145,7 @@ impl fmt::Display for TriBool {
 impl TriBool {
     fn is_true(&self) -> bool {
         if *self == TriBool::OnlyNotPortal {
-            if let Ok(_) = std::env::var("PK_XDG") {
-                return false;
-            } else {
-                return true;
-            }
+            return !matches!(std::env::var("PK_XDG"), Ok(_))
         }
         *self == TriBool::True
     }
@@ -665,8 +661,14 @@ impl<'a> IndexProxy<'a> {
     }
 
     fn clear_queue() {
-        let conn = blocking::Connection::session().unwrap();
-        let prox = IndexerProxyBlocking::new(&conn).unwrap();
+        let conn = match blocking::Connection::session() {
+            Ok(s) => s,
+            Err(e) => die!("Error: {:?}", e),
+        };
+        let prox = match IndexerProxyBlocking::new(&conn) {
+            Ok(s) => s,
+            Err(e) => die!("Error: {:?}", e),
+        };
         match prox.clear_queue() {
             Err(e) => eprintln!("Error:{}", e),
             Ok(_) => eprintln!("Cleared indexing queue."),
@@ -716,9 +718,13 @@ impl<'a> IndexProxy<'a> {
                 Ok(q) => q,
                 Err(_) => return Vec::new(),
             };
-            query.query_map(rusqlite::params_from_iter(filtered.iter()), |row|{
-                Ok((row.get(0).unwrap(), row.get(1).unwrap()))
-            }).unwrap().map(|r|r.unwrap()).collect()
+            let qmap = query.query_map(rusqlite::params_from_iter(filtered.iter()), |row|{
+                Ok((row.get(0)?, row.get(1)?))
+            });
+            match qmap {
+                Ok(q) => q.filter_map(|r|r.ok()).collect(),
+                Err(_) => Vec::new(),
+            }
         } else {
             Vec::new()
         }
@@ -863,7 +869,9 @@ impl Application for FilePicker {
             if path.is_dir() {
                 None
             } else {
-                Some(path.file_name().unwrap().to_string_lossy().to_string())
+                if let Some(fname) = path.file_name() {
+                    Some(fname.to_string_lossy().to_string())
+                } else { None }
             }
         } else {
             None
@@ -961,8 +969,9 @@ impl Application for FilePicker {
                 self.items.push(FItem::default());
                 self.end_idx += 1;
                 item.items_idx = len;
-                tokio::spawn(item.load(self.thumb_sender.as_ref().unwrap().clone(),
-                                       self.icons.clone(), self.conf.thumb_size as u32));
+                if let Some(ts) = self.thumb_sender.as_ref() {
+                    tokio::spawn(item.load(ts.clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                }
             },
             Message::InoDelete(file) => {
                 if let Some(i) = self.items.iter().position(|x|x.path == file) {
@@ -982,14 +991,18 @@ impl Application for FilePicker {
             Message::Dummy => {},
             Message::SetRecursive(rec) => {
                 self.recursive_search = rec;
-                self.recurse_updater.as_ref().unwrap().send(RecMsg::SetRecursive(rec)).unwrap();
-                if !rec { // reset searchable items in case already recursed
-                    let items = self.items[..self.end_idx].iter().map(|item|item.path.clone()).collect::<Vec<_>>();
-                    let iidxs = self.items[..self.end_idx].iter().map(|item|item.items_idx).collect::<Vec<_>>();
-                    if let Some(ref mut sender) = self.search_commander {
-                        sender.send(SearchEvent::NewItems(items, self.nav_id)).unwrap();
-                        sender.send(SearchEvent::NewView(iidxs)).unwrap();
-                    }
+                if let Some(rs) = self.recurse_updater.as_ref() {
+                    if !matches!(rs.send(RecMsg::SetRecursive(rec)), Ok(_)) {
+                        if !rec { // reset searchable items in case already recursed
+                            let items = self.items[..self.end_idx].iter().map(|item|item.path.clone()).collect::<Vec<_>>();
+                            let iidxs = self.items[..self.end_idx].iter().map(|item|item.items_idx).collect::<Vec<_>>();
+                            if let Some(ref mut sender) = self.search_commander {
+                                let a = sender.send(SearchEvent::NewItems(items, self.nav_id));
+                                let b = sender.send(SearchEvent::NewView(iidxs));
+                                match (a,b) { (Ok(_),Ok(_)) => {}, _ => self.search_commander = None, };
+                            }
+                        }
+                    } else { self.recurse_updater = None; }
                 }
             },
             Message::ShowHidden(show) => {
@@ -1208,11 +1221,17 @@ impl Application for FilePicker {
                     self.enable_sel_button = self.conf.saving() || self.conf.dir() || have_sel;
                     return self.update(Message::Sort(self.conf.sort_by));
                 } else if !self.search_running{
-                    self.search_running = true;
-                    self.search_commander.as_ref().unwrap().send(SearchEvent::Search(self.searchbar.clone())).unwrap();
-                    if self.recurse_state != RecState::Run {
-                        self.recurse_state = RecState::Run;
-                        self.recurse_updater.as_ref().unwrap().send(RecMsg::FetchMore(self.nav_id, true)).unwrap();
+                    if let Some(sc) = self.search_commander.as_ref() {
+                        if matches!(sc.send(SearchEvent::Search(self.searchbar.clone())), Ok(_)) {
+                            self.search_running = true;
+                            if self.recurse_state != RecState::Run {
+                                if let Some(ru) = self.recurse_updater.as_ref() {
+                                    if let Ok(_) = ru.send(RecMsg::FetchMore(self.nav_id, true)) {
+                                        self.recurse_state = RecState::Run;
+                                    }
+                                }
+                            }
+                        } else { self.search_commander = None; }
                     }
                 }
             },
@@ -1226,8 +1245,11 @@ impl Application for FilePicker {
                         }).collect();
                         let _ = self.update(Message::LoadThumbs);
                         if term != self.searchbar || num_items != self.items.len() {
-                            self.search_commander.as_ref().unwrap().send(SearchEvent::Search(self.searchbar.clone())).unwrap();
-                            still_running = true;
+                            if let Some(sc) = self.search_commander.as_ref() {
+                                if matches!(sc.send(SearchEvent::Search(self.searchbar.clone())), Ok(_)) {
+                                    still_running = true;
+                                } else { self.search_commander = None; }
+                            }
                         }
                         self.row_sizes.borrow_mut().reset(true);
                     }
@@ -1244,15 +1266,25 @@ impl Application for FilePicker {
                         }
                         fitem.path.clone()
                     }).collect();
-                    let sender = self.search_commander.as_ref().unwrap();
-                    self.items.append(&mut next_items);
-                    sender.send(SearchEvent::AddItems(paths)).unwrap();
-                    sender.send(SearchEvent::AddView(new_displayed)).unwrap();
-                    if !self.search_running {
-                        sender.send(SearchEvent::Search(self.searchbar.clone())).unwrap();
-                    }
-                    if self.recurse_state != RecState::Stop {
-                        self.recurse_updater.as_ref().unwrap().send(RecMsg::FetchMore(nav_id, true)).unwrap();
+                    if let Some(sender) = self.search_commander.as_ref() {
+                        self.items.append(&mut next_items);
+                        let a = sender.send(SearchEvent::AddItems(paths));
+                        let b = sender.send(SearchEvent::AddView(new_displayed));
+                        match (a,b) {
+                            (Ok(_),Ok(_)) => {
+                                if !self.search_running {
+                                    _ = sender.send(SearchEvent::Search(self.searchbar.clone()));
+                                }
+                                if self.recurse_state != RecState::Stop {
+                                    if let Some(ru) = self.recurse_updater.as_ref() {
+                                        if matches!(ru.send(RecMsg::FetchMore(nav_id, true)), Err(_)) {
+                                            self.recurse_updater = None;
+                                        }
+                                    }
+                                }
+                            },
+                            _ => self.search_commander = None,
+                        }
                     }
                 }
             },
@@ -1288,11 +1320,12 @@ impl Application for FilePicker {
                 while di < self.displayed.len() && max_load > 0 {
                     let ii = self.displayed[di];
                     if self.items[ii].not_loaded() {
-                        let mut item = mem::replace(&mut self.items[ii], FItem::placeholder(ii, di));
-                        item.view_id = self.view_id;
-                        tokio::spawn(item.load(
-                                    self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
-                        max_load -= 1;
+                        if let Some(ts) = self.thumb_sender.as_ref() {
+                            let mut item = mem::replace(&mut self.items[ii], FItem::placeholder(ii, di));
+                            item.view_id = self.view_id;
+                            tokio::spawn(item.load(ts.clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                            max_load -= 1;
+                        }
                     }
                     di += 1;
                 }
@@ -1305,10 +1338,11 @@ impl Application for FilePicker {
                         while prev_di < self.displayed.len() {
                             let i = self.dtoi(prev_di);
                             if self.items[i].not_loaded() {
-                                let mut nextitem = mem::replace(&mut self.items[i], FItem::placeholder(i, prev_di));
-                                nextitem.view_id = self.view_id;
-                                tokio::spawn(nextitem.load(
-                                        self.thumb_sender.as_ref().unwrap().clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                                if let Some(ts) = self.thumb_sender.as_ref() {
+                                    let mut nextitem = mem::replace(&mut self.items[i], FItem::placeholder(i, prev_di));
+                                    nextitem.view_id = self.view_id;
+                                    tokio::spawn(nextitem.load(ts.clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                                }
                                 break;
                             }
                             prev_di += 1;
@@ -1322,8 +1356,8 @@ impl Application for FilePicker {
             },
             Message::Goto => {
                 self.dir_history.push(mem::take(&mut self.dirs));
-                self.dirs = self.items.iter().filter(|item|item.sel).map(|item|
-                    Path::new(&item.path).parent().unwrap().to_string_lossy().to_string()).collect();
+                self.dirs = self.items.iter().filter(|item|item.sel).filter_map(|item|
+                    Some(Path::new(&item.path).parent()?.to_string_lossy().to_string())).collect();
                 self.update_scroll(0.0);
                 return self.update(Message::LoadDir);
             }
@@ -1338,8 +1372,10 @@ impl Application for FilePicker {
                 self.load_dir();
                 self.show_goto = false;
                 self.recurse_state = RecState::Stop;
-                if let Err(e) = self.recurse_updater.as_ref().unwrap().send(RecMsg::NewNav(self.dirs.clone(), self.nav_id)) {
-                    eprintln!("Recursive search error: {}", e);
+                if let Some(ru) = self.recurse_updater.as_ref() {
+                    if matches!(ru.send(RecMsg::NewNav(self.dirs.clone(), self.nav_id)), Err(_)) {
+                        self.recurse_updater = None;
+                    }
                 }
                 let _ = self.update(Message::Sort(self.conf.sort_by));
                 let mut cmds = vec![scrollable::snap_to(self.scroll_id.clone(), scrollable::RelativeOffset::START)];
@@ -1366,7 +1402,7 @@ impl Application for FilePicker {
                 self.dirs = dirs.iter().map(|dir| {
                     let path = Path::new(dir.as_str());
                     match path.parent() {
-                        Some(par) => par.as_os_str().to_str().unwrap().to_string(),
+                        Some(par) => par.as_os_str().to_str().unwrap_or(dir.as_str()).to_string(),
                         None => dir.clone(),
                     }
                 }).unique_by(|s|s.to_owned()).collect();
