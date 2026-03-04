@@ -394,6 +394,7 @@ struct FilePicker {
     shtate: Arc<AsyncMtx<Shtate>>,
     db: Arc<Mutex<rusqlite::Connection>>,
     tx: USender<Msg>,
+    use_prev: bool,
 }
 enum Section {
     FileChooser,
@@ -419,6 +420,7 @@ struct Config {
     indexer_check: String,
     indexer_exts: String,
     indexer_enabled: bool,
+    use_prev_path_for_save: bool,
 }
 
 impl Config {
@@ -434,6 +436,9 @@ log_level = info
 [filepicker]
 cmd = /usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh
 default_save_dir = ~/Downloads
+
+# Use internally tracked path rather than the one provided by the client application
+use_prev_path_for_save = false
 
 # Point postprocessor to a script to automatically process files before upload.
 # Replace the empty config value with the commented one to use the example script.
@@ -517,6 +522,7 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
         let mut indexer_check = "".to_string();
         let mut indexer_exts = "".to_string();
         let mut indexer_enabled = false;
+        let mut use_prev_path_for_save = false;
         let mut log_level = "info".to_string();
         let txt = match std::fs::read_to_string(&conf_path) {
             Ok(content) => content,
@@ -554,6 +560,7 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
                                 "default_save_dir" => def_save_dir = v.to_string(),
                                 "postprocess_dir" => postproc_dir = v.to_string(),
                                 "postprocessor" => postprocessor = v.to_string(),
+                                "use_prev_path_for_save" => use_prev_path_for_save = v.parse().unwrap(),
                                 _ => eprintln!("Unknown filechooser config value:{}", line),
                             }
                         },
@@ -593,6 +600,7 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
             indexer_exts,
             indexer_enabled,
             home,
+            use_prev_path_for_save,
         }
     }
 }
@@ -611,6 +619,7 @@ impl FilePicker {
             shtate,
             db,
             tx,
+            use_prev: conf.use_prev_path_for_save,
         }
     }
 
@@ -627,7 +636,14 @@ impl FilePicker {
             }
         }
         let cmd = if save {
-            format!("PK_XDG=1 {} {} {} {} \"{}\"", self.cmd, multi, dir, savenum, tilda(&self.home,path))
+            let final_path = if self.use_prev {
+                let prev_path_str = self.prev_path.lock().await.clone();
+                let file_name = Path::new(path).file_name().map_or_else(|| "".to_string(), |s| s.to_string_lossy().to_string());
+                Path::new(&prev_path_str).join(file_name).to_string_lossy().to_string()
+            } else {
+                path.to_string()
+            };
+            format!("PK_XDG=1 {} {} {} {} \"{}\"", self.cmd, multi, dir, savenum, tilda(&self.home,&final_path))
         } else {
             format!("PK_XDG=1 POSTPROCESS_DIR=\"{}\" POSTPROCESSOR=\"{}\" {} {} {} {} {}",
                     self.postproc_dir, self.postprocessor, self.cmd, multi, dir, savenum,
