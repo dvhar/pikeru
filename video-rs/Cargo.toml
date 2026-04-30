@@ -11,12 +11,11 @@ repository = "https://github.com/oddity-ai/video-rs"
 readme = "README.md"
 
 [dependencies]
-ffmpeg-next = { version = "8.0", features = [
+ffmpeg-next = { version = "8.1.0", features = [
 	"format",
 	"codec",
 	"software-resampling",
-	"software-scaling",
-	"static"
+	"software-scaling"
 ] }
 ndarray = { version = "0.16", optional = true }
 tracing = "0.1"
