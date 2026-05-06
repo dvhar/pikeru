@@ -28,7 +28,7 @@ use iced::{
     keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace,PageUp,PageDown,Space},
     keyboard::key::Named,
     widget::{
-        horizontal_space, vertical_space, checkbox, slider,
+        horizontal_space, vertical_space, slider,
         container::Id as CId,
         image, image::Handle, Column, Row, text, responsive,
         Scrollable, scrollable, scrollable::{Direction,Properties},
@@ -66,7 +66,7 @@ use ndarray;
 use getopts::Options;
 use inotify::{Inotify, WatchMask, WatchDescriptor, EventMask};
 use iced_aw::{
-    menu_bar, menu_items,
+    menu_bar,
     menu::{Item, Menu},
     modal, Card,
     ContextMenu,
@@ -175,6 +175,7 @@ struct Config {
     do_index: bool,
     show_hidden: bool,
     show_sidebar: bool,
+    icon_theme: Option<String>,
 }
 
 impl Config {
@@ -249,6 +250,7 @@ impl Config {
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dpi_scale: f32 = 1.0;
         let mut show_hidden = false;
+        let mut icon_theme: Option<String> = None;
         let mut opts_missing = 8;
         let mut resizeable = match std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("".to_string()).to_lowercase().as_str() {
             "i3"|"sway"|"dwm"|"dwl"|"hyprland"|"bspwm"|"awesome"|"xmonad"|"qtile"|"spectrwm"|"herbstluftwm"|"notion" => TriBool::OnlyNotPortal,
@@ -300,6 +302,10 @@ impl Config {
                                     "age_desc" => 4,
                                     _ => 1,
                                 }
+                            },
+                            "icon_theme" => {
+                                opts_missing -= 1;
+                                icon_theme = if v.is_empty() { None } else { Some(v.to_string()) };
                             },
                             _ => {},
                         },
@@ -360,6 +366,7 @@ impl Config {
             resizeable_flag,
             show_hidden,
             show_sidebar: !matches.opt_present("s"),
+            icon_theme,
         }
     }
 
@@ -385,7 +392,7 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n",
+                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\nicon_theme = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n",
                 self.dpi_scale,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
@@ -393,6 +400,7 @@ impl Config {
                 self.respect_gitignore,
                 self.icon_view,
                 self.show_hidden,
+                self.icon_theme.as_deref().unwrap_or(""),
                 self.resizeable,).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
 # The respect_gitignore setting only toggles .gitignore files, not this section.\n[SearchIgnore]\n");
@@ -492,6 +500,7 @@ enum Message {
     InoCreate(String),
     Thumbsize(f32),
     CloseModal,
+    IconThemeSelected(String),
     SearchResult(Box<SearchEvent>),
     NextRecurse(Vec<FItem>, u8),
     PageUp,
@@ -841,6 +850,7 @@ struct FilePicker {
     enable_sel_button: bool,
     row_sizes: RefCell<RowSizes>,
     pos_state: RefCell<Measurements>,
+    icon_themes: Vec<String>,
     search_id: text_input::Id,
     filepath_id: text_input::Id,
     unfocus_id: text_input::Id,
@@ -890,6 +900,7 @@ impl Application for FilePicker {
         let search_id = text_input::Id::unique();
         let filepath_id = text_input::Id::unique();
         let unfocus_id = text_input::Id::unique();
+        let icon_theme = conf.icon_theme.clone();
         (
             Self {
                 conf,
@@ -905,7 +916,7 @@ impl Application for FilePicker {
                 searchbar: String::new(),
                 search_running: false,
                 recurse_state: RecState::Stop,
-                icons: Arc::new(Icons::new(ts)),
+                icons: Arc::new(Icons::new(ts, icon_theme)),
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1), preclicked: None},
                 ctrl_pressed: false,
                 shift_pressed: false,
@@ -932,6 +943,7 @@ impl Application for FilePicker {
                 enable_sel_button,
                 row_sizes: RefCell::new(RowSizes::new()),
                 pos_state: RefCell::new(Measurements::default()),
+                icon_themes: theme::discover_themes(),
                 search_id: search_id.clone(),
                 filepath_id: filepath_id.clone(),
                 unfocus_id,
@@ -993,6 +1005,19 @@ impl Application for FilePicker {
             },
             Message::RunCmd(i) => self.run_command(i),
             Message::Dummy => {},
+            Message::IconThemeSelected(theme) => {
+                let theme = if theme == "(System default)" {
+                    None
+                } else {
+                    Some(theme)
+                };
+                self.conf.icon_theme = theme.clone();
+                self.conf.need_update = true;
+                // Reload icons with the new theme
+                self.icons = Arc::new(Icons::new(self.conf.thumb_size, theme));
+                // Re-load current directory to refresh folder icons
+                return self.update(Message::LoadDir);
+            }
             Message::SetRecursive(rec) => {
                 self.recursive_search = rec;
                 if let Some(rs) = self.recurse_updater.as_ref() {
@@ -1848,17 +1873,7 @@ impl Application for FilePicker {
                         (top_icon(self.icons.cmds.clone(), Message::Dummy), 
                             view_menu(cmd_list))
                         (top_icon(self.icons.settings.clone(), Message::Dummy),
-                            view_menu(menu_items!(
-                                    (menu_button(if self.conf.icon_view { "List View" } else { "Icon View" },Message::ChangeView))
-                                    (menu_button("Sort A-Z",Message::Sort(1)))
-                                    (menu_button("Sort Z-A",Message::Sort(2)))
-                                    (menu_button("Sort Newest first",Message::Sort(3)))
-                                    (menu_button("Sort Oldest first",Message::Sort(4)))
-                                    (checkbox("Show Hidden", self.conf.show_hidden).on_toggle(Message::ShowHidden))
-                                    (checkbox("Recursive Search", self.recursive_search).on_toggle(Message::SetRecursive))
-                                    (text(format!("Thumbnail size:{}", self.conf.thumb_size)))
-                                    (slider(50.0..=500.0, self.conf.thumb_size, Message::Thumbsize))
-                                    )))
+                            view_menu(self.build_settings_menu()))
                     ].spacing(1.0),
                     top_icon(self.icons.newdir.clone(), Message::NewDir(false)),
                     top_icon(self.icons.updir.clone(), Message::UpDir),
@@ -2010,6 +2025,36 @@ fn menu_button(txt: &str, msg: Message) -> Element<'static, Message> {
         .style(style::top_but_theme())
         .padding(1.0)
         .on_press(msg).into()
+}
+
+/// Create a checkbox-like button for toggling settings in the menu.
+fn menu_button_checkbox(txt: &str, checked: bool, msg: Message) -> Element<'static, Message> {
+    let label = if checked {
+        format!("  {}", txt)
+    } else {
+        format!("   {}", txt)
+    };
+    Button::new(container(text(&label)
+                .width(Length::Fill)
+                .horizontal_alignment(alignment::Horizontal::Center)))
+        .style(style::top_but_theme())
+        .padding(1.0)
+        .on_press(msg).into()
+}
+
+/// Create a theme selection button with a visual indicator for the selected theme.
+fn theme_button(txt: &str, selected: bool, theme_name: &str) -> Element<'static, Message> {
+    let label = if selected {
+        format!("  {}", txt)
+    } else {
+        format!("   {}", txt)
+    };
+    Button::new(container(text(&label)
+                .width(Length::Fill)
+                .horizontal_alignment(alignment::Horizontal::Center)))
+        .style(if selected { style::top_but_theme() } else { style::flat_but_theme() })
+        .padding(1.0)
+        .on_press(Message::IconThemeSelected(theme_name.to_string())).into()
 }
 fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
     Button::new(text(txt)
@@ -2866,6 +2911,35 @@ impl FilePicker {
         self.conf.update(false);
         process::exit(0);
     }
+
+    /// Build the settings menu items, including icon theme selection buttons.
+    fn build_settings_menu(&self) -> Vec<Item<'static, Message, iced::Theme, iced::Renderer>> {
+        use iced_aw::menu::Item;
+        let mut items: Vec<Item<'static, Message, iced::Theme, iced::Renderer>> = vec![
+            Item::new(menu_button(if self.conf.icon_view { "List View" } else { "Icon View" }, Message::ChangeView)),
+            Item::new(menu_button("Sort A-Z", Message::Sort(1))),
+            Item::new(menu_button("Sort Z-A", Message::Sort(2))),
+            Item::new(menu_button("Sort Newest first", Message::Sort(3))),
+            Item::new(menu_button("Sort Oldest first", Message::Sort(4))),
+            Item::new(menu_button_checkbox("Show Hidden", self.conf.show_hidden, Message::ShowHidden(!self.conf.show_hidden))),
+            Item::new(menu_button_checkbox("Recursive Search", self.recursive_search, Message::SetRecursive(!self.recursive_search))),
+            Item::new(Element::<Message, iced::Theme, iced::Renderer>::from(text(format!("Thumbnail size:{}", self.conf.thumb_size)))),
+            Item::new(Element::<Message, iced::Theme, iced::Renderer>::from(slider(50.0..=500.0, self.conf.thumb_size, Message::Thumbsize))),
+            Item::new(Element::<Message, iced::Theme, iced::Renderer>::from(text("Icon theme:"))),
+        ];
+
+        // Add "System default" option
+        let is_default = self.conf.icon_theme.is_none();
+        items.push(Item::new(theme_button("(System default)", is_default, "(System default)")));
+
+        // Add each installed theme as a selectable button
+        for theme_name in &self.icon_themes {
+            let is_selected = self.conf.icon_theme.as_deref() == Some(theme_name.as_str());
+            items.push(Item::new(theme_button(theme_name, is_selected, theme_name)));
+        }
+
+        items
+    }
 }
 
 async fn paste(path: String, dest: String, cut: bool) {
@@ -2874,35 +2948,36 @@ async fn paste(path: String, dest: String, cut: bool) {
 }
 
 impl Icons {
-    fn new(thumbsize: f32) -> Self {
+    fn new(thumbsize: f32, icon_theme: Option<String>) -> Self {
         let home = std::env::var("HOME").unwrap();
         let tpath = Path::new(&home).join(".cache").join("pikeru").join("thumbnails");
         let cando_pdf = std::process::Command::new("which").arg("pdftoppm").output().map_or(false, |output| output.status.success());
         let cando_epub = std::process::Command::new("which").arg("epub-thumbnailer").output().map_or(false, |output| output.status.success());
+        let theme_name = icon_theme.as_deref();
 
         // Try system icon themes first; fall back to bundled assets.
         let folder = Self::load_system_icon(
-            theme::get_folder_icon_path(),
+            theme::get_folder_icon_path(theme_name),
             include_bytes!("../assets/folder7.svg"),
             thumbsize,
         );
         let unknown = Self::load_system_icon(
-            theme::get_unknown_icon_path(),
+            theme::get_unknown_icon_path(theme_name),
             include_bytes!("../assets/file6.svg"),
             thumbsize,
         );
         let doc = Self::load_system_icon(
-            theme::get_document_icon_path(),
+            theme::get_document_icon_path(theme_name),
             include_bytes!("../assets/document.svg"),
             thumbsize,
         );
         let error = Self::load_system_icon(
-            theme::get_error_icon_path(),
+            theme::get_error_icon_path(theme_name),
             include_bytes!("../assets/error.svg"),
             thumbsize,
         );
         let audio = Self::load_system_icon(
-            theme::get_audio_icon_path(),
+            theme::get_audio_icon_path(theme_name),
             include_bytes!("../assets/music4.svg"),
             thumbsize,
         );
@@ -2936,19 +3011,11 @@ impl Icons {
     ) -> Handle {
         match system_icon {
             Some((path, icon_type)) => {
-                eprintln!(
-                    "Using system icon ({}): {}",
-                    theme::icon_type_label(&icon_type),
-                    path.display()
-                );
                 match &icon_type {
                     linicon::IconType::SVG => {
                         let bytes = match std::fs::read(&path) {
                             Ok(b) => b,
-                            Err(e) => {
-                                eprintln!("Failed to read system icon {}: {}, using fallback", path.display(), e);
-                                return Self::prerender_svg(fallback_bytes, thumbsize);
-                            }
+                            Err(_) => return Self::prerender_svg(fallback_bytes, thumbsize),
                         };
                         Self::prerender_svg(&bytes, thumbsize)
                     }
@@ -2962,24 +3029,15 @@ impl Icons {
                                         let (w, h) = (rgba.width(), rgba.height());
                                         Handle::from_pixels(w, h, rgba.into_raw())
                                     }
-                                    Err(e) => {
-                                        eprintln!("Failed to decode system icon {}: {}, using fallback", path.display(), e);
-                                        Self::prerender_svg(fallback_bytes, thumbsize)
-                                    }
+                                    Err(_) => Self::prerender_svg(fallback_bytes, thumbsize)
                                 }
                             }
-                            Err(e) => {
-                                eprintln!("Failed to read system icon {}: {}, using fallback", path.display(), e);
-                                Self::prerender_svg(fallback_bytes, thumbsize)
-                            }
+                            Err(_) => Self::prerender_svg(fallback_bytes, thumbsize)
                         }
                     }
                 }
             }
-            None => {
-                eprintln!("No system icon found, using bundled fallback");
-                Self::prerender_svg(fallback_bytes, thumbsize)
-            }
+            None => Self::prerender_svg(fallback_bytes, thumbsize)
         }
     }
     fn prerender_svg(img_bytes: &[u8], thumbsize: f32) -> Handle {
