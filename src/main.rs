@@ -14,6 +14,7 @@ mod iced_drop;
 mod mouse;
 use mouse::mouse_area;
 mod style;
+mod theme;
 use iced::{
     advanced::widget::Id,
     Rectangle, Padding,
@@ -2878,12 +2879,40 @@ impl Icons {
         let tpath = Path::new(&home).join(".cache").join("pikeru").join("thumbnails");
         let cando_pdf = std::process::Command::new("which").arg("pdftoppm").output().map_or(false, |output| output.status.success());
         let cando_epub = std::process::Command::new("which").arg("epub-thumbnailer").output().map_or(false, |output| output.status.success());
+
+        // Try system icon themes first; fall back to bundled assets.
+        let folder = Self::load_system_icon(
+            theme::get_folder_icon_path(),
+            include_bytes!("../assets/folder7.svg"),
+            thumbsize,
+        );
+        let unknown = Self::load_system_icon(
+            theme::get_unknown_icon_path(),
+            include_bytes!("../assets/file6.svg"),
+            thumbsize,
+        );
+        let doc = Self::load_system_icon(
+            theme::get_document_icon_path(),
+            include_bytes!("../assets/document.svg"),
+            thumbsize,
+        );
+        let error = Self::load_system_icon(
+            theme::get_error_icon_path(),
+            include_bytes!("../assets/error.svg"),
+            thumbsize,
+        );
+        let audio = Self::load_system_icon(
+            theme::get_audio_icon_path(),
+            include_bytes!("../assets/music4.svg"),
+            thumbsize,
+        );
+
         Self {
-            folder: Self::prerender_svg(include_bytes!("../assets/folder7.svg"), thumbsize),
-            unknown:  Self::prerender_svg(include_bytes!("../assets/file6.svg"), thumbsize),
-            doc:  Self::prerender_svg(include_bytes!("../assets/document.svg"), thumbsize),
-            error:  Self::prerender_svg(include_bytes!("../assets/error.svg"), thumbsize),
-            audio:  Self::prerender_svg(include_bytes!("../assets/music4.svg"), thumbsize),
+            folder,
+            unknown,
+            doc,
+            error,
+            audio,
             thumb_dir: tpath.to_string_lossy().to_string(),
             settings: svg::Handle::from_memory(include_bytes!("../assets/settings2.svg")),
             updir: svg::Handle::from_memory(include_bytes!("../assets/up2.svg")),
@@ -2892,6 +2921,65 @@ impl Icons {
             goto: svg::Handle::from_memory(include_bytes!("../assets/goto2.svg")),
             cando_pdf,
             cando_epub,
+        }
+    }
+
+    /// Load an icon from the system icon theme, falling back to a bundled asset.
+    ///
+    /// If the system icon is SVG, it is prerendered to pixels.
+    /// If it is PNG (or XPM), it is decoded with the `image` crate.
+    /// If no system icon is found, the bundled fallback bytes are prerendered as SVG.
+    fn load_system_icon(
+        system_icon: Option<(PathBuf, linicon::IconType)>,
+        fallback_bytes: &[u8],
+        thumbsize: f32,
+    ) -> Handle {
+        match system_icon {
+            Some((path, icon_type)) => {
+                eprintln!(
+                    "Using system icon ({}): {}",
+                    theme::icon_type_label(&icon_type),
+                    path.display()
+                );
+                match &icon_type {
+                    linicon::IconType::SVG => {
+                        let bytes = match std::fs::read(&path) {
+                            Ok(b) => b,
+                            Err(e) => {
+                                eprintln!("Failed to read system icon {}: {}, using fallback", path.display(), e);
+                                return Self::prerender_svg(fallback_bytes, thumbsize);
+                            }
+                        };
+                        Self::prerender_svg(&bytes, thumbsize)
+                    }
+                    linicon::IconType::PNG | linicon::IconType::XMP => {
+                        // Decode the raster image and convert to a Handle.
+                        match std::fs::read(&path) {
+                            Ok(bytes) => {
+                                match img::load_from_memory(&bytes) {
+                                    Ok(img) => {
+                                        let rgba = img.into_rgba8();
+                                        let (w, h) = (rgba.width(), rgba.height());
+                                        Handle::from_pixels(w, h, rgba.into_raw())
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to decode system icon {}: {}, using fallback", path.display(), e);
+                                        Self::prerender_svg(fallback_bytes, thumbsize)
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to read system icon {}: {}, using fallback", path.display(), e);
+                                Self::prerender_svg(fallback_bytes, thumbsize)
+                            }
+                        }
+                    }
+                }
+            }
+            None => {
+                eprintln!("No system icon found, using bundled fallback");
+                Self::prerender_svg(fallback_bytes, thumbsize)
+            }
         }
     }
     fn prerender_svg(img_bytes: &[u8], thumbsize: f32) -> Handle {
