@@ -2016,6 +2016,9 @@ impl Application for FilePicker {
                         // Show theme pane on the right if enabled
                         if self.show_theme_pane {
                             r = r.push(container(self.build_theme_pane()).width(Length::Fixed(250.0)));
+                        } else if !self.conf.icon_view {
+                            // In list mode, show preview pane for selected files
+                            r = r.push(container(self.build_preview_pane()).width(Length::Fixed(250.0)));
                         }
                         r
                     }
@@ -3128,6 +3131,36 @@ impl FilePicker {
             .width(Length::Fill)
             .padding(2.0));
 
+        Scrollable::new(col).into()
+    }
+
+    /// Build the preview pane showing thumbnails of selected files (list mode only).
+    fn build_preview_pane(&self) -> Element<'static, Message> {
+        let font = self.font;
+        let mut col = Column::new().padding(10.0).spacing(10.0);
+        let selected: Vec<_> = self.items.iter().filter(|item| item.sel).collect();
+        if selected.is_empty() {
+            let mut hint = Text::new("No files selected").size(13);
+            if let Some(f) = font { hint = hint.font(f); }
+            col = col.push(container(hint).padding(5.0));
+        } else {
+            for item in selected {
+                let mut item_col = Column::new().spacing(2.0);
+                // Thumbnail (full width of the pane)
+                if let Some(h) = &item.thumb_handle {
+                    item_col = item_col.push(
+                        image(h.clone()).width(Length::Fill)
+                    );
+                }
+                // Filename (owned String to avoid lifetime issues)
+                let filename: String = item.path.rsplitn(2, '/').next().unwrap().to_string();
+                let mut name_txt = Text::new(filename).size(12);
+                if let Some(f) = font { name_txt = name_txt.font(f); }
+                item_col = item_col.push(container(name_txt)
+                    .padding(Padding { left: 5.0, ..Padding::ZERO }));
+                col = col.push(item_col);
+            }
+        }
         Scrollable::new(col).into()
     }
 }
