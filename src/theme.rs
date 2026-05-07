@@ -2,7 +2,11 @@
 //!
 //! Resolves standard icon names (e.g. "folder", "audio-x-generic") to actual
 //! image files on disk, falling back to bundled assets when no system icon is found.
+//!
+//! Font discovery: uses `fc-list` to find available system fonts and `ttf-parser`
+//! to read their internal family names.
 use linicon::{IconType, lookup_icon};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 /// Quality score for ranking icon results.
@@ -25,7 +29,15 @@ fn icon_quality(icon_type: &IconType, min_size: u16) -> u32 {
 /// - XPM is a last resort
 ///
 /// Returns `Some(path, icon_type)` if a matching icon is found, or `None`.
+///
+/// If `theme_name` is `Some("None")`, the system lookup is skipped entirely
+/// and `None` is returned, forcing the caller to use bundled fallback icons.
 pub fn get_icon_path(icon_name: &str, theme_name: Option<&str>) -> Option<(PathBuf, IconType)> {
+    // "None" means skip system icons entirely
+    if theme_name == Some("None") {
+        return None;
+    }
+
     let mut iter = lookup_icon(icon_name);
     if let Some(t) = theme_name {
         iter = iter.from_theme(t);
@@ -96,4 +108,104 @@ pub fn discover_themes() -> Vec<String> {
     themes().into_iter().filter(|theme| {
             PIKERU_ICON_NAMES.iter().any(|name| { lookup_icon(name).from_theme(&theme.name).next().is_some() })
         }).map(|t| t.name).collect()
+}
+
+/// Extracts the internal family name from a font file using ttf-parser.
+///
+/// This reads the font file's name table to get the real family name that
+/// the text renderer will use for lookups.
+///
+/// Returns `None` if the font file can't be read or has no name table.
+pub fn get_font_internal_name(path: &PathBuf) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    let font = ttf_parser::Face::parse(&bytes, 0).ok()?;
+    font.names()
+        .into_iter()
+        .find(|name| name.name_id == ttf_parser::name_id::FAMILY)
+        .and_then(|name| name.to_string())
+}
+
+/// Checks if a font's charset string (from fc-list) covers basic Latin characters.
+///
+/// Verifies the font has support for A-Z, a-z, 0-9 (Unicode codepoints 0x41-0x5A,
+/// 0x61-0x7A, 0x30-0x39). Filters out script-specific fonts that would show tofu.
+fn has_latin_support(charset: &str) -> bool {
+    // Check if charset contains the required Latin ranges
+    // A-Z: 41-5A, a-z: 61-7A, 0-9: 30-39
+    for range in charset.split_whitespace() {
+        let (start, end) = match range.split_once('-') {
+            Some((s, e)) => {
+                (u32::from_str_radix(s, 16).unwrap_or(0),
+                 u32::from_str_radix(e, 16).unwrap_or(0))
+            }
+            None => {
+                let codepoint = u32::from_str_radix(range, 16).unwrap_or(0);
+                (codepoint, codepoint)
+            }
+        };
+
+        // Check if this range covers any of the required Latin characters
+        if (start <= 0x41 && end >= 0x5A) || // A-Z
+           (start <= 0x61 && end >= 0x7A) || // a-z
+           (start <= 0x30 && end >= 0x39)    // 0-9
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Discover all available system fonts using `fc-list`.
+///
+/// Returns a deduplicated list of `(display_name, font_file_path)` pairs.
+/// The display name is the fontconfig family name; the path is the actual
+/// font file (`.ttf`, `.otf`, etc.).
+///
+/// Only includes fonts that have:
+/// 1. A valid internal family name (can be loaded by iced)
+/// 2. Basic Latin character support (filters out script-specific fonts that show tofu)
+pub fn discover_fonts() -> Vec<(String, PathBuf)> {
+    let output = match std::process::Command::new("fc-list")
+        .arg("--format=%{family}\t%{file}\t%{charset}\n")
+        .output() {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+
+    let lines = match std::str::from_utf8(&output.stdout) {
+        Ok(l) => l,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut seen = HashSet::new();
+    let mut fonts = Vec::new();
+
+    for line in lines.lines() {
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+
+        let family = parts[0].to_string();
+        // Skip if we've already seen this family
+        if !seen.insert(family.clone()) {
+            continue;
+        }
+
+        let path = PathBuf::from(parts[1]);
+
+        // Check charset if available
+        if parts.len() >= 3 {
+            if !has_latin_support(parts[2]) {
+                continue; // Skip fonts without Latin support
+            }
+        }
+
+        // Only include fonts that have a valid internal name (can be loaded by iced)
+        if get_font_internal_name(&path).is_some() {
+            fonts.push((family, path));
+        }
+    }
+
+    fonts
 }

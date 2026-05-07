@@ -34,7 +34,8 @@ use iced::{
         Scrollable, scrollable, scrollable::{Direction,Properties},
         Button, TextInput, Text,
         column, row, container,
-        svg, text_input
+        svg, text_input,
+        rule::Rule,
     },
     futures::{
         sink::SinkExt,
@@ -176,6 +177,7 @@ struct Config {
     show_hidden: bool,
     show_sidebar: bool,
     icon_theme: Option<String>,
+    font_name: Option<String>,
 }
 
 impl Config {
@@ -251,6 +253,7 @@ impl Config {
         let mut dpi_scale: f32 = 1.0;
         let mut show_hidden = false;
         let mut icon_theme: Option<String> = None;
+        let mut font_name: Option<String> = None;
         let mut opts_missing = 8;
         let mut resizeable = match std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("".to_string()).to_lowercase().as_str() {
             "i3"|"sway"|"dwm"|"dwl"|"hyprland"|"bspwm"|"awesome"|"xmonad"|"qtile"|"spectrwm"|"herbstluftwm"|"notion" => TriBool::OnlyNotPortal,
@@ -306,6 +309,10 @@ impl Config {
                             "icon_theme" => {
                                 opts_missing -= 1;
                                 icon_theme = if v.is_empty() { None } else { Some(v.to_string()) };
+                            },
+                            "font_name" => {
+                                opts_missing -= 1;
+                                font_name = if v.is_empty() { None } else { Some(v.to_string()) };
                             },
                             _ => {},
                         },
@@ -367,6 +374,7 @@ impl Config {
             show_hidden,
             show_sidebar: !matches.opt_present("s"),
             icon_theme,
+            font_name,
         }
     }
 
@@ -392,7 +400,7 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\nicon_theme = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n",
+                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\nicon_theme = {}\nfont_name = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n",
                 self.dpi_scale,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
@@ -401,6 +409,7 @@ impl Config {
                 self.icon_view,
                 self.show_hidden,
                 self.icon_theme.as_deref().unwrap_or(""),
+                self.font_name.as_deref().unwrap_or(""),
                 self.resizeable,).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
 # The respect_gitignore setting only toggles .gitignore files, not this section.\n[SearchIgnore]\n");
@@ -501,6 +510,8 @@ enum Message {
     Thumbsize(f32),
     CloseModal,
     IconThemeSelected(String),
+    FontSelected(String),
+    ToggleThemePane,
     SearchResult(Box<SearchEvent>),
     NextRecurse(Vec<FItem>, u8),
     PageUp,
@@ -847,10 +858,13 @@ struct FilePicker {
     content_height: f32,
     recursive_search: bool,
     show_goto: bool,
+    show_theme_pane: bool,
     enable_sel_button: bool,
     row_sizes: RefCell<RowSizes>,
     pos_state: RefCell<Measurements>,
     icon_themes: Vec<String>,
+    font_names: Vec<(String, PathBuf)>,
+    font: Option<iced::Font>,
     search_id: text_input::Id,
     filepath_id: text_input::Id,
     unfocus_id: text_input::Id,
@@ -940,10 +954,13 @@ impl Application for FilePicker {
                 content_y: 0.0,
                 recursive_search: true,
                 show_goto: false,
+                show_theme_pane: false,
                 enable_sel_button,
                 row_sizes: RefCell::new(RowSizes::new()),
                 pos_state: RefCell::new(Measurements::default()),
                 icon_themes: theme::discover_themes(),
+                font_names: theme::discover_fonts(),
+                font: None,
                 search_id: search_id.clone(),
                 filepath_id: filepath_id.clone(),
                 unfocus_id,
@@ -1006,7 +1023,7 @@ impl Application for FilePicker {
             Message::RunCmd(i) => self.run_command(i),
             Message::Dummy => {},
             Message::IconThemeSelected(theme) => {
-                let theme = if theme == "(System default)" {
+                let theme = if theme == "System default" {
                     None
                 } else {
                     Some(theme)
@@ -1017,6 +1034,64 @@ impl Application for FilePicker {
                 self.icons = Arc::new(Icons::new(self.conf.thumb_size, theme));
                 // Re-load current directory to refresh folder icons
                 return self.update(Message::LoadDir);
+            }
+            Message::FontSelected(font_name) => {
+                let font_name = if font_name == "System default" {
+                    None
+                } else {
+                    Some(font_name)
+                };
+                self.conf.font_name = font_name.clone();
+                self.conf.need_update = true;
+
+                if let Some(name) = font_name {
+                    // Find the font file path
+                    if let Some((_, path)) = self.font_names.iter().find(|(n, _)| n == &name) {
+                        // Read the font file bytes
+                        match std::fs::read(path) {
+                            Ok(bytes) => {
+                                // Extract the internal family name from the font file
+                                if let Some(internal_name) = theme::get_font_internal_name(path) {
+                                    // Leak the internal name so we can reference it as &'static str
+                                    let static_name: &'static str = Box::leak(internal_name.into_boxed_str());
+
+                                    // Load the font into iced's renderer
+                                    let load_cmd = iced::font::load(bytes);
+
+                                    // Set the font reference for all text widgets
+                                    self.font = Some(iced::Font::with_name(static_name));
+                                    eprintln!("Loaded font '{}', internal name '{}'", name, static_name);
+
+                                    return Command::batch(vec![
+                                        load_cmd.map(move |result| {
+                                            match result {
+                                                Ok(_) => Message::Dummy,
+                                                Err(_) => {
+                                                    eprintln!("Failed to load font '{}'", name);
+                                                    Message::Dummy
+                                                }
+                                            }
+                                        }),
+                                    ]);
+                                } else {
+                                    eprintln!("Font '{}' has no internal name table", name);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to read font file {}: {}", path.display(), e);
+                            }
+                        }
+                    } else {
+                        eprintln!("Font '{}' not found in available fonts", name);
+                    }
+                } else {
+                    self.font = None;
+                }
+                return Command::none();
+            }
+            Message::ToggleThemePane => {
+                self.show_theme_pane = !self.show_theme_pane;
+                return Command::none();
             }
             Message::SetRecursive(rec) => {
                 self.recursive_search = rec;
@@ -1691,13 +1766,15 @@ impl Application for FilePicker {
                     }
                 }).collect();
             let (sidebar, sidebar_width) = if self.conf.show_sidebar {
+                let font = self.font;
                 (Some(self.conf.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
+                        let mut txt = Text::new(bm.label.as_str())
+                            .size(15.0)
+                            .horizontal_alignment(alignment::Horizontal::Center)
+                            .width(Length::Fill);
+                        if let Some(f) = font { txt = txt.font(f); }
                         let bm_button = container(Button::new(
-                                    container(
-                                        Text::new(bm.label.as_str())
-                                           .size(15.0)
-                                           .horizontal_alignment(alignment::Horizontal::Center)
-                                           .width(Length::Fill))
+                                    container(txt)
                                     .padding(-3.0)
                                     .id(bm.id.clone()))
                                  .style(style::side_but_theme())
@@ -1800,7 +1877,7 @@ impl Application for FilePicker {
                                         let item = &self.items[self.dtoi(idx)];
                                         row_all_ready &= item.thumb_handle != None;
                                         row_none_ready &= item.thumb_handle == None;
-                                        let (clicked, display) = item.display_thumb(&self.last_clicked, thumb_width);
+                                        let (clicked, display) = item.display_thumb(&self.last_clicked, thumb_width, self.font);
                                         clicked_onscreen |= clicked;
                                         row = row.push(display);
                                     }
@@ -1842,7 +1919,7 @@ impl Application for FilePicker {
                         if num_total > 0 {
                             for i in first_idx..last_idx+1 {
                                 let item = &self.items[self.dtoi(i)];
-                                let (clicked, displayed) = item.display_row(&self.last_clicked);
+                                let (clicked, displayed) = item.display_row(&self.last_clicked, self.font);
                                 clicked_onscreen |= clicked;
                                 rows = rows.push(displayed);
                             }
@@ -1885,19 +1962,27 @@ impl Application for FilePicker {
                     }
                 ].spacing(1).height(31.0),
                 row![
-                TextInput::new("directory or file path", self.pathbar.as_str())
-                    .on_input(Message::PathTxtInput)
-                    .on_paste(Message::PathTxtInput)
-                    .on_submit(Message::Select(SelType::TxtEntr))
-                    .width(Length::FillPortion(8))
-                    .padding(2.0)
-                    .id(self.filepath_id.clone()),
-                TextInput::new("search", self.searchbar.as_str())
-                    .on_input(Message::SearchTxtInput)
-                    .on_paste(Message::SearchTxtInput)
-                    .width(Length::FillPortion(2))
-                    .padding(2.0)
-                    .id(self.search_id.clone()),
+                {
+                    let mut input: TextInput<'_, Message, iced::Theme, iced::Renderer> = TextInput::new("directory or file path", self.pathbar.as_str())
+                        .on_input(Message::PathTxtInput)
+                        .on_paste(Message::PathTxtInput)
+                        .on_submit(Message::Select(SelType::TxtEntr))
+                        .width(Length::FillPortion(8))
+                        .padding(2.0)
+                        .id(self.filepath_id.clone());
+                    if let Some(f) = self.font { input = input.font(f); }
+                    Element::from(input)
+                },
+                {
+                    let mut input: TextInput<'_, Message, iced::Theme, iced::Renderer> = TextInput::new("search", self.searchbar.as_str())
+                        .on_input(Message::SearchTxtInput)
+                        .on_paste(Message::SearchTxtInput)
+                        .width(Length::FillPortion(2))
+                        .padding(2.0)
+                        .id(self.search_id.clone());
+                    if let Some(f) = self.font { input = input.font(f); }
+                    Element::from(input)
+                },
                 Button::new("X").on_press(Message::SearchTxtInput("".to_string())).style(style::flat_but_theme())
                     .padding(Padding::from([2.0, 5.0]))
                 ]
@@ -1908,8 +1993,14 @@ impl Application for FilePicker {
                     {
                         let mut r = Row::new();
                         if let Some(sb) = sidebar { r = r.push(sb); }
-                        r.push(wrapper::locator(content).send_info(move|a,b|Message::PositionInfo(
-                               Pos::Content(clicked_offscreen),a,b), send))
+                        let content_with_locator = wrapper::locator(content).send_info(move|a,b|Message::PositionInfo(
+                               Pos::Content(clicked_offscreen),a,b), send);
+                        r = r.push(content_with_locator);
+                        // Show theme pane on the right if enabled
+                        if self.show_theme_pane {
+                            r = r.push(container(self.build_theme_pane()).width(Length::Fixed(250.0)));
+                        }
+                        r
                     }
             ];
             ps.total_width = size.width;
@@ -2056,6 +2147,20 @@ fn theme_button(txt: &str, selected: bool, theme_name: &str) -> Element<'static,
         .padding(1.0)
         .on_press(Message::IconThemeSelected(theme_name.to_string())).into()
 }
+/// Create a font selection button with a visual indicator for the selected font.
+fn font_button(txt: &str, selected: bool, font_name: &str) -> Element<'static, Message> {
+    let label = if selected {
+        format!("  {}", txt)
+    } else {
+        format!("   {}", txt)
+    };
+    Button::new(container(text(&label)
+                .width(Length::Fill)
+                .horizontal_alignment(alignment::Horizontal::Center)))
+        .style(if selected { style::top_but_theme() } else { style::flat_but_theme() })
+        .padding(1.0)
+        .on_press(Message::FontSelected(font_name.to_string())).into()
+}
 fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
     Button::new(text(txt)
                 .width(size)
@@ -2131,30 +2236,36 @@ impl FItem {
     #[inline]
     fn not_loaded(self: &Self) -> bool { self.thumb_handle == None && !self.path.is_empty() }
 
-    fn display_row(&self, last_clicked: &LastClicked) -> (bool, Element<'static, Message>) {
+    fn display_row(&self, last_clicked: &LastClicked, font: Option<iced::Font>) -> (bool, Element<'static, Message>) {
         let mut row = Row::new();
         let idx = self.items_idx;
         if let Some(h) = &self.thumb_handle {
             let img = image(h.clone()).width(Length::Fixed(25.0));
             row = row.push(img);
         }
-        let shape = if self.unicode { text::Shaping::Advanced } else { text::Shaping::Basic };
-        row = row.push(container(text(self.path.rsplitn(2,'/').next().unwrap()).width(Length::FillPortion(70)).shaping(shape))
-            .padding(Padding{ right: 0.0, left: 5.0, top: 0.0, bottom: 0.0 }));
+        //let shape = if self.unicode { text::Shaping::Advanced } else { text::Shaping::Basic };
+        let shape = text::Shaping::Advanced;
+        let mut txt = text(self.path.rsplitn(2,'/').next().unwrap()).width(Length::FillPortion(70)).shaping(shape);
+        if let Some(f) = font { txt = txt.font(f); }
+        row = row.push(container(txt).padding(Padding{ right: 0.0, left: 5.0, top: 0.0, bottom: 0.0 }));
         if !self.isdir() {
             let bytes = self.size as f64;
             let sz = if bytes > 1073741824.0 { format!("{:.2} GB", bytes/1073741824.0 ) }
             else if bytes > 1048576.0 { format!("{:.1} MB", bytes/1048576.0 ) }
             else if bytes > 1024.0 { format!("{:.0} KB", bytes/1024.0 ) }
             else { format!("{:.0} B", bytes) };
-            row = row.push(container(Text::new(sz)).padding(Padding{
+            let mut sz_txt = Text::new(sz);
+            if let Some(f) = font { sz_txt = sz_txt.font(f); }
+            row = row.push(container(sz_txt).padding(Padding{
                 right: 15.0, left: 5.0, top: 0.0, bottom: 0.0
             }));
         }
         let systime = std::time::UNIX_EPOCH + Duration::from_secs(self.mtime.abs() as u64);
         let datetime: DateTime<Utc> = systime.into();
         let iso_8601_string = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
-        row = row.push(container(Text::new(iso_8601_string)).padding(Padding{
+        let mut time_txt = Text::new(iso_8601_string);
+        if let Some(f) = font { time_txt = time_txt.font(f); }
+        row = row.push(container(time_txt).padding(Padding{
             right: 15.0, left: 0.0, top: 0.0, bottom: 0.0
         }));
         let clickable = match (self.isdir(), self.sel) {
@@ -2186,7 +2297,7 @@ impl FItem {
         }
     }
 
-    fn display_thumb(&self, last_clicked: &LastClicked, thumbsize: f32) -> (bool, Element<'static, Message>) {
+    fn display_thumb(&self, last_clicked: &LastClicked, thumbsize: f32, font: Option<iced::Font>) -> (bool, Element<'static, Message>) {
         const PAD: f32 = 2.0;
         let mut col = Column::new()
             .align_items(iced::Alignment::Center)
@@ -2202,7 +2313,9 @@ impl FItem {
             }
         }
         let shape = if self.unicode { text::Shaping::Advanced } else { text::Shaping::Basic };
-        col = col.push(text(self.label.as_str()).size(13).shaping(shape));
+        let mut txt = text(self.label.as_str()).size(13).shaping(shape);
+        if let Some(f) = font { txt = txt.font(f); }
+        col = col.push(txt);
         let idx = self.items_idx;
         let clickable = match (self.isdir(), self.sel) {
             (true, true) => {
@@ -2912,10 +3025,10 @@ impl FilePicker {
         process::exit(0);
     }
 
-    /// Build the settings menu items, including icon theme selection buttons.
+    /// Build the settings menu items.
     fn build_settings_menu(&self) -> Vec<Item<'static, Message, iced::Theme, iced::Renderer>> {
         use iced_aw::menu::Item;
-        let mut items: Vec<Item<'static, Message, iced::Theme, iced::Renderer>> = vec![
+        vec![
             Item::new(menu_button(if self.conf.icon_view { "List View" } else { "Icon View" }, Message::ChangeView)),
             Item::new(menu_button("Sort A-Z", Message::Sort(1))),
             Item::new(menu_button("Sort Z-A", Message::Sort(2))),
@@ -2925,20 +3038,64 @@ impl FilePicker {
             Item::new(menu_button_checkbox("Recursive Search", self.recursive_search, Message::SetRecursive(!self.recursive_search))),
             Item::new(Element::<Message, iced::Theme, iced::Renderer>::from(text(format!("Thumbnail size:{}", self.conf.thumb_size)))),
             Item::new(Element::<Message, iced::Theme, iced::Renderer>::from(slider(50.0..=500.0, self.conf.thumb_size, Message::Thumbsize))),
-            Item::new(Element::<Message, iced::Theme, iced::Renderer>::from(text("Icon theme:"))),
-        ];
+            Item::new(menu_button("Themes & Fonts", Message::ToggleThemePane)),
+        ]
+    }
 
-        // Add "System default" option
+    /// Build the theme and font selection pane.
+    fn build_theme_pane(&self) -> Element<'static, Message> {
+        let font = self.font;
+        let mut col = Column::new().padding(10.0).spacing(10.0);
+
+        // Close button at top
+        col = col.push(Button::new(Text::new("Close"))
+            .on_press(Message::ToggleThemePane)
+            .style(style::flat_but_theme())
+            .width(Length::Fill)
+            .padding(2.0));
+
+        // Icon themes section
+        let mut theme_col = Column::new().spacing(5.0);
+        let mut theme_title = Text::new("Icon Themes").size(16);
+        if let Some(f) = font { theme_title = theme_title.font(f); }
+        theme_col = theme_col.push(container(theme_title)
+            .padding(Padding { left: 5.0, ..Padding::ZERO }));
+        theme_col = theme_col.push(Rule::horizontal(2.0));
+        
         let is_default = self.conf.icon_theme.is_none();
-        items.push(Item::new(theme_button("(System default)", is_default, "(System default)")));
-
-        // Add each installed theme as a selectable button
+        theme_col = theme_col.push(theme_button("System default", is_default, "System default"));
+        let is_none = self.conf.icon_theme.as_deref() == Some("None");
+        theme_col = theme_col.push(theme_button("None", is_none, "None"));
         for theme_name in &self.icon_themes {
             let is_selected = self.conf.icon_theme.as_deref() == Some(theme_name.as_str());
-            items.push(Item::new(theme_button(theme_name, is_selected, theme_name)));
+            theme_col = theme_col.push(theme_button(theme_name, is_selected, theme_name));
         }
+        col = col.push(theme_col);
 
-        items
+        // Fonts section
+        let mut font_col = Column::new().spacing(5.0);
+        let mut font_title = Text::new("Fonts").size(16);
+        if let Some(f) = font { font_title = font_title.font(f); }
+        font_col = font_col.push(container(font_title)
+            .padding(Padding { left: 5.0, ..Padding::ZERO }));
+        font_col = font_col.push(Rule::horizontal(2.0));
+        
+        let font_is_default = self.conf.font_name.is_none();
+        font_col = font_col.push(font_button("System default", font_is_default, "System default"));
+        for (name, _) in &self.font_names {
+            let is_selected = self.conf.font_name.as_deref() == Some(name.as_str());
+            font_col = font_col.push(font_button(name, is_selected, name));
+        }
+        col = col.push(font_col);
+
+        // Close button at bottom
+        col = col.push(Button::new(Text::new("Close"))
+            .on_press(Message::ToggleThemePane)
+            .style(style::flat_but_theme())
+            .width(Length::Fill)
+            .padding(2.0));
+
+        Scrollable::new(col).into()
     }
 }
 
