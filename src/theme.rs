@@ -120,11 +120,15 @@ pub fn get_font_internal_name(path: &PathBuf) -> Option<String> {
 
 /// Checks if a font's charset string (from fc-list) covers basic Latin characters.
 ///
-/// Verifies the font has support for A-Z, a-z, 0-9 (Unicode codepoints 0x41-0x5A,
-/// 0x61-0x7A, 0x30-0x39). Filters out script-specific fonts that would show tofu.
+/// Verifies the font has support for ALL of: A-Z, a-z, 0-9
+/// (Unicode codepoints 0x41-0x5A, 0x61-0x7A, 0x30-0x39).
+/// Filters out emoji fonts, script-specific fonts, and other fonts that would show tofu.
 fn has_latin_support(charset: &str) -> bool {
-    // Check if charset contains the required Latin ranges
-    // A-Z: 41-5A, a-z: 61-7A, 0-9: 30-39
+    // Check that ALL three required ranges are present
+    let mut has_upper = false;
+    let mut has_lower = false;
+    let mut has_digits = false;
+
     for range in charset.split_whitespace() {
         let (start, end) = match range.split_once('-') {
             Some((s, e)) => {
@@ -137,15 +141,13 @@ fn has_latin_support(charset: &str) -> bool {
             }
         };
 
-        // Check if this range covers any of the required Latin characters
-        if (start <= 0x41 && end >= 0x5A) || // A-Z
-           (start <= 0x61 && end >= 0x7A) || // a-z
-           (start <= 0x30 && end >= 0x39)    // 0-9
-        {
-            return true;
-        }
+        // Check if this range fully covers each required block
+        if start <= 0x41 && end >= 0x5A { has_upper = true; }
+        if start <= 0x61 && end >= 0x7A { has_lower = true; }
+        if start <= 0x30 && end >= 0x39 { has_digits = true; }
     }
-    false
+
+    has_upper && has_lower && has_digits
 }
 
 /// Discover all available system fonts using `fc-list`.

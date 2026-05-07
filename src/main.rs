@@ -1063,7 +1063,6 @@ impl Application for FilePicker {
 
                                     // Set the font reference for all text widgets
                                     self.font = Some(iced::Font::with_name(static_name));
-                                    eprintln!("Loaded font '{}', internal name '{}'", name, static_name);
 
                                     return Command::batch(vec![
                                         load_cmd.map(move |result| {
