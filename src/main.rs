@@ -512,6 +512,7 @@ enum Message {
     IconThemeSelected(String),
     FontSelected(String),
     ToggleThemePane,
+    DiscoveryComplete((Vec<String>, Vec<(String, PathBuf)>)),
     SearchResult(Box<SearchEvent>),
     NextRecurse(Vec<FItem>, u8),
     PageUp,
@@ -859,11 +860,12 @@ struct FilePicker {
     recursive_search: bool,
     show_goto: bool,
     show_theme_pane: bool,
+    discovering_themes_and_fonts: bool,
     enable_sel_button: bool,
     row_sizes: RefCell<RowSizes>,
     pos_state: RefCell<Measurements>,
-    icon_themes: Vec<String>,
-    font_names: Vec<(String, PathBuf)>,
+    icon_themes: Option<Vec<String>>,
+    font_names: Option<Vec<(String, PathBuf)>>,
     font: Option<iced::Font>,
     search_id: text_input::Id,
     filepath_id: text_input::Id,
@@ -955,11 +957,12 @@ impl Application for FilePicker {
                 recursive_search: true,
                 show_goto: false,
                 show_theme_pane: false,
+                discovering_themes_and_fonts: false,
                 enable_sel_button,
                 row_sizes: RefCell::new(RowSizes::new()),
                 pos_state: RefCell::new(Measurements::default()),
-                icon_themes: theme::discover_themes(),
-                font_names: theme::discover_fonts(),
+                icon_themes: None,
+                font_names: None,
                 font: None,
                 search_id: search_id.clone(),
                 filepath_id: filepath_id.clone(),
@@ -1046,7 +1049,7 @@ impl Application for FilePicker {
 
                 if let Some(name) = font_name {
                     // Find the font file path
-                    if let Some((_, path)) = self.font_names.iter().find(|(n, _)| n == &name) {
+                    if let Some((_, path)) = self.font_names.iter().flat_map(|f| f.iter()).find(|(n, _)| n == &name) {
                         // Read the font file bytes
                         match std::fs::read(path) {
                             Ok(bytes) => {
@@ -1091,6 +1094,21 @@ impl Application for FilePicker {
             }
             Message::ToggleThemePane => {
                 self.show_theme_pane = !self.show_theme_pane;
+                if self.show_theme_pane && (self.icon_themes.is_none() || self.font_names.is_none()) && !self.discovering_themes_and_fonts {
+                    self.discovering_themes_and_fonts = true;
+                    let existing_themes = self.icon_themes.clone();
+                    let existing_fonts = self.font_names.clone();
+                    return Command::perform(
+                        async move { theme::discover_themes_async(existing_themes, existing_fonts).await },
+                        Message::DiscoveryComplete,
+                    );
+                }
+                return Command::none();
+            }
+            Message::DiscoveryComplete((themes, fonts)) => {
+                self.icon_themes = Some(themes);
+                self.font_names = Some(fonts);
+                self.discovering_themes_and_fonts = false;
                 return Command::none();
             }
             Message::SetRecursive(rec) => {
@@ -3066,9 +3084,17 @@ impl FilePicker {
         theme_col = theme_col.push(theme_button("System default", is_default, "System default"));
         let is_none = self.conf.icon_theme.as_deref() == Some("None");
         theme_col = theme_col.push(theme_button("None", is_none, "None"));
-        for theme_name in &self.icon_themes {
-            let is_selected = self.conf.icon_theme.as_deref() == Some(theme_name.as_str());
-            theme_col = theme_col.push(theme_button(theme_name, is_selected, theme_name));
+        
+        if self.discovering_themes_and_fonts {
+            let mut loading = Text::new("Loading...").size(13);
+            if let Some(f) = font { loading = loading.font(f); }
+            theme_col = theme_col.push(container(loading)
+                .padding(Padding { left: 5.0, ..Padding::ZERO }));
+        } else if let Some(themes) = &self.icon_themes {
+            for theme_name in themes {
+                let is_selected = self.conf.icon_theme.as_deref() == Some(theme_name.as_str());
+                theme_col = theme_col.push(theme_button(theme_name, is_selected, theme_name));
+            }
         }
         col = col.push(theme_col);
 
@@ -3082,9 +3108,17 @@ impl FilePicker {
         
         let font_is_default = self.conf.font_name.is_none();
         font_col = font_col.push(font_button("System default", font_is_default, "System default"));
-        for (name, _) in &self.font_names {
-            let is_selected = self.conf.font_name.as_deref() == Some(name.as_str());
-            font_col = font_col.push(font_button(name, is_selected, name));
+        
+        if self.discovering_themes_and_fonts {
+            let mut loading = Text::new("Loading...").size(13);
+            if let Some(f) = font { loading = loading.font(f); }
+            font_col = font_col.push(container(loading)
+                .padding(Padding { left: 5.0, ..Padding::ZERO }));
+        } else if let Some(fonts) = &self.font_names {
+            for (name, _) in fonts {
+                let is_selected = self.conf.font_name.as_deref() == Some(name.as_str());
+                font_col = font_col.push(font_button(name, is_selected, name));
+            }
         }
         col = col.push(font_col);
 

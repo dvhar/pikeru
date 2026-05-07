@@ -88,25 +88,18 @@ pub fn get_audio_icon_path(theme_name: Option<&str>) -> Option<(PathBuf, IconTyp
         .or_else(|| get_icon_path("x-content-audio", theme_name))
 }
 
-/// Icon names that pikeru actually uses, for filtering out empty themes.
-const PIKERU_ICON_NAMES: &[&str] = &[
-    "folder",
-    "text-x-generic",
-    "dialog-error",
-    "audio-x-generic",
-    "inode-file",
-    "x-office-document",
-    "x-content-audio",
-];
-
-/// Discover all installed icon themes that contain at least one icon pikeru actually needs.
+/// Discover all installed icon themes that contain a folder icon.
 ///
-/// Filters out themes that have no usable icons (e.g. `hicolor`, `HighContrast`, or
-/// skeleton themes that exist only as containers).
+/// Filters out themes that lack a folder icon (e.g. cursor-only themes like
+/// `Banana`, or skeleton themes that exist only as containers).
 pub fn discover_themes() -> Vec<String> {
     use linicon::themes;
     themes().into_iter().filter(|theme| {
-            PIKERU_ICON_NAMES.iter().any(|name| { lookup_icon(name).from_theme(&theme.name).next().is_some() })
+            lookup_icon("folder")
+                .from_theme(&theme.name)
+                .use_fallback_themes(false)
+                .next()
+                .is_some()
         }).map(|t| t.name).collect()
 }
 
@@ -164,7 +157,7 @@ fn has_latin_support(charset: &str) -> bool {
 /// Only includes fonts that have:
 /// 1. A valid internal family name (can be loaded by iced)
 /// 2. Basic Latin character support (filters out script-specific fonts that show tofu)
-pub fn discover_fonts() -> Vec<(String, PathBuf)> {
+async fn discover_fonts() -> Vec<(String, PathBuf)> {
     let output = match std::process::Command::new("fc-list")
         .arg("--format=%{family}\t%{file}\t%{charset}\n")
         .output() {
@@ -208,4 +201,20 @@ pub fn discover_fonts() -> Vec<(String, PathBuf)> {
     }
 
     fonts
+}
+
+/// Async wrapper for theme and font discovery.
+///
+/// If either list is already populated, reuses the existing result
+/// to avoid redundant work.
+pub async fn discover_themes_async(
+    existing_themes: Option<Vec<String>>,
+    existing_fonts: Option<Vec<(String, PathBuf)>>,
+) -> (Vec<String>, Vec<(String, PathBuf)>) {
+    let themes = existing_themes.unwrap_or_else(|| discover_themes());
+    let fonts = match existing_fonts {
+        Some(fonts) => fonts,
+        None => discover_fonts().await,
+    };
+    (themes, fonts)
 }
