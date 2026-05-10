@@ -1026,11 +1026,7 @@ impl Application for FilePicker {
             Message::RunCmd(i) => self.run_command(i),
             Message::Dummy => {},
             Message::IconThemeSelected(theme) => {
-                let theme = if theme == "System default" {
-                    None
-                } else {
-                    Some(theme)
-                };
+                let theme = if theme == "None" { None } else { Some(theme) };
                 self.conf.icon_theme = theme.clone();
                 self.conf.need_update = true;
                 // Reload icons with the new theme
@@ -2154,12 +2150,8 @@ fn menu_button_checkbox(txt: &str, checked: bool, msg: Message) -> Element<'stat
 }
 
 /// Create a theme selection button with a visual indicator for the selected theme.
-fn theme_button(txt: &str, selected: bool, theme_name: &str) -> Element<'static, Message> {
-    let label = if selected {
-        format!("  {}", txt)
-    } else {
-        format!("   {}", txt)
-    };
+fn theme_button(selected: bool, theme_name: &str) -> Element<'static, Message> {
+    let label = format!("  {}", theme_name);
     Button::new(container(text(&label)
                 .width(Length::Fill)
                 .horizontal_alignment(alignment::Horizontal::Center)))
@@ -3081,11 +3073,10 @@ impl FilePicker {
         theme_col = theme_col.push(container(theme_title)
             .padding(Padding { left: 5.0, ..Padding::ZERO }));
         theme_col = theme_col.push(Rule::horizontal(2.0));
-        
-        let is_default = self.conf.icon_theme.is_none();
-        theme_col = theme_col.push(theme_button("System default", is_default, "System default"));
-        let is_none = self.conf.icon_theme.as_deref() == Some("None");
-        theme_col = theme_col.push(theme_button("None", is_none, "None"));
+        let is_none = self.conf.icon_theme.as_deref() == Some("None") || self.conf.icon_theme.is_none();
+        theme_col = theme_col.push(theme_button(is_none, "None"));
+        let is_default = self.conf.icon_theme.as_deref() == Some("System default");
+        theme_col = theme_col.push(theme_button(is_default, "System default"));
         
         if self.discovering_themes_and_fonts {
             let mut loading = Text::new("Loading...").size(13);
@@ -3095,7 +3086,7 @@ impl FilePicker {
         } else if let Some(themes) = &self.icon_themes {
             for theme_name in themes {
                 let is_selected = self.conf.icon_theme.as_deref() == Some(theme_name.as_str());
-                theme_col = theme_col.push(theme_button(theme_name, is_selected, theme_name));
+                theme_col = theme_col.push(theme_button(is_selected, theme_name));
             }
         }
         col = col.push(theme_col);

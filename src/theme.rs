@@ -34,17 +34,13 @@ fn icon_quality(icon_type: &IconType, min_size: u16) -> u32 {
 /// and `None` is returned, forcing the caller to use bundled fallback icons.
 pub fn get_icon_path(icon_name: &str, theme_name: Option<&str>) -> Option<(PathBuf, IconType)> {
     // "None" means skip system icons entirely
-    if theme_name == Some("None") {
-        return None;
-    }
-
+    if theme_name.is_none() || theme_name == Some("None") { return None; }
+    let theme_name = if theme_name.as_deref() == Some("System default") { None } else { theme_name };
     let mut iter = lookup_icon(icon_name);
     if let Some(t) = theme_name {
         iter = iter.from_theme(t);
     }
-
     let mut best: Option<(PathBuf, IconType, u32)> = None;
-
     for result in iter {
         if let Ok(icon_path) = result {
             let quality = icon_quality(&icon_path.icon_type, icon_path.min_size);
