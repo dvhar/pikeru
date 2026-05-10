@@ -3070,7 +3070,7 @@ impl FilePicker {
         // Close button at top
         col = col.push(Button::new(Text::new("Close"))
             .on_press(Message::ToggleThemePane)
-            .style(style::flat_but_theme())
+            .style(style::red_close_theme())
             .width(Length::Fill)
             .padding(2.0));
 
@@ -3127,7 +3127,7 @@ impl FilePicker {
         // Close button at bottom
         col = col.push(Button::new(Text::new("Close"))
             .on_press(Message::ToggleThemePane)
-            .style(style::flat_but_theme())
+            .style(style::red_close_theme())
             .width(Length::Fill)
             .padding(2.0));
 
