@@ -53,10 +53,11 @@ impl ButStyle for RedCloseTheme {
     type Style = iced::Theme;
 
     fn active(&self, _style: &Self::Style) -> ButAppearance {
-        let mut appearance = ButAppearance::default();
-        appearance.background = Some(iced::Background::Color(color!(0x262626)));
-        appearance.text_color = color!(0xff3333);
-        appearance
+        gradbut(color!(0x232323), color!(0x303030), color!(0xff3333), Radians(0.0))
+    }
+
+    fn hovered(&self, _style: &Self::Style) -> ButAppearance {
+        gradbut(color!(0x563656), color!(0x404060), color!(0xff5555), Radians(0.0))
     }
 }
 
@@ -90,6 +91,7 @@ pub fn side_but_theme() -> iced::theme::Button {
         Box::new(SideButTheme) as Box<dyn ButStyle<Style = iced::Theme>>
     )
 }
+/// Red close button: same gradient style as Open/Cancel buttons but with red text.
 pub fn red_close_theme() -> iced::theme::Button {
     iced::theme::Button::Custom(
         Box::new(RedCloseTheme) as Box<dyn ButStyle<Style = iced::Theme>>

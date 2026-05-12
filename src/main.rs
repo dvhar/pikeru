@@ -28,7 +28,7 @@ use iced::{
     keyboard::Key,
     keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace,PageUp,PageDown,Space},
     keyboard::key::Named,
-    window::{Icon, icon as window_icon},
+    window::icon as window_icon,
     widget::{
         horizontal_space, vertical_space, slider,
         container::Id as CId,
