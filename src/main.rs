@@ -6,6 +6,7 @@ use iced_gif;
 use iced_gif::widget::gif;
 use img::load_from_memory;
 use img;
+use img::GenericImageView;
 use webp;
 use num_cpus;
 use itertools::Itertools;
@@ -27,6 +28,7 @@ use iced::{
     keyboard::Key,
     keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace,PageUp,PageDown,Space},
     keyboard::key::Named,
+    window::{Icon, icon as window_icon},
     widget::{
         horizontal_space, vertical_space, slider,
         container::Id as CId,
@@ -114,6 +116,10 @@ fn cli(flags: &getopts::Matches) {
     }
 }
 
+fn is_portal() -> bool {
+    std::env::var("PK_XDG").is_ok()
+}
+
 fn main() -> iced::Result {
     let mut conf = Config::new();
     conf.update(false);
@@ -122,9 +128,18 @@ fn main() -> iced::Result {
     let id = mem::take(&mut conf.id);
     let mut settings = iced::Settings::with_flags(conf);
     settings.id = Some(id);
+    if is_portal() {
+        settings.window.decorations = false;
+    }
     settings.window.level = iced::window::Level::AlwaysOnTop;
     settings.window.position = iced::window::Position::Centered;
     settings.window.resizable = resizeable;
+    settings.window.platform_specific.application_id = "org.pikeru.FileChooser".to_string();
+    if let Ok(img_result) = img::load_from_memory(include_bytes!("../assets/icon.png")) {
+        let (w, h) = img_result.dimensions();
+        let rgba = img_result.to_rgba8().into_vec();
+        settings.window.icon = window_icon::from_rgba(rgba, w, h).ok();
+    }
     FilePicker::run(settings)
 }
 
@@ -146,9 +161,7 @@ impl fmt::Display for TriBool {
 }
 impl TriBool {
     fn is_true(&self) -> bool {
-        if *self == TriBool::OnlyNotPortal {
-            return !matches!(std::env::var("PK_XDG"), Ok(_))
-        }
+        if *self == TriBool::OnlyNotPortal { return !is_portal() }
         *self == TriBool::True
     }
 }
