@@ -512,6 +512,7 @@ enum Message {
     IconThemeSelected(String),
     FontSelected(String),
     ToggleThemePane,
+    StartDiscovery,
     DiscoveryComplete((Vec<String>, Vec<(String, PathBuf)>)),
     SearchResult(Box<SearchEvent>),
     NextRecurse(Vec<FItem>, u8),
@@ -1087,9 +1088,8 @@ impl Application for FilePicker {
                 }
                 return Command::none();
             }
-            Message::ToggleThemePane => {
-                self.show_theme_pane = !self.show_theme_pane;
-                if self.show_theme_pane && (self.icon_themes.is_none() || self.font_names.is_none()) && !self.discovering_themes_and_fonts {
+            Message::StartDiscovery => {
+                if (self.icon_themes.is_none() || self.font_names.is_none()) && !self.discovering_themes_and_fonts {
                     self.discovering_themes_and_fonts = true;
                     let existing_themes = self.icon_themes.clone();
                     let existing_fonts = self.font_names.clone();
@@ -1098,6 +1098,10 @@ impl Application for FilePicker {
                         Message::DiscoveryComplete,
                     );
                 }
+                return Command::none();
+            }
+            Message::ToggleThemePane => {
+                self.show_theme_pane = !self.show_theme_pane;
                 return Command::none();
             }
             Message::DiscoveryComplete((themes, fonts)) => {
@@ -1962,7 +1966,7 @@ impl Application for FilePicker {
                     menu_bar![
                         (top_icon(self.icons.cmds.clone(), Message::Dummy), 
                             view_menu(cmd_list))
-                        (top_icon(self.icons.settings.clone(), Message::Dummy),
+                        (top_icon(self.icons.settings.clone(), Message::StartDiscovery),
                             view_menu(self.build_settings_menu()))
                     ].spacing(1.0),
                     top_icon(self.icons.newdir.clone(), Message::NewDir(false)),
