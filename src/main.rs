@@ -2016,8 +2016,8 @@ impl Application for FilePicker {
                         // Show theme pane on the right if enabled
                         if self.show_theme_pane {
                             r = r.push(container(self.build_theme_pane()).width(Length::Fixed(250.0)));
-                        } else if !self.conf.icon_view {
-                            // In list mode, show preview pane for selected files
+                        } else if !self.conf.icon_view && self.items.iter().any(|item| item.sel) {
+                            // In list mode, show preview pane only when files are selected
                             r = r.push(container(self.build_preview_pane()).width(Length::Fixed(250.0)));
                         }
                         r
