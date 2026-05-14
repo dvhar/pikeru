@@ -93,7 +93,7 @@ fn cli(flags: &getopts::Matches) {
         std::process::exit(0);
     }
     if flags.opt_present("v") {
-        println!("1.13");
+        println!("1.14");
         std::process::exit(0);
     }
     let cmd = if flags.opt_present("d") {
