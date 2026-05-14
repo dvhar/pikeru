@@ -64,6 +64,7 @@ use std::{
 };
 use video_rs::{Decoder, Location, DecoderBuilder, Resize};
 use ndarray;
+use mime_guess;
 use getopts::Options;
 use inotify::{Inotify, WatchMask, WatchDescriptor, EventMask};
 use iced_aw::{
@@ -588,11 +589,20 @@ impl DerefMut for FItem {
 }
 
 struct Icons {
+    // Generic bucket icons (used when no themed icon is found)
     folder: Handle,
     doc: Handle,
     unknown: Handle,
     error: Handle,
     audio: Handle,
+    // Per-MIME-type icons loaded from the icon theme
+    archive: Handle,
+    code: Handle,
+    pdf_icon: Handle,
+    epub_icon: Handle,
+    video: Handle,
+    image: Handle,
+    // UI icons (bundled)
     thumb_dir: String,
     settings: svg::Handle,
     updir: svg::Handle,
@@ -601,6 +611,8 @@ struct Icons {
     goto: svg::Handle,
     cando_pdf: bool,
     cando_epub: bool,
+    // Icon theme name for dynamic lookups
+    theme_name: Option<String>,
 }
 
 struct Bookmark {
@@ -2602,72 +2614,112 @@ impl FItem {
                         None => "".to_string(),
                     };
                     let ext = ext.as_str();
-                    self.ftype = match ext {
-                        "svg" => {
-                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Svg, thumbsize, icons.clone()).await;
-                            if self.thumb_handle == None {
-                                self.thumb_handle = Some(icons.error.clone());
-                                FType::File
-                            } else {
-                                self.svg = true;
-                                FType::Image
-                            }
-                        },
-                        "png"|"jpg"|"jpeg"|"bmp"|"tiff"|"gif"|"webp" => {
-                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Norm, thumbsize, icons.clone()).await;
-                            if self.thumb_handle == None {
-                                self.thumb_handle = Some(icons.error.clone());
-                                FType::File
-                            } else {
-                                if ext == "gif" {
-                                    self.gif = true;
-                                }
-                                FType::Image
-                            }
-                        },
-                        "webm"|"mkv"|"mp4"|"m4b"|"av1"|"avi"|"avif"|"flv"|"wmv"|"m4v"|"mpeg"|"mov"|"jxl"|"ico" => {
-                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Vid, thumbsize, icons.clone()).await;
-                            if self.thumb_handle == None {
-                                self.thumb_handle = Some(icons.error.clone());
-                                FType::File
-                            } else {
-                                self.vid = true;
-                                FType::Image
-                            }
-                        },
-                        "pdf" => {
-                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Pdf, thumbsize, icons.clone()).await;
-                            if self.thumb_handle == None {
-                                self.thumb_handle = Some(icons.doc.clone());
-                                FType::File
-                            } else {
-                                self.vid = true;
-                                FType::Image
-                            }
-                        },
-                        "epub" => {
-                            self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Epub, thumbsize, icons.clone()).await;
-                            if self.thumb_handle == None {
-                                self.thumb_handle = Some(icons.doc.clone());
-                                FType::File
-                            } else {
-                                self.vid = true;
-                                FType::Image
-                            }
-                        },
-                        "txt"|"doc"|"docx"|"xls"|"xlsx" => {
-                            self.thumb_handle = Some(icons.doc.clone());
-                            FType::File
-                        },
-                        "mp3"|"wav"|"ogg"|"flac"|"aac"|"wma"|"aiff"|"alac"|"opus"|"m4a" => {
-                            self.thumb_handle = Some(icons.audio.clone());
-                            FType::File
-                        },
-                        _ => {
-                            self.thumb_handle = Some(icons.unknown.clone());
-                            FType::File
-                        },
-                    };
+
+                    // Derive MIME type from extension via mime_guess.
+                    let mime_type = mime_guess::from_ext(ext).first_or_octet_stream().to_string();
+                    let needs_thumb = theme::mime_needs_thumbnail(&mime_type);
+                    let is_audio = theme::mime_is_audio(&mime_type);
+
+                    // 1. Try themed icon lookup for non-thumbnail types.
+                    if !needs_thumb && ext != "pdf" && ext != "epub" {
+                        if let Some(handle) = icons.lookup_themed_icon(&mime_type, ext, thumbsize) {
+                            self.thumb_handle = Some(handle);
+                            self.ftype = FType::File;
+                            chan.send(self).unwrap();
+                            return;
+                        }
+                    }
+
+                    // 2. Thumbnail-generating image types
+                    if matches!(ext, "svg" | "png" | "jpg" | "jpeg" | "bmp" | "tiff" | "gif" | "webp") {
+                        self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Norm, thumbsize, icons.clone()).await;
+                        if let Some(_) = self.thumb_handle {
+                            if ext == "svg" { self.svg = true; }
+                            if ext == "gif" { self.gif = true; }
+                            self.ftype = FType::Image;
+                        } else {
+                            self.thumb_handle = Some(icons.error.clone());
+                            self.ftype = FType::File;
+                        }
+                    // 3. Video types that use video-rs for frame extraction
+                    } else if matches!(ext, "webm" | "mkv" | "mp4" | "m4b" | "av1" | "avi" | "avif" | "flv" | "wmv" | "m4v" | "mpeg" | "mov") {
+                        self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Vid, thumbsize, icons.clone()).await;
+                        if let Some(_) = self.thumb_handle {
+                            self.vid = true;
+                            self.ftype = FType::Image;
+                        } else {
+                            self.thumb_handle = Some(icons.error.clone());
+                            self.ftype = FType::File;
+                        }
+                    // 4. jxl and ico — image thumbnails
+                    } else if matches!(ext, "jxl" | "ico") {
+                        self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Norm, thumbsize, icons.clone()).await;
+                        if let Some(_) = self.thumb_handle {
+                            self.ftype = FType::Image;
+                        } else {
+                            self.thumb_handle = Some(icons.error.clone());
+                            self.ftype = FType::File;
+                        }
+                    // 5. PDF — themed icon or thumbnail fallback
+                    } else if ext == "pdf" {
+                        self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Pdf, thumbsize, icons.clone()).await
+                            .or(Some(icons.pdf_icon.clone()));
+                        self.ftype = FType::File;
+                    // 6. EPUB — themed icon or thumbnail fallback
+                    } else if ext == "epub" {
+                        self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Epub, thumbsize, icons.clone()).await
+                            .or(Some(icons.epub_icon.clone()));
+                        self.ftype = FType::File;
+                    // 7. Audio files (MIME-based or extension bucket)
+                    } else if is_audio || matches!(theme::bucket_for_ext(ext), Some(theme::GenericBucket::Audio)) {
+                        self.thumb_handle = Some(icons.audio.clone());
+                        self.ftype = FType::File;
+                    // 8. Generic document bucket
+                    } else if matches!(theme::bucket_for_ext(ext), Some(theme::GenericBucket::Document)) {
+                        self.thumb_handle = Some(icons.doc.clone());
+                        self.ftype = FType::File;
+                    // 9. Catch-all: pick icon by MIME category
+                    } else if mime_type.starts_with("application/") && (
+                        mime_type.contains("zip") || mime_type.contains("tar")
+                        || mime_type.contains("gzip") || mime_type.contains("compress")
+                        || mime_type.contains("7z") || mime_type.contains("rar")
+                        || mime_type.contains("bzip") || mime_type.contains("xz")
+                    ) {
+                        self.thumb_handle = Some(icons.archive.clone());
+                        self.ftype = FType::File;
+                    } else if mime_type.starts_with("text/") && (
+                        mime_type.contains("script") || mime_type.contains("x-")
+                        || mime_type == "text/plain"
+                        || mime_type.contains("csv")
+                        || mime_type.contains("yaml")
+                        || mime_type.contains("toml")
+                        || mime_type.contains("json")
+                        || mime_type.contains("xml")
+                        || mime_type.contains("html")
+                        || mime_type.contains("javascript")
+                        || mime_type.contains("css")
+                        || mime_type.contains("markdown")
+                    ) {
+                        self.thumb_handle = Some(icons.code.clone());
+                        self.ftype = FType::File;
+                    } else if mime_type.starts_with("video/") {
+                        self.thumb_handle = Some(icons.video.clone());
+                        self.ftype = FType::File;
+                    } else if mime_type.starts_with("image/") {
+                        self.thumb_handle = Some(icons.image.clone());
+                        self.ftype = FType::File;
+                    } else if mime_type.starts_with("audio/") {
+                        self.thumb_handle = Some(icons.audio.clone());
+                        self.ftype = FType::File;
+                    } else if mime_type.starts_with("application/") {
+                        // Generic application/octet-stream or other app types
+                        // — use the generic document icon as a sensible default
+                        self.thumb_handle = Some(icons.doc.clone());
+                        self.ftype = FType::File;
+                    } else {
+                        self.thumb_handle = Some(icons.unknown.clone());
+                        self.ftype = FType::File;
+                    }
                 }
             }
         }
@@ -3200,12 +3252,57 @@ impl Icons {
             thumbsize,
         );
 
+        // Per-MIME-type icons — these are the new expanded file type support.
+        // Each one tries themed icon first, then bundled fallback.
+        let archive = Self::load_system_icon(
+            theme::get_icon_path("package-x-generic", theme_name)
+                .or_else(|| theme::get_icon_path("application-x-compressed", theme_name)),
+            include_bytes!("../assets/archive.svg"),
+            thumbsize,
+        );
+        let code = Self::load_system_icon(
+            theme::get_icon_path("text-x-script", theme_name)
+                .or_else(|| theme::get_icon_path("text-x-generic", theme_name)),
+            include_bytes!("../assets/code-svgrepo-com.svg"),
+            thumbsize,
+        );
+        let pdf_icon = Self::load_system_icon(
+            theme::get_icon_path("application-pdf", theme_name)
+                .or_else(|| theme::get_icon_path("x-office-document", theme_name)),
+            include_bytes!("../assets/document.svg"),
+            thumbsize,
+        );
+        let epub_icon = Self::load_system_icon(
+            theme::get_icon_path("application-epub+zip", theme_name)
+                .or_else(|| theme::get_icon_path("x-office-document", theme_name)),
+            include_bytes!("../assets/document.svg"),
+            thumbsize,
+        );
+        let video = Self::load_system_icon(
+            theme::get_icon_path("video-x-generic", theme_name)
+                .or_else(|| theme::get_icon_path("x-content-video", theme_name)),
+            include_bytes!("../assets/video-file.svg"),
+            thumbsize,
+        );
+        let image = Self::load_system_icon(
+            theme::get_icon_path("image-x-generic", theme_name)
+                .or_else(|| theme::get_icon_path("x-office-document", theme_name)),
+            include_bytes!("../assets/image-file.svg"),
+            thumbsize,
+        );
+
         Self {
             folder,
             unknown,
             doc,
             error,
             audio,
+            archive,
+            code,
+            pdf_icon,
+            epub_icon,
+            video,
+            image,
             thumb_dir: tpath.to_string_lossy().to_string(),
             settings: svg::Handle::from_memory(include_bytes!("../assets/settings2.svg")),
             updir: svg::Handle::from_memory(include_bytes!("../assets/up2.svg")),
@@ -3214,6 +3311,7 @@ impl Icons {
             goto: svg::Handle::from_memory(include_bytes!("../assets/goto2.svg")),
             cando_pdf,
             cando_epub,
+            theme_name: icon_theme,
         }
     }
 
@@ -3271,6 +3369,80 @@ impl Icons {
         let mut pixmap = tiny_skia::PixmapMut::from_bytes(&mut pixels, w, h).unwrap();
         resvg::render(&tree, transforem, &mut pixmap);
         Handle::from_pixels(w, h, pixels)
+    }
+
+    /// Look up the best icon for a given MIME type and extension from the
+    /// selected theme. Returns `Some(handle)` if found, `None` to fall back
+    /// to generic buckets.
+    fn lookup_themed_icon(&self, mime: &str, ext: &str, thumbsize: u32) -> Option<Handle> {
+        let theme_name = self.theme_name.as_deref();
+        // Try MIME-based candidates (each with its own fallback chain)
+        if let Some(candidates) = theme::mime_icon_candidates(mime) {
+            for icon_name in &candidates {
+                if let Some((path, icon_type)) = theme::get_icon_path(icon_name, theme_name) {
+                    return Some(Self::load_system_icon(Some((path, icon_type)), include_bytes!("../assets/file6.svg"), thumbsize as f32));
+                }
+            }
+        }
+
+        // Secondary: extension-specific lookup
+        let ext_icons: &[&str] = match ext {
+            // Code — try language-specific first, fall back to generic script
+            "rs" => &["text-x-rustsrc", "text-rust", "text-x-script"],
+            "go" => &["text-x-go", "text-x-script"],
+            "rb" => &["text-x-ruby", "text-x-script"],
+            "java" => &["text-x-java", "text-x-script"],
+            "php" => &["text-x-php", "text-x-script"],
+            "c" | "h" | "cpp" | "hpp" | "cc" | "hh" | "cxx" | "hxx" => {
+                &["text-x-c", "text-x-c++", "text-x-h"]
+            }
+            "cs" => &["text-x-csharp", "text-x-script"],
+            "swift" => &["text-x-swift", "text-x-script"],
+            "kt" | "kts" => &["text-x-kotlin", "text-x-script"],
+            "lua" => &["text-x-lua", "text-x-script"],
+            "zig" => &["text-x-zig", "text-x-script"],
+            "nim" => &["text-x-nim", "text-x-script"],
+            // Config / data formats
+            "json" => &["application-json", "text-x-script"],
+            "toml" => &["application-toml", "text-toml", "application-json"],
+            "yaml" | "yml" => &["text-yaml", "text-x-script"],
+            "ini" | "conf" | "cfg" => &["application-x-desktop", "x-office-document"],
+            "csv" => &["text-csv", "application-vnd.oasis.opendocument.spreadsheet", "x-office-spreadsheet"],
+            // Marked-up text
+            "md" | "mkd" | "markdown" => &["text-x-markdown", "text-x-generic"],
+            // Archives — try specific first, generic last
+            "gz" => &["application-gzip", "package-x-generic"],
+            "bz2" => &["application-x-bzip2", "package-x-generic"],
+            "xz" | "lzma" => &["application/x-xz", "package-x-generic"],
+            "tgz" | "tar.gz" => &["application-x-tar", "package-x-generic"],
+            "7z" => &["application-x-7zip", "package-x-generic"],
+            "rar" => &["application-x-rar", "package-x-generic"],
+            // Video (non-thumbnailed)
+            "3gp" => &["video-3gpp", "video-x-generic"],
+            // Audio (non-thumbnailed)
+            "mid" | "midi" => &["audio-midi", "audio-x-generic"],
+            // Image (non-thumbnailed)
+            "exr" => &["image-exr", "image-x-generic"],
+            "psd" => &["image-psd", "image-x-generic"],
+            "ai" => &["application-postscript", "image-x-generic"],
+            // Misc
+            "torrent" => &["application-x-bittorrent", "package-x-generic"],
+            "vmdk" | "vdi" | "qcow2" => &["drive-harddisk", "package-x-generic"],
+            "desktop" => &["application-x-desktop", "x-office-document"],
+            "iso" => &["x-iso9660-image", "drive-harddisk", "media-optical"],
+            "py" => &["text-x-python", "text-x-script"],
+            // Fallback for unknown extensions — try a generic script icon
+            _ => &[],
+        };
+
+        // Tertiary: extension-specific candidates
+        for icon_name in ext_icons {
+            if let Some((path, icon_type)) = theme::get_icon_path(icon_name, theme_name) {
+                return Some(Self::load_system_icon(Some((path, icon_type)), include_bytes!("../assets/file6.svg"), thumbsize as f32));
+            }
+        }
+
+        None
     }
 }
 

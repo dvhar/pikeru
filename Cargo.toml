@@ -42,4 +42,5 @@ webp = "0.3.0"
 chrono = "0.4.38"
 linicon = "2.3.0"
 ttf-parser = "0.21.0"
+mime_guess = "2"
 
