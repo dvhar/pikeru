@@ -402,7 +402,9 @@ fn has_latin_support(charset: &str) -> bool {
 ///
 /// Returns a deduplicated list of `(display_name, font_file_path)` pairs.
 /// The display name is the fontconfig family name; the path is the actual
-/// font file (`.ttf`, `.otf`, etc.).
+/// font file (`.ttf`, `.otf`, etc).
+/// Deduplication is by both family name and file path: an entry is skipped
+/// if either its family name or its file path has been seen before.
 ///
 /// Only includes fonts that have:
 /// 1. A valid internal family name (can be loaded by iced)
@@ -420,7 +422,8 @@ async fn discover_fonts() -> Vec<(String, PathBuf)> {
         Err(_) => return Vec::new(),
     };
 
-    let mut seen = HashSet::new();
+    let mut seen_families = HashSet::new();
+    let mut seen_files = HashSet::new();
     let mut fonts = Vec::new();
 
     for line in lines.lines() {
@@ -430,12 +433,14 @@ async fn discover_fonts() -> Vec<(String, PathBuf)> {
         }
 
         let family = parts[0].to_string();
-        // Skip if we've already seen this family
-        if !seen.insert(family.clone()) {
+        let path = PathBuf::from(parts[1]);
+
+        // Skip if we've already seen this family name or font file
+        if !seen_families.insert(family.clone())
+            || !seen_files.insert(path.clone())
+        {
             continue;
         }
-
-        let path = PathBuf::from(parts[1]);
 
         // Check charset if available
         if parts.len() >= 3 {
