@@ -11,7 +11,7 @@ depends=('ffmpeg' 'xdg-desktop-portal' 'sqlite' 'poppler')
 makedepends=('cargo' 'clang' 'scdoc')
 optdepends=('epub-thumbnailer-git: epub thumbnail support')
 source=("$pkgname-$pkgver.tar.gz::https://github.com/dvhar/$pkgname/archive/refs/tags/$pkgver.tar.gz")
-sha512sums=('8a6ba6ce7917219c10dae2fd8b9651c05dbc5a8da18d3aedc93fc29c166b5ee98240ab6affa81be9893341c47a7e8eec25c89b5db9b5ae4bec5032bffbd71ece')
+sha512sums=('2b30817aa68ca164ca6eaee2924ca50f9653d622e11ef4865b3bf18e649e6d03d2f4e2a7897dd0b67f369965c48d16cb3b19bda9e50300d9bf2ff468f2b1739e')
 options=(!debug !lto)
 install="${pkgname}.install"
 
