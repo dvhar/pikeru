@@ -244,7 +244,6 @@ impl Config {
                             Cmd::builtin("Cut"),
                             Cmd::builtin("Copy"),
                             Cmd::builtin("Paste"),
-                            Cmd::builtin("Terminal"),
                         ];
         let mut respect_gitignore = true;
         let mut icon_view = true;
@@ -394,7 +393,7 @@ impl Config {
 # [part] is the filename without path or extension
 # [ext] is the file extension, including the period
 [Commands]\n");
-        self.cmds.iter().skip(6).for_each(|cmd| {
+        self.cmds.iter().skip(5).for_each(|cmd| {
             conf.push_str(&cmd.label);
             conf.push_str(" = ");
             conf.push_str(&cmd.cmd);
@@ -2829,25 +2828,6 @@ impl FilePicker {
         self.content_viewport.y = y + self.content_y;
     }
 
-    /// Spawn a terminal emulator in the given directory.
-    fn launch_terminal(dir: &str) {
-        let terminals = ["kitty", "alacritty", "konsole", "foot", "gnome-terminal",
-                         "st", "xterm", "weston-terminal", "tilix",
-                         "urxvt", "roxterm", "mate-terminal", "xfce4-terminal",
-                         "terminator", "deepin-terminal", "lxterminal"];
-        for term in &terminals {
-            if std::process::Command::new("which").arg(term).output().map_or(false, |o| o.status.success()) {
-                let _ = std::process::Command::new(term)
-                    .args(["--working-directory", dir])
-                    .spawn();
-                return;
-            }
-        }
-        if std::process::Command::new("which").arg("xdg-terminal-exec").output().map_or(false, |o| o.status.success()) {
-            let _ = std::process::Command::new("xdg-terminal-exec").arg(dir).spawn();
-        }
-    }
-
     #[inline]
     fn itopos(self: &Self, i: usize) -> Option<Rectangle> {
         if !self.conf.icon_view {
@@ -2878,7 +2858,6 @@ impl FilePicker {
 
     fn run_command(self: &mut Self, icmd: usize) {
         let cmd = &self.conf.cmds[icmd];
-        eprintln!("CMD: {:?}", cmd);
         if cmd.builtin && cmd.label == "Paste" {
             if self.dirs.len() != 1 {
                 self.modal = FModal::Error("Cannot paste when multiple directories are open".into());
@@ -2889,10 +2868,6 @@ impl FilePicker {
             });
             self.clipboard_paths.clear();
             return;
-        }
-        if cmd.builtin && cmd.label == "Terminal" && !self.dirs.is_empty() {
-            let dir = self.dirs[0].clone();
-            tokio::task::spawn_blocking(move || Self::launch_terminal(&dir));
         }
         self.items.iter().filter(|item| item.sel).for_each(|item| {
             if cmd.builtin {
