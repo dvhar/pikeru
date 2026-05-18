@@ -162,6 +162,7 @@ struct Config {
     sort_by: i32,
     bookmarks: Vec<Bookmark>,
     cmds: Vec<Cmd>,
+    terminal: String,
     thumb_size: f32,
     dpi_scale: f64,
     window_size: Size,
@@ -244,6 +245,7 @@ impl Config {
                             Cmd::builtin("Cut"),
                             Cmd::builtin("Copy"),
                             Cmd::builtin("Paste"),
+                            Cmd::builtin("Terminal"),
                         ];
         let mut respect_gitignore = true;
         let mut icon_view = true;
@@ -255,6 +257,7 @@ impl Config {
         let mut show_hidden = false;
         let mut icon_theme: Option<String> = None;
         let mut font_name: Option<String> = None;
+        let mut terminal = String::new();
         let mut opts_missing = 8;
         let mut resizeable = match std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("".to_string()).to_lowercase().as_str() {
             "i3"|"sway"|"dwm"|"dwl"|"hyprland"|"bspwm"|"awesome"|"xmonad"|"qtile"|"spectrwm"|"herbstluftwm"|"notion" => TriBool::OnlyNotPortal,
@@ -271,7 +274,13 @@ impl Config {
                     let (k, v) = str::split_once(line, '=').unwrap_or(("",""));
                     let (k, v) = (k.trim(), v.trim());
                     match section {
-                        S::Commands => cmds.push(Cmd::new(k, v)),
+                        S::Commands => {
+                            if k == "Terminal" {
+                                terminal = v.to_string();
+                            } else {
+                                cmds.push(Cmd::new(k, v));
+                            }
+                        },
                         S::Bookmarks => bookmarks.push(Bookmark::new(k,v)),
                         S::Ignore => {gitignore += line; gitignore += "\n"; },
                         S::Settings => match k {
@@ -360,6 +369,7 @@ impl Config {
             forget_changes: matches.opt_present("f"),
             do_index: !matches.opt_present("x"),
             cmds,
+            terminal,
             bookmarks,
             sort_by,
             thumb_size,
@@ -392,8 +402,13 @@ impl Config {
 # [dir] is the current directory without trailing slash
 # [part] is the filename without path or extension
 # [ext] is the file extension, including the period
+# Terminal = <command> sets the terminal emulator to open in the current directory.
+#   Leave blank (no Terminal entry or 'Terminal =') to auto-detect a suitable terminal.
 [Commands]\n");
-        self.cmds.iter().skip(5).for_each(|cmd| {
+        conf.push_str("Terminal = ");
+        conf.push_str(&self.terminal);
+        conf.push('\n');
+        self.cmds.iter().skip(6).for_each(|cmd| {
             conf.push_str(&cmd.label);
             conf.push_str(" = ");
             conf.push_str(&cmd.cmd);
@@ -2815,6 +2830,31 @@ fn shquote(s: &str) -> String {
     return format!("\"{}\"", s);
 }
 
+/// Try to find a working terminal emulator from a list of known terminals.
+/// Returns None if no terminal is found.
+fn find_terminal() -> Option<String> {
+    let terminals = [
+        "kitty",
+        "alacritty",
+        "foot",
+        "wezterm",
+        "st",
+        "konsole",
+        "terminator",
+        "tilix",
+        "xterm",
+        "gnome-terminal",
+        "xfce4-terminal",
+        "urxvt",
+    ];
+    for term in &terminals {
+        if std::process::Command::new("which").arg(term).output().map_or(false, |o| o.status.success()) {
+            return Some(term.to_string());
+        }
+    }
+    None
+}
+
 impl FilePicker {
 
     #[inline]
@@ -2858,6 +2898,46 @@ impl FilePicker {
 
     fn run_command(self: &mut Self, icmd: usize) {
         let cmd = &self.conf.cmds[icmd];
+        if cmd.builtin && cmd.label == "Terminal" {
+            let cwd = self.dirs[0].clone();
+            let cwd_path = PathBuf::from(&cwd);
+            if self.conf.terminal.is_empty() {
+                // Auto-detect terminal
+                match find_terminal() {
+                    Some(terminal_cmd) => {
+                        tokio::task::spawn_blocking(move || {
+                            let parts: Vec<&str> = terminal_cmd.split_whitespace().collect();
+                            if parts.is_empty() { return; }
+                            let mut cmd = OsCmd::new(parts[0]);
+                            if parts.len() > 1 {
+                                cmd.args(&parts[1..]);
+                            }
+                            cmd.arg("-e").arg("bash");
+                            match cmd.current_dir(&cwd_path).spawn() {
+                                Ok(_) => {},
+                                Err(e) => eprintln!("Error opening terminal: {}", e),
+                            }
+                        });
+                    },
+                    None => {
+                        self.modal = FModal::Error("No terminal emulator found. Set 'Terminal' in config.".into());
+                    },
+                }
+            } else {
+                // Use user-configured terminal command (run through bash)
+                let filecmd = self.conf.terminal.clone();
+                tokio::task::spawn_blocking(move || {
+                    match OsCmd::new("bash").arg("-c").arg(filecmd).current_dir(&cwd_path).output() {
+                        Ok(output) if !output.status.success() => eprintln!("{}{}",
+                                    unsafe{std::str::from_utf8_unchecked(&output.stdout)},
+                                    unsafe{std::str::from_utf8_unchecked(&output.stderr)}),
+                        Ok(_) => {},
+                        Err(e) => eprintln!("Error running command: {}", e)
+                    };
+                });
+            }
+            return;
+        }
         if cmd.builtin && cmd.label == "Paste" {
             if self.dirs.len() != 1 {
                 self.modal = FModal::Error("Cannot paste when multiple directories are open".into());
