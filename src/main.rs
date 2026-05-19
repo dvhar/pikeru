@@ -25,7 +25,7 @@ use iced::{
     mouse::ScrollDelta,
     keyboard::Event::{KeyPressed,KeyReleased},
     keyboard::Key,
-    keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace,PageUp,PageDown,Space},
+    keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace,PageUp,PageDown,Space,Tab},
     keyboard::key::Named,
     widget::{
         horizontal_space, vertical_space, slider,
@@ -226,8 +226,24 @@ impl Config {
                 (false,true) => "To handle pdf thumbnails, install pdftoppm.",
                 (false,false) => "To handle pdf and epub thumbnails, install pdftoppm and epub-thumbnailer.",
             };
-            println!("{}\n{}\n{}",opts.usage("pikeru"),
-                "File picker config file is ~/.config/pikeru.conf.\nThe portal config file which includes the semantic search indexer and postprocessor, is by default ~/.config/xdg-desktop-portal-pikeru/config.",
+            println!("{}\n{}\n{}\n{}",opts.usage("pikeru"),
+                "Keybindings when an input box is not focused:
+  h/j/k/l      Navigate left/down/up/right (vim-style)
+  Arrow keys   Navigate (same as h/j/k/l)
+  v            Toggle between icon and list view
+  i            Focus the filepath input
+  s or /       Focus the search bar
+  n            Create new directory
+  t            Open terminal in current directory
+  y            Copy selected file(s)
+  p            Paste from clipboard
+  Tab          Cycle through bookmarks (forward)
+  Shift+Tab    Cycle through bookmarks (backward)
+  Backspace    Go up one directory
+  Enter        Open/enter selected item
+  Space        Toggle image preview
+  q            Exit",
+                "\nFile picker config file is ~/.config/pikeru.conf.\nThe portal config file which includes the semantic search indexer and postprocessor, is by default ~/.config/xdg-desktop-portal-pikeru/config.",
                 extra_thumbs);
             std::process::exit(0);
         }
@@ -535,6 +551,10 @@ enum Message {
     PageUp,
     PageDown,
     Spacebar,
+    FocusFilepath,
+    FocusSearch,
+    CycleBookmark,
+    CycleBookmarkBack,
     Dummy,
 }
 
@@ -1272,6 +1292,40 @@ impl Application for FilePicker {
                 self.update_scroll(offset.y);
                 return scrollable::scroll_to(self.scroll_id.clone(), offset);
             },
+            Message::FocusFilepath => {
+                return text_input::focus(self.filepath_id.clone());
+            }
+            Message::FocusSearch => {
+                return text_input::focus(self.search_id.clone());
+            }
+            Message::CycleBookmark => {
+                if self.conf.bookmarks.is_empty() {
+                    return Command::none();
+                }
+                let current = self.dirs.first().map(|s| s.as_str());
+                let idx = if let Some(dir) = current {
+                    self.conf.bookmarks.iter().position(|bm| bm.path == dir)
+                        .map(|i| (i + 1) % self.conf.bookmarks.len())
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+                return self.update(Message::LoadBookmark(idx));
+            }
+            Message::CycleBookmarkBack => {
+                if self.conf.bookmarks.is_empty() {
+                    return Command::none();
+                }
+                let current = self.dirs.first().map(|s| s.as_str());
+                let idx = if let Some(dir) = current {
+                    self.conf.bookmarks.iter().position(|bm| bm.path == dir)
+                        .map(|i| if i == 0 { self.conf.bookmarks.len() - 1 } else { i - 1 })
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
+                return self.update(Message::LoadBookmark(idx));
+            }
             Message::Spacebar => {
                 match self.view_image.1 {
                     Preview::None => {
@@ -1787,7 +1841,21 @@ impl Application for FilePicker {
                     Keyboard(KeyPressed{ key: Key::Named(Backspace), .. }) => Some(Message::UpDir),
                     Keyboard(KeyPressed{ key: Key::Named(PageUp), .. }) => Some(Message::PageUp),
                     Keyboard(KeyPressed{ key: Key::Named(PageDown), .. }) => Some(Message::PageDown),
+                    Keyboard(KeyPressed{ key: Key::Named(Tab), modifiers: iced::keyboard::Modifiers::SHIFT, .. }) => Some(Message::CycleBookmarkBack),
+                    Keyboard(KeyPressed{ key: Key::Named(Tab), .. }) => Some(Message::CycleBookmark),
                     Keyboard(KeyPressed{ key: Key::Named(Space), .. }) => Some(Message::Spacebar),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "h" => Some(Message::ArrowKey(ArrowLeft)),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "j" => Some(Message::ArrowKey(ArrowDown)),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "k" => Some(Message::ArrowKey(ArrowUp)),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "l" => Some(Message::ArrowKey(ArrowRight)),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "v" => Some(Message::ChangeView),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "i" => Some(Message::FocusFilepath),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "n" => Some(Message::NewDir(false)),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "t" => Some(Message::RunCmd(5)),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "y" => Some(Message::RunCmd(3)),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "p" => Some(Message::RunCmd(4)),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "s" || c == "/" => Some(Message::FocusSearch),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "q" => Some(Message::Cancel),
                     _ => None,
                 }
             } else { None }
