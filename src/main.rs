@@ -180,6 +180,7 @@ struct Config {
     show_sidebar: bool,
     icon_theme: Option<String>,
     font_name: Option<String>,
+    delete_confirmation: bool,
 }
 
 impl Config {
@@ -275,10 +276,11 @@ impl Config {
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dpi_scale: f32 = 1.0;
         let mut show_hidden = false;
+        let mut delete_confirmation = false;
         let mut icon_theme: Option<String> = None;
         let mut font_name: Option<String> = None;
         let mut terminal = String::new();
-        let mut opts_missing = 8;
+        let mut opts_missing = 11;
         let mut resizeable = match std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("".to_string()).to_lowercase().as_str() {
             "i3"|"sway"|"dwm"|"dwl"|"hyprland"|"bspwm"|"awesome"|"xmonad"|"qtile"|"spectrwm"|"herbstluftwm"|"notion" => TriBool::OnlyNotPortal,
             _ => TriBool::True,
@@ -308,6 +310,7 @@ impl Config {
                             "dpi_scale" => { opts_missing -= 1; dpi_scale = v.parse().unwrap() },
                             "respect_gitignore" => { opts_missing -= 1; respect_gitignore = v.parse().unwrap() },
                             "show_hidden" => { opts_missing -= 1; show_hidden = v.parse().unwrap() },
+                            "delete_confirmation" => { opts_missing -= 1; delete_confirmation = v.parse().unwrap() },
                             "icon_view" => { opts_missing -= 1; icon_view = v.parse().unwrap() },
                             "resizeable" => {
                                 opts_missing -= 1;
@@ -403,6 +406,7 @@ impl Config {
             resizeable,
             resizeable_flag,
             show_hidden,
+            delete_confirmation,
             show_sidebar: !matches.opt_present("s"),
             icon_theme,
             font_name,
@@ -436,7 +440,7 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\nicon_theme = {}\nfont_name = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n",
+                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\ndelete_confirmation = {}\nicon_theme = {}\nfont_name = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n",
                 self.dpi_scale,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
@@ -444,6 +448,7 @@ impl Config {
                 self.respect_gitignore,
                 self.icon_view,
                 self.show_hidden,
+                self.delete_confirmation,
                 self.icon_theme.as_deref().unwrap_or(""),
                 self.font_name.as_deref().unwrap_or(""),
                 self.resizeable,).as_str());
@@ -512,6 +517,7 @@ enum Message {
     Goto,
     Select(SelType),
     OverWriteOK,
+    DeleteConfirmOK,
     Cancel,
     UpDir,
     DownDir,
@@ -675,6 +681,7 @@ enum FModal {
     Rename(String),
     Error(String),
     EditBookmark(usize),
+    DeleteConfirm(Vec<String>),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -925,6 +932,7 @@ struct FilePicker {
     new_dir_id: text_input::Id,
     clipboard_paths: Vec<String>,
     clipboard_cut: bool,
+    pending_delete_paths: Vec<String>,
 }
 
 impl Application for FilePicker {
@@ -1024,6 +1032,7 @@ impl Application for FilePicker {
                 new_dir_id: new_dir_id.clone(),
                 clipboard_paths: vec![],
                 clipboard_cut: false,
+                pending_delete_paths: vec![],
             },
             Command::batch({
                 let mut cmds = vec![iced::window::resize(iced::window::Id::MAIN, window_size)];
@@ -1079,6 +1088,16 @@ impl Application for FilePicker {
                 }
             },
             Message::RunCmd(i) => self.run_command(i),
+            Message::DeleteConfirmOK => {
+                let paths = mem::take(&mut self.pending_delete_paths);
+                for path in &paths {
+                    if let Err(e) = OsCmd::new("rm").arg("-rf").arg(path).output() {
+                        eprintln!("Error deleting {}: {}", path, e);
+                    }
+                }
+                self.modal = FModal::None;
+                return self.update(Message::LoadDir);
+            },
             Message::Dummy => {},
             Message::IconThemeSelected(theme) => {
                 let theme = if theme == "None" { None } else { Some(theme) };
@@ -2217,6 +2236,17 @@ impl Application for FilePicker {
                     .on_esc(Message::CloseModal)
                     .align_y(alignment::Vertical::Center)
                     .into(),
+                FModal::DeleteConfirm(ref paths) => modal(mainview, Some(Card::new(
+                        Text::new(format!("Delete {} file{}?", paths.len(), if paths.len() == 1 { "" } else { "s" })),
+                        row![
+                            Button::new("Delete").on_press(Message::DeleteConfirmOK),
+                            Button::new("Cancel").on_press(Message::CloseModal),
+                        ].spacing(5.0)).max_width(500.0))
+                    )
+                    .backdrop(Message::CloseModal)
+                    .on_esc(Message::CloseModal)
+                    .align_y(alignment::Vertical::Center)
+                    .into(),
             }
         }).into()
     }
@@ -3030,7 +3060,13 @@ impl FilePicker {
             self.clipboard_paths.clear();
             return;
         }
-        self.items.iter().filter(|item| item.sel).for_each(|item| {
+        let selected: Vec<&FItem> = self.items.iter().filter(|item| item.sel).collect();
+        if cmd.builtin && cmd.label == "Delete" && self.conf.delete_confirmation {
+            self.pending_delete_paths = selected.iter().map(|item| item.path.clone()).collect();
+            self.modal = FModal::DeleteConfirm(self.pending_delete_paths.clone());
+            return;
+        }
+        selected.into_iter().for_each(|item| {
             if cmd.builtin {
                 match cmd.label.as_str() {
                     "Delete" => if let Err(e) = OsCmd::new("rm").arg("-rf").arg(&item.path).output() {
