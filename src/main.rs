@@ -237,6 +237,10 @@ impl Config {
   t            Open terminal in current directory
   y            Copy selected file(s)
   p            Paste from clipboard
+  1            Sort by name (ascending)
+  2            Sort by name (descending)
+  3            Sort by age (oldest first)
+  4            Sort by age (newest first)
   Tab          Cycle through bookmarks (forward)
   Shift+Tab    Cycle through bookmarks (backward)
   Backspace    Go up one directory
@@ -1859,6 +1863,10 @@ impl Application for FilePicker {
                     Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "y" => Some(Message::RunCmd(3)),
                     Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "p" => Some(Message::RunCmd(4)),
                     Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "s" || c == "/" => Some(Message::FocusSearch),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "1" => Some(Message::Sort(1)),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "2" => Some(Message::Sort(2)),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "3" => Some(Message::Sort(3)),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "4" => Some(Message::Sort(4)),
                     Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "q" => Some(Message::Cancel),
                     _ => None,
                 }
