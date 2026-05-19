@@ -72,6 +72,7 @@ use iced_aw::{
     menu::{Item, Menu},
     modal, Card,
     ContextMenu,
+    Spinner,
 };
 use md5::{Md5,Digest};
 use fuzzy_matcher::{self, FuzzyMatcher};
@@ -596,6 +597,7 @@ enum Message {
     DiscoveryComplete((Vec<String>, Vec<(String, PathBuf)>)),
     SearchResult(Box<SearchEvent>),
     NextRecurse(Vec<FItem>, u8),
+    RecurseDone,
     PageUp,
     PageDown,
     Spacebar,
@@ -1489,6 +1491,7 @@ impl Application for FilePicker {
             Message::SearchTxtInput(txt) => {
                 self.searchbar = txt;
                 if self.searchbar.is_empty() {
+                    self.search_running = false;
                     self.recurse_state = RecState::Stop;
                     let mut have_sel = false;
                     self.displayed = self.items[..self.end_idx].iter().enumerate().filter_map(|(i,item)| {
@@ -1567,6 +1570,9 @@ impl Application for FilePicker {
                         }
                     }
                 }
+            },
+            Message::RecurseDone => {
+                self.recurse_state = RecState::Stop;
             },
             Message::Ctrl(pressed) => self.ctrl_pressed = pressed,
             Message::Shift(pressed) => self.shift_pressed = pressed,
@@ -1651,6 +1657,7 @@ impl Application for FilePicker {
                 };
                 self.load_dir();
                 self.show_goto = false;
+                self.search_running = false;
                 self.recurse_state = RecState::Stop;
                 if let Some(ru) = self.recurse_updater.as_ref() {
                     if matches!(ru.send(RecMsg::NewNav(self.dirs.clone(), self.nav_id)), Err(_)) {
@@ -1880,8 +1887,16 @@ impl Application for FilePicker {
                     SubState::Ready((thumb_recv, ino_recv, search_recv, rec_recv)) => {
                         tokio::select! {
                             more = rec_recv.recv() => {
-                                if let Some(RecMsg::NextItems(items, nav_id)) = more {
-                                    messager.send(Message::NextRecurse(items, nav_id)).await.unwrap();
+                                if let Some(msg) = more {
+                                    match msg {
+                                        RecMsg::NextItems(items, nav_id) => {
+                                            messager.send(Message::NextRecurse(items, nav_id)).await.unwrap();
+                                        }
+                                        RecMsg::Done(_nav_id) => {
+                                            messager.send(Message::RecurseDone).await.unwrap();
+                                        }
+                                        _ => {}
+                                    }
                                 }
                             },
                             res = search_recv.recv() => {
@@ -2141,6 +2156,11 @@ impl Application for FilePicker {
                         (Some(size), false) => row![Text::new(size),count, horizontal_space()],
                         (None, true) => row![count, horizontal_space(), top_button("Goto Dir", 80.0, Message::Goto)],
                         (None, false) => row![count, horizontal_space()]
+                    },
+                    if self.search_running || matches!(self.recurse_state, RecState::Run) {
+                        Element::from(Spinner::new().width(16).height(16).circle_radius(1.5))
+                    } else {
+                        Element::from(horizontal_space().width(16))
                     },
                     menu_bar![
                         (top_icon(self.icons.cmds.clone(), Message::Dummy), 
@@ -3889,6 +3909,7 @@ enum RecMsg {
     FetchMore(u8, bool),
     NextItems(Vec<FItem>, u8),
     SetRecursive(bool),
+    Done(u8),
 }
 
 async fn recursive_add(mut updates: UReceiver<RecMsg>,
@@ -3930,6 +3951,7 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                     semchan.send(SearchEvent::AddSemantics(semantics)).unwrap();
                 }
                 if !recursive {
+                    results.send(RecMsg::Done(nid)).unwrap();
                     continue;
                 }
                 for (i, dir) in dirs.iter().enumerate() {
@@ -3967,6 +3989,9 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                 ignores = next_ignores;
                 if !new_items.is_empty() {
                     results.send(RecMsg::NextItems(new_items, nid)).unwrap();
+                }
+                if dirs.is_empty() {
+                    results.send(RecMsg::Done(nid)).unwrap();
                 }
             },
             _ => {},
