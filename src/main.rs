@@ -211,6 +211,7 @@ struct Config {
     font_name: Option<String>,
     delete_confirmation: DelConfirm,
     auto_icon_threshold: Option<usize>,
+    command_confirmation: bool,
 }
 
 impl Config {
@@ -312,7 +313,8 @@ impl Config {
         let mut font_name: Option<String> = None;
         let mut terminal = String::new();
         let mut auto_icon_threshold: Option<usize> = None;
-        let mut opts_missing = 11;
+        let mut command_confirmation: bool = false;
+        let mut opts_missing = 13;
         let mut resizeable = match std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("".to_string()).to_lowercase().as_str() {
             "i3"|"sway"|"dwm"|"dwl"|"hyprland"|"bspwm"|"awesome"|"xmonad"|"qtile"|"spectrwm"|"herbstluftwm"|"notion" => TriBool::OnlyNotPortal,
             _ => TriBool::True,
@@ -391,6 +393,10 @@ impl Config {
                                 opts_missing -= 1;
                                 auto_icon_threshold = if v.is_empty() { None } else { Some(v.parse().unwrap_or(0)) };
                             },
+                            "command_confirmation" => {
+                                opts_missing -= 1;
+                                command_confirmation = v.parse().unwrap_or(false);
+                            },
                             _ => {},
                         },
                     }
@@ -455,6 +461,7 @@ impl Config {
             icon_theme,
             font_name,
             auto_icon_threshold,
+            command_confirmation,
         }
     }
 
@@ -485,7 +492,7 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\n# delete_confirmation can be true|false|key|click\ndelete_confirmation = {}\nicon_theme = {}\nfont_name = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n# auto_icon_threshold: if the number of visible image files is >= this value, automatically switch to icon view. leave blank to disable.\nauto_icon_threshold = {}\n",
+                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\n# delete_confirmation can be true|false|key|click\ndelete_confirmation = {}\nicon_theme = {}\nfont_name = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n# auto_icon_threshold: if the number of visible image files is >= this value, automatically switch to icon view. leave blank to disable.\nauto_icon_threshold = {}\n# command_confirmation: ask before running user-specified commands on files\ncommand_confirmation = {}\n",
                 self.dpi_scale,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
@@ -497,7 +504,8 @@ impl Config {
                 self.icon_theme.as_deref().unwrap_or(""),
                 self.font_name.as_deref().unwrap_or(""),
                 self.resizeable,
-                self.auto_icon_threshold.map_or("".to_string(), |n| n.to_string())).as_str());
+                self.auto_icon_threshold.map_or("".to_string(), |n| n.to_string()),
+                self.command_confirmation).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
 # The respect_gitignore setting only toggles .gitignore files, not this section.\n[SearchIgnore]\n");
         conf.push_str(self.gitignore.as_str());
@@ -565,6 +573,7 @@ enum Message {
     OverWriteOK,
     Delete,
     DeleteConfirmOK,
+    CommandConfirmOK,
     Cancel,
     UpDir,
     DownDir,
@@ -731,6 +740,7 @@ enum FModal {
     Error(String),
     EditBookmark(usize),
     DeleteConfirm(Vec<String>),
+    CommandConfirm(String),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -982,6 +992,7 @@ struct FilePicker {
     clipboard_paths: Vec<String>,
     clipboard_cut: bool,
     pending_delete_paths: Vec<String>,
+    pending_cmd: Option<usize>,
 }
 
 impl Application for FilePicker {
@@ -1082,6 +1093,7 @@ impl Application for FilePicker {
                 clipboard_paths: vec![],
                 clipboard_cut: false,
                 pending_delete_paths: vec![],
+                pending_cmd: None,
             },
             Command::batch({
                 let mut cmds = vec![iced::window::resize(iced::window::Id::MAIN, window_size)];
@@ -1158,6 +1170,13 @@ impl Application for FilePicker {
                     }
                 }
                 self.modal = FModal::None;
+            },
+            Message::CommandConfirmOK => {
+                self.modal = FModal::None;
+                if let Some(cmd_idx) = self.pending_cmd {
+                    self.run_command(cmd_idx);
+                    self.pending_cmd = None;
+                }
             },
             Message::Dummy => {},
             Message::IconThemeSelected(theme) => {
@@ -2312,6 +2331,17 @@ impl Application for FilePicker {
                     .on_esc(Message::CloseModal)
                     .align_y(alignment::Vertical::Center)
                     .into(),
+                FModal::CommandConfirm(ref label) => modal(mainview, Some(Card::new(
+                        Text::new(format!("Run \"{}\"?" , label)),
+                        row![
+                            Button::new("Run").on_press(Message::CommandConfirmOK),
+                            Button::new("Cancel").on_press(Message::CloseModal),
+                        ].spacing(5.0)).max_width(500.0))
+                    )
+                    .backdrop(Message::CloseModal)
+                    .on_esc(Message::CloseModal)
+                    .align_y(alignment::Vertical::Center)
+                    .into(),
                 FModal::DeleteConfirm(ref paths) => modal(mainview, Some(Card::new(
                         Text::new(format!("Delete {} file{}?", paths.len(), if paths.len() == 1 { "" } else { "s" })),
                         row![
@@ -3137,6 +3167,11 @@ impl FilePicker {
             return;
         }
         let selected: Vec<&FItem> = self.items.iter().filter(|item| item.sel).collect();
+        if !cmd.builtin && self.conf.command_confirmation && !selected.is_empty() && self.pending_cmd.is_none() {
+            self.pending_cmd = Some(icmd);
+            self.modal = FModal::CommandConfirm(cmd.label.clone());
+            return;
+        }
         if cmd.builtin && cmd.label == "Delete" && self.conf.delete_confirmation.need_confirm(false) {
             self.pending_delete_paths = selected.iter().map(|item| item.path.clone()).collect();
             self.modal = FModal::DeleteConfirm(self.pending_delete_paths.clone());
