@@ -918,6 +918,7 @@ struct FilePicker {
     search_id: text_input::Id,
     filepath_id: text_input::Id,
     unfocus_id: text_input::Id,
+    new_dir_id: text_input::Id,
     clipboard_paths: Vec<String>,
     clipboard_cut: bool,
 }
@@ -964,6 +965,7 @@ impl Application for FilePicker {
         let search_id = text_input::Id::unique();
         let filepath_id = text_input::Id::unique();
         let unfocus_id = text_input::Id::unique();
+        let new_dir_id = text_input::Id::unique();
         let icon_theme = conf.icon_theme.clone();
         (
             Self {
@@ -1015,6 +1017,7 @@ impl Application for FilePicker {
                 search_id: search_id.clone(),
                 filepath_id: filepath_id.clone(),
                 unfocus_id,
+                new_dir_id: new_dir_id.clone(),
                 clipboard_paths: vec![],
                 clipboard_cut: false,
             },
@@ -1650,6 +1653,7 @@ impl Application for FilePicker {
                 } else {
                     self.new_path.reset();
                     self.modal = FModal::NewDir;
+                    return text_input::focus(self.new_dir_id.clone());
                 },
             Message::NewPathInput(path) => self.new_path.update(path),
             Message::CloseModal => self.modal = FModal::None,
@@ -2189,6 +2193,7 @@ impl Application for FilePicker {
                         Text::new("Enter new directory name"),
                         column![
                             TextInput::new("Untitled", self.new_path.basename.as_str())
+                                .id(self.new_dir_id.clone())
                                 .on_input(Message::NewPathInput)
                                 .on_submit(Message::NewDir(true))
                                 .on_paste(Message::NewPathInput),
