@@ -210,6 +210,7 @@ struct Config {
     icon_theme: Option<String>,
     font_name: Option<String>,
     delete_confirmation: DelConfirm,
+    auto_icon_threshold: Option<usize>,
 }
 
 impl Config {
@@ -310,6 +311,7 @@ impl Config {
         let mut icon_theme: Option<String> = None;
         let mut font_name: Option<String> = None;
         let mut terminal = String::new();
+        let mut auto_icon_threshold: Option<usize> = None;
         let mut opts_missing = 11;
         let mut resizeable = match std::env::var("XDG_CURRENT_DESKTOP").unwrap_or("".to_string()).to_lowercase().as_str() {
             "i3"|"sway"|"dwm"|"dwl"|"hyprland"|"bspwm"|"awesome"|"xmonad"|"qtile"|"spectrwm"|"herbstluftwm"|"notion" => TriBool::OnlyNotPortal,
@@ -385,6 +387,10 @@ impl Config {
                                 opts_missing -= 1;
                                 font_name = if v.is_empty() { None } else { Some(v.to_string()) };
                             },
+                            "auto_icon_threshold" => {
+                                opts_missing -= 1;
+                                auto_icon_threshold = if v.is_empty() { None } else { Some(v.parse().unwrap_or(0)) };
+                            },
                             _ => {},
                         },
                     }
@@ -448,6 +454,7 @@ impl Config {
             show_sidebar: !matches.opt_present("s"),
             icon_theme,
             font_name,
+            auto_icon_threshold,
         }
     }
 
@@ -478,7 +485,7 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\n# delete_confirmation can be true|false|key|click\ndelete_confirmation = {}\nicon_theme = {}\nfont_name = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n",
+                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\n# delete_confirmation can be true|false|key|click\ndelete_confirmation = {}\nicon_theme = {}\nfont_name = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n# auto_icon_threshold: if the number of visible image files is >= this value, automatically switch to icon view. leave blank to disable.\nauto_icon_threshold = {}\n",
                 self.dpi_scale,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
@@ -489,7 +496,8 @@ impl Config {
                 self.delete_confirmation,
                 self.icon_theme.as_deref().unwrap_or(""),
                 self.font_name.as_deref().unwrap_or(""),
-                self.resizeable,).as_str());
+                self.resizeable,
+                self.auto_icon_threshold.map_or("".to_string(), |n| n.to_string())).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
 # The respect_gitignore setting only toggles .gitignore files, not this section.\n[SearchIgnore]\n");
         conf.push_str(self.gitignore.as_str());
@@ -633,6 +641,7 @@ enum ImgType {
 enum FType {
     File,
     Image,
+    PdfEpub,
     Dir,
     #[default]
     Unknown,
@@ -1990,9 +1999,19 @@ impl Application for FilePicker {
                     }).push(container(vertical_space()).height(Length::Fill).width(Length::Fill)
                             .id(CId::new("bookmarks"))).width(Length::Fixed(120.0))), 140.0)
             } else { (None, 10.0) };
+            // Auto-switch to icon view if image count meets threshold
+            let icon_view = self.conf.icon_view ||
+                if let Some(threshold) = self.conf.auto_icon_threshold {
+                    threshold == 0 || self.displayed.iter()
+                        .filter_map(|&idx| self.items.get(idx))
+                        .filter(|item| { matches!(item.ftype, FType::Image | FType::PdfEpub) })
+                        .nth(threshold - 1).is_some()
+                } else {
+                    false
+                };
             let mut clicked_offscreen = false;
             let mut ps = self.pos_state.borrow_mut();
-            ps.max_cols = if self.conf.icon_view {
+            ps.max_cols = if icon_view {
                 ((size.width-sidebar_width) / (self.conf.thumb_size+2.0)).max(1.0) as usize
             } else { 1 };
             let content: iced::Element<'_, Self::Message> = match &self.view_image.1 {
@@ -2030,7 +2049,7 @@ impl Application for FilePicker {
                         .into()
                 },
                 Preview::None => {
-                    if self.conf.icon_view {
+                    if icon_view {
                         let thumb_width = (size.width-sidebar_width) / ps.max_cols as f32;
                         let num_rows = self.num_rows(ps.max_cols);
                         let top = self.scroll_offset.y - self.conf.thumb_size*1.1;
@@ -2199,7 +2218,7 @@ impl Application for FilePicker {
                         // Show theme pane on the right if enabled
                         if self.show_theme_pane {
                             r = r.push(container(self.build_theme_pane()).width(Length::Fixed(250.0)));
-                        } else if !self.conf.icon_view && self.items.iter().any(|item| item.sel) {
+                        } else if !icon_view && self.items.iter().any(|item| item.sel) {
                             // In list mode, show preview pane only when files are selected
                             r = r.push(container(self.build_preview_pane()).width(Length::Fixed(250.0)));
                         }
@@ -2847,12 +2866,12 @@ impl FItem {
                     } else if ext == "pdf" {
                         self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Pdf, thumbsize, icons.clone()).await
                             .or(Some(icons.pdf_icon.clone()));
-                        self.ftype = FType::File;
+                        self.ftype = if icons.cando_pdf { FType::PdfEpub } else { FType::File };
                     // 6. EPUB — themed icon or thumbnail fallback
                     } else if ext == "epub" {
                         self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Epub, thumbsize, icons.clone()).await
                             .or(Some(icons.epub_icon.clone()));
-                        self.ftype = FType::File;
+                        self.ftype = if icons.cando_epub { FType::PdfEpub } else { FType::File };
                     // 7. Audio files (MIME-based or extension bucket)
                     } else if is_audio || matches!(theme::bucket_for_ext(ext), Some(theme::GenericBucket::Audio)) {
                         self.thumb_handle = Some(icons.audio.clone());
