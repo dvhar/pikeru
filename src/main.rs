@@ -1008,6 +1008,7 @@ struct FilePicker {
     filepath_id: text_input::Id,
     unfocus_id: text_input::Id,
     new_dir_id: text_input::Id,
+    rename_id: text_input::Id,
     clipboard_paths: Vec<String>,
     clipboard_cut: bool,
     pending_delete_paths: Vec<String>,
@@ -1057,6 +1058,7 @@ impl Application for FilePicker {
         let filepath_id = text_input::Id::unique();
         let unfocus_id = text_input::Id::unique();
         let new_dir_id = text_input::Id::unique();
+        let rename_id = text_input::Id::unique();
         let icon_theme = conf.icon_theme.clone();
         (
             Self {
@@ -1109,6 +1111,7 @@ impl Application for FilePicker {
                 filepath_id: filepath_id.clone(),
                 unfocus_id,
                 new_dir_id: new_dir_id.clone(),
+                rename_id: rename_id.clone(),
                 clipboard_paths: vec![],
                 clipboard_cut: false,
                 pending_delete_paths: vec![],
@@ -1167,7 +1170,7 @@ impl Application for FilePicker {
                     self.update_searcher_items(self.items.iter().map(|item|item.path.clone()).collect());
                 }
             },
-            Message::RunCmd(i) => self.run_command(i),
+            Message::RunCmd(i) => return self.run_command(i),
             Message::Delete => {
                 let selected: Vec<String> = self.items.iter().filter(|item| item.sel).map(|item| item.path.clone()).collect();
                 if self.conf.delete_confirmation.need_confirm(true) {
@@ -1193,8 +1196,9 @@ impl Application for FilePicker {
             Message::CommandConfirmOK => {
                 self.modal = FModal::None;
                 if let Some(cmd_idx) = self.pending_cmd {
-                    self.run_command(cmd_idx);
+                    let cmd = self.run_command(cmd_idx);
                     self.pending_cmd = None;
+                    return cmd;
                 }
             },
             Message::Dummy => {},
@@ -2297,6 +2301,7 @@ impl Application for FilePicker {
                         Text::new("Rename File"),
                         column![
                             TextInput::new(filename, &self.new_path.basename)
+                                .id(self.rename_id.clone())
                                 .on_input(Message::NewPathInput)
                                 .on_submit(Message::Rename)
                                 .on_paste(Message::NewPathInput),
@@ -3125,7 +3130,7 @@ impl FilePicker {
         self.displayed.len() / maxcols + if self.displayed.len() % maxcols != 0 { 1 } else { 0 }
     }
 
-    fn run_command(self: &mut Self, icmd: usize) {
+    fn run_command(self: &mut Self, icmd: usize) -> Command<Message> {
         let cmd = &self.conf.cmds[icmd];
         if cmd.builtin && cmd.label == "Terminal" {
             let cwd = self.dirs[0].clone();
@@ -3165,44 +3170,49 @@ impl FilePicker {
                     };
                 });
             }
-            return;
+            return Command::none();
         }
         if cmd.builtin && cmd.label == "Paste" {
             if self.dirs.len() != 1 {
                 self.modal = FModal::Error("Cannot paste when multiple directories are open".into());
-                return;
+                return Command::none();
             }
             self.clipboard_paths.iter_mut().for_each(|path| {
                 tokio::spawn(paste(mem::take(path), self.dirs[0].clone(), self.clipboard_cut));
             });
             self.clipboard_paths.clear();
-            return;
+            return Command::none();
         }
         let selected: Vec<&FItem> = self.items.iter().filter(|item| item.sel).collect();
         if !cmd.builtin && self.conf.command_confirmation && !selected.is_empty() && self.pending_cmd.is_none() {
             self.pending_cmd = Some(icmd);
             self.modal = FModal::CommandConfirm(cmd.label.clone());
-            return;
+            return Command::none();
         }
         if cmd.builtin && cmd.label == "Delete" && self.conf.delete_confirmation.need_confirm(false) {
             self.pending_delete_paths = selected.iter().map(|item| item.path.clone()).collect();
             self.modal = FModal::DeleteConfirm(self.pending_delete_paths.clone());
-            return;
+            return Command::none();
+        }
+        // Handle Rename before the loop so we can return a focus command
+        if cmd.builtin && cmd.label == "Rename" {
+            if let Some(item) = selected.first() {
+                if self.modal == FModal::None {
+                    self.new_path.basename = item.path.rsplitn(2, '/').next().unwrap().to_string();
+                    self.new_path.full_path = item.path.clone();
+                    self.modal = FModal::Rename(item.path.clone());
+                    return text_input::focus(self.rename_id.clone());
+                } else {
+                    self.modal = FModal::Error("Select only one file to rename".into());
+                    return Command::none();
+                }
+            }
         }
         selected.into_iter().for_each(|item| {
             if cmd.builtin {
                 match cmd.label.as_str() {
                     "Delete" => if let Err(e) = OsCmd::new("rm").arg("-rf").arg(&item.path).output() {
                         eprintln!("Error deleting {}: {}", item.path, e);
-                    },
-                    "Rename" => {
-                        if self.modal == FModal::None {
-                            self.new_path.basename = item.path.rsplitn(2, '/').next().unwrap().to_string();
-                            self.new_path.full_path = item.path.clone();
-                            self.modal = FModal::Rename(item.path.clone());
-                        } else {
-                            self.modal = FModal::Error("Select only one file to rename".into());
-                        }
                     },
                     "Cut" => {
                         self.clipboard_paths.push(item.path.clone());
@@ -3248,6 +3258,7 @@ impl FilePicker {
                 });
             }
         });
+        Command::none()
     }
 
     fn keep_in_view(self: &mut Self, w: Rectangle, v: Rectangle) -> Command<Message> {
