@@ -32,7 +32,7 @@ use iced::{
         container::Id as CId,
         image, image::Handle, Column, Row, text, responsive,
         Scrollable, scrollable, scrollable::{Direction,Properties},
-        Button, TextInput, Text,
+        Button, TextInput, Text, Checkbox,
         column, row, container,
         svg, text_input,
         rule::Rule,
@@ -2401,19 +2401,12 @@ fn menu_button(txt: &str, msg: Message) -> Element<'static, Message> {
         .on_press(msg).into()
 }
 
-/// Create a checkbox-like button for toggling settings in the menu.
+/// Create a checkbox for toggling settings in the menu.
 fn menu_button_checkbox(txt: &str, checked: bool, msg: Message) -> Element<'static, Message> {
-    let label = if checked {
-        format!("  {}", txt)
-    } else {
-        format!("   {}", txt)
-    };
-    Button::new(container(text(&label)
-                .width(Length::Fill)
-                .horizontal_alignment(alignment::Horizontal::Center)))
-        .style(style::top_but_theme())
-        .padding(1.0)
-        .on_press(msg).into()
+    Checkbox::new(txt, checked)
+        .on_toggle(move |_| msg.clone())
+        .width(Length::Fill)
+        .into()
 }
 
 /// Create a theme selection button with a visual indicator for the selected theme.
