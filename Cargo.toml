@@ -21,7 +21,7 @@ tokio = { version = "1.37.0", features = ["full"] }
 img = { package = "image", version = "0.25.1" }
 itertools = "0.12.1"
 #video-rs = { version = "0.10.5", features = ["ndarray"] }
-video-rs = { path = "video-rs", features = ["ndarray"] }
+video-rs = { path = "src/video-rs", features = ["ndarray"] }
 ndarray = "0.16.1"
 getopts = "0.2.21"
 iced_aw = { path = "src/iced_aw", features = ["menu","context_menu"], package = "iced_aw" }
