@@ -492,7 +492,25 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\n# delete_confirmation can be true|false|key|click\ndelete_confirmation = {}\nicon_theme = {}\nfont_name = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n# auto_icon_threshold: if the number of visible image files is >= this value, automatically switch to icon view. leave blank to disable.\nauto_icon_threshold = {}\n# command_confirmation: ask before running user-specified commands on files\ncommand_confirmation = {}\n",
+"dpi_scale = {}
+window_size = {}x{}
+thumbnail_size = {}
+sort_by = {}
+respect_gitignore = {}
+icon_view = {}
+show_hidden = {}
+# delete_confirmation can be true|false|key|click
+delete_confirmation = {}
+# command_confirmation: ask before running user-specified commands on files
+command_confirmation = {}
+icon_theme = {}
+font_name = {}
+# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.
+# This makes tiling window managers give it a floating window instead of tiling it.
+resizeable = {}
+# auto_icon_threshold: if the number of visible image files is >= this value, automatically switch to icon view. leave blank to disable.
+auto_icon_threshold = {}
+",
                 self.dpi_scale,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
@@ -501,11 +519,12 @@ impl Config {
                 self.icon_view,
                 self.show_hidden,
                 self.delete_confirmation,
+                self.command_confirmation,
                 self.icon_theme.as_deref().unwrap_or(""),
                 self.font_name.as_deref().unwrap_or(""),
                 self.resizeable,
-                self.auto_icon_threshold.map_or("".to_string(), |n| n.to_string()),
-                self.command_confirmation).as_str());
+                self.auto_icon_threshold.map_or("".to_string(), |n| n.to_string())
+                    ).as_str());
         conf.push_str("\n# The SearchIgnore section uses gitignore syntax rather than ini.
 # The respect_gitignore setting only toggles .gitignore files, not this section.\n[SearchIgnore]\n");
         conf.push_str(self.gitignore.as_str());
