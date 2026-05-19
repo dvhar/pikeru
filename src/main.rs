@@ -25,7 +25,7 @@ use iced::{
     mouse::ScrollDelta,
     keyboard::Event::{KeyPressed,KeyReleased},
     keyboard::Key,
-    keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace,PageUp,PageDown,Space,Tab},
+    keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace,PageUp,PageDown,Space,Tab,Delete},
     keyboard::key::Named,
     widget::{
         horizontal_space, vertical_space, slider,
@@ -154,6 +154,34 @@ impl TriBool {
     }
 }
 
+#[derive(PartialEq)]
+enum DelConfirm {
+    Always,
+    Never,
+    Key,
+    Click,
+}
+impl DelConfirm {
+    fn need_confirm(&self, by_key: bool) -> bool {
+        match self {
+            DelConfirm::Always => true,
+            DelConfirm::Never => false,
+            DelConfirm::Key => by_key,
+            DelConfirm::Click => !by_key,
+        }
+    }
+}
+impl fmt::Display for DelConfirm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DelConfirm::Always => write!(f, "true"),
+            DelConfirm::Never => write!(f, "false"),
+            DelConfirm::Key => write!(f, "key"),
+            DelConfirm::Click => write!(f, "click"),
+        }
+    }
+}
+
 struct Config {
     title: String,
     id: String,
@@ -180,7 +208,7 @@ struct Config {
     show_sidebar: bool,
     icon_theme: Option<String>,
     font_name: Option<String>,
-    delete_confirmation: bool,
+    delete_confirmation: DelConfirm,
 }
 
 impl Config {
@@ -242,6 +270,7 @@ impl Config {
   2            Sort by name (descending)
   3            Sort by age (oldest first)
   4            Sort by age (newest first)
+  Delete       Delete selected file(s)
   Tab          Cycle through bookmarks (forward)
   Shift+Tab    Cycle through bookmarks (backward)
   Backspace    Go up one directory
@@ -276,7 +305,7 @@ impl Config {
         let mut window_size: Size = Size { width: 1024.0, height: 768.0 };
         let mut dpi_scale: f32 = 1.0;
         let mut show_hidden = false;
-        let mut delete_confirmation = false;
+        let mut delete_confirmation = DelConfirm::Key;
         let mut icon_theme: Option<String> = None;
         let mut font_name: Option<String> = None;
         let mut terminal = String::new();
@@ -310,7 +339,15 @@ impl Config {
                             "dpi_scale" => { opts_missing -= 1; dpi_scale = v.parse().unwrap() },
                             "respect_gitignore" => { opts_missing -= 1; respect_gitignore = v.parse().unwrap() },
                             "show_hidden" => { opts_missing -= 1; show_hidden = v.parse().unwrap() },
-                            "delete_confirmation" => { opts_missing -= 1; delete_confirmation = v.parse().unwrap() },
+                            "delete_confirmation" => {
+                                opts_missing -= 1;
+                                delete_confirmation = match v.to_lowercase().as_str() {
+                                    "true" => DelConfirm::Always,
+                                    "key" => DelConfirm::Key,
+                                    "click" => DelConfirm::Click,
+                                    _ => DelConfirm::Never,
+                                }
+                            },
                             "icon_view" => { opts_missing -= 1; icon_view = v.parse().unwrap() },
                             "resizeable" => {
                                 opts_missing -= 1;
@@ -440,7 +477,7 @@ impl Config {
         });
         conf.push_str("\n[Settings]\n");
         conf.push_str(format!(
-                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\ndelete_confirmation = {}\nicon_theme = {}\nfont_name = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n",
+                "dpi_scale = {}\nwindow_size = {}x{}\nthumbnail_size = {}\nsort_by = {}\nrespect_gitignore = {}\nicon_view = {}\nshow_hidden = {}\n# delete_confirmation can be true|false|key|click\ndelete_confirmation = {}\nicon_theme = {}\nfont_name = {}\n# resizeable can be true|false|sometimes. \"sometimes\" is only unresizeable when launched by the xdg portal.\n# This makes tiling window managers give it a floating window instead of tiling it.\nresizeable = {}\n",
                 self.dpi_scale,
                 self.window_size.width as i32, self.window_size.height as i32,
                 self.thumb_size as i32,
@@ -517,6 +554,7 @@ enum Message {
     Goto,
     Select(SelType),
     OverWriteOK,
+    Delete,
     DeleteConfirmOK,
     Cancel,
     UpDir,
@@ -1088,6 +1126,20 @@ impl Application for FilePicker {
                 }
             },
             Message::RunCmd(i) => self.run_command(i),
+            Message::Delete => {
+                let selected: Vec<String> = self.items.iter().filter(|item| item.sel).map(|item| item.path.clone()).collect();
+                if self.conf.delete_confirmation.need_confirm(true) {
+                    self.pending_delete_paths = selected;
+                    self.modal = FModal::DeleteConfirm(self.pending_delete_paths.clone());
+                    return Command::none();
+                }
+                for path in &selected {
+                    if let Err(e) = OsCmd::new("rm").arg("-rf").arg(path).output() {
+                        eprintln!("Error deleting {}: {}", path, e);
+                    }
+                }
+                return self.update(Message::LoadDir);
+            },
             Message::DeleteConfirmOK => {
                 let paths = mem::take(&mut self.pending_delete_paths);
                 for path in &paths {
@@ -1866,6 +1918,7 @@ impl Application for FilePicker {
                     Keyboard(KeyPressed{ key: Key::Named(ArrowLeft), .. }) => Some(Message::ArrowKey(ArrowLeft)),
                     Keyboard(KeyPressed{ key: Key::Named(ArrowRight), .. }) => Some(Message::ArrowKey(ArrowRight)),
                     Keyboard(KeyPressed{ key: Key::Named(Backspace), .. }) => Some(Message::UpDir),
+                    Keyboard(KeyPressed{ key: Key::Named(Delete), .. }) => Some(Message::Delete),
                     Keyboard(KeyPressed{ key: Key::Named(PageUp), .. }) => Some(Message::PageUp),
                     Keyboard(KeyPressed{ key: Key::Named(PageDown), .. }) => Some(Message::PageDown),
                     Keyboard(KeyPressed{ key: Key::Named(Tab), modifiers: iced::keyboard::Modifiers::SHIFT, .. }) => Some(Message::CycleBookmarkBack),
@@ -3061,7 +3114,7 @@ impl FilePicker {
             return;
         }
         let selected: Vec<&FItem> = self.items.iter().filter(|item| item.sel).collect();
-        if cmd.builtin && cmd.label == "Delete" && self.conf.delete_confirmation {
+        if cmd.builtin && cmd.label == "Delete" && self.conf.delete_confirmation.need_confirm(false) {
             self.pending_delete_paths = selected.iter().map(|item| item.path.clone()).collect();
             self.modal = FModal::DeleteConfirm(self.pending_delete_paths.clone());
             return;
