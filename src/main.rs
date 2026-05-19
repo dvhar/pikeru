@@ -2138,7 +2138,7 @@ impl Application for FilePicker {
                     match (&self.last_clicked.size, self.show_goto) {
                         (Some(size), true) => row![Text::new(size),count, horizontal_space(), top_icon(self.icons.goto.clone(), Message::Goto)],
                         (Some(size), false) => row![Text::new(size),count, horizontal_space()],
-                        (None, true) => row![count, horizontal_space(), top_button("Goto Dir", 80.0, Message::Goto)],
+                        (None, true) => row![count, horizontal_space(), top_icon(self.icons.goto.clone(), Message::Goto)],
                         (None, false) => row![count, horizontal_space()]
                     },
                     if self.search_running || matches!(self.recurse_state, RecState::Run) {
