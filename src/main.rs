@@ -1140,7 +1140,6 @@ impl Application for FilePicker {
                         eprintln!("Error deleting {}: {}", path, e);
                     }
                 }
-                return self.update(Message::LoadDir);
             },
             Message::DeleteConfirmOK => {
                 let paths = mem::take(&mut self.pending_delete_paths);
@@ -1150,7 +1149,6 @@ impl Application for FilePicker {
                     }
                 }
                 self.modal = FModal::None;
-                return self.update(Message::LoadDir);
             },
             Message::Dummy => {},
             Message::IconThemeSelected(theme) => {
@@ -1172,22 +1170,14 @@ impl Application for FilePicker {
                 self.conf.need_update = true;
 
                 if let Some(name) = font_name {
-                    // Find the font file path
                     if let Some((_, path)) = self.font_names.iter().flat_map(|f| f.iter()).find(|(n, _)| n == &name) {
-                        // Read the font file bytes
                         match std::fs::read(path) {
                             Ok(bytes) => {
-                                // Extract the internal family name from the font file
                                 if let Some(internal_name) = theme::get_font_internal_name(path) {
                                     // Leak the internal name so we can reference it as &'static str
                                     let static_name: &'static str = Box::leak(internal_name.into_boxed_str());
-
-                                    // Load the font into iced's renderer
                                     let load_cmd = iced::font::load(bytes);
-
-                                    // Set the font reference for all text widgets
                                     self.font = Some(iced::Font::with_name(static_name));
-
                                     return Command::batch(vec![
                                         load_cmd.map(move |result| {
                                             match result {
@@ -1199,17 +1189,11 @@ impl Application for FilePicker {
                                             }
                                         }),
                                     ]);
-                                } else {
-                                    eprintln!("Font '{}' has no internal name table", name);
-                                }
+                                } else { eprintln!("Font '{}' has no internal name table", name); }
                             }
-                            Err(e) => {
-                                eprintln!("Failed to read font file {}: {}", path.display(), e);
-                            }
+                            Err(e) => { eprintln!("Failed to read font file {}: {}", path.display(), e); }
                         }
-                    } else {
-                        eprintln!("Font '{}' not found in available fonts", name);
-                    }
+                    } else { eprintln!("Font '{}' not found in available fonts", name); }
                 } else {
                     self.font = None;
                 }
