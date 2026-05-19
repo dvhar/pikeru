@@ -1145,13 +1145,13 @@ impl Application for FilePicker {
                 let mut item = FItem::new(file.as_str().into(), self.nav_id);
                 let len = self.items.len();
                 item.display_idx = self.displayed.len();
-                self.displayed.push(len);
-                self.items.push(FItem::default());
-                self.end_idx += 1;
                 item.items_idx = len;
+                self.displayed.push(len);
                 if let Some(ts) = self.thumb_sender.as_ref() {
-                    tokio::spawn(item.load(ts.clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                    tokio::spawn(item.clone().load(ts.clone(), self.icons.clone(), self.conf.thumb_size as u32));
                 }
+                self.items.push(item);
+                self.end_idx += 1;
             },
             Message::InoDelete(file) => {
                 if let Some(i) = self.items.iter().position(|x|x.path == file) {
