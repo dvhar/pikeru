@@ -996,6 +996,7 @@ struct FilePicker {
     content_height: f32,
     recursive_search: bool,
     show_goto: bool,
+    goto_paths: Vec<String>,
     show_theme_pane: bool,
     discovering_themes_and_fonts: bool,
     enable_sel_button: bool,
@@ -1099,6 +1100,7 @@ impl Application for FilePicker {
                 content_y: 0.0,
                 recursive_search: true,
                 show_goto: false,
+                goto_paths: vec![],
                 show_theme_pane: false,
                 discovering_themes_and_fonts: false,
                 enable_sel_button,
@@ -1676,6 +1678,7 @@ impl Application for FilePicker {
                 }
             },
             Message::Goto => {
+                self.goto_paths = self.items.iter().filter(|item|item.sel).map(|item|item.path.clone()).collect();
                 self.dir_history.push(mem::take(&mut self.dirs));
                 self.dirs = self.items.iter().filter(|item|item.sel).filter_map(|item|
                     Some(Path::new(&item.path).parent()?.to_string_lossy().to_string())).collect();
@@ -1700,6 +1703,13 @@ impl Application for FilePicker {
                     }
                 }
                 let _ = self.update(Message::Sort(self.conf.sort_by));
+                // After Goto, select the previously selected files in the new directory
+                let goto_indices: Vec<usize> = self.goto_paths.iter().filter_map(|path|
+                    self.items.iter().position(|item| item.path == *path)).collect();
+                for ii in goto_indices {
+                    self.click_item(ii, false, false, false);
+                }
+                self.goto_paths.clear();
                 let mut cmds = vec![scrollable::snap_to(self.scroll_id.clone(), scrollable::RelativeOffset::START)];
                 if self.conf.saving() {
                     cmds.push(text_input::focus(self.filepath_id.clone()));
