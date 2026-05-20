@@ -19,7 +19,6 @@ use iced::{
     advanced::widget::Id,
     Rectangle, Padding,
     alignment,
-    Subscription,
     Task, Length, Element,
     widget::{
         slider,
@@ -121,12 +120,13 @@ fn main() -> iced::Result {
     let resizeable = conf.resizeable_flag.unwrap_or(conf.resizeable.is_true());
     video_rs::init().unwrap();
 
-    let conf_clone = conf.clone();
+    let win_size = conf.window_size;
     iced::application(
-        move || boot(conf_clone.clone()),
+        move || boot(conf.clone()),
         update,
         view,
     )
+    .subscription(|_| pikeru_subscription())
     .theme(iced::Theme::Dark)
     .window(
         iced::window::Settings {
@@ -135,7 +135,7 @@ fn main() -> iced::Result {
             ..iced::window::Settings::default()
         }
     )
-    .window_size(conf.window_size)
+    .window_size(win_size)
     .run()
 }
 
@@ -1029,13 +1029,9 @@ struct FilePicker {
 
 /// Boot the application (replacement for Application::new in iced 0.14).
 fn boot(conf: Config) -> (FilePicker, iced::Task<Message>) {
-    let conf_clone = conf.clone();
-        let pathstr = conf.path.clone();
-        let path = Path::new(&pathstr);
-        let mut window_size = conf.window_size;
-        window_size.width *= conf.dpi_scale as f32;
-        window_size.height *= conf.dpi_scale as f32;
-        let startdir = if path.is_dir() {
+    let pathstr = conf.path.clone();
+    let path = Path::new(&pathstr);
+    let startdir = if path.is_dir() {
             path.to_string_lossy().to_string()
         } else {
             match path.parent() {
@@ -3344,7 +3340,9 @@ impl FilePicker {
             }
         }
         self.searchbar.clear();
-        self.ino_updater.as_ref().unwrap().send(Inochan::NewDirs(inodirs)).unwrap();
+        if let Some(ref ino) = self.ino_updater {
+            let _ = ino.send(Inochan::NewDirs(inodirs));
+        }
         self.items = ret;
         self.end_idx = self.items.len();
         self.items.iter_mut().enumerate().for_each(|(i,item)|item.items_idx = i);
