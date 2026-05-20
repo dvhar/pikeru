@@ -1,7 +1,7 @@
 //! A container for capturing mouse events.
 
 
-use iced::event::{self, Event};
+use iced::Event;
 use iced::touch;
 use iced::advanced::widget::{Operation, Tree, tree, Widget};
 use iced::Length;
@@ -158,24 +158,24 @@ where
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut Tree,
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
         self.content
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn operate(
-        &self,
+        &mut self,
         tree: &mut Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn Operation<Message>,
+        operation: &mut dyn Operation,
     ) {
-        self.content.as_widget().operate(
+        self.content.as_widget_mut().operate(
             &mut tree.children[0],
             layout,
             renderer,
@@ -183,29 +183,27 @@ where
         );
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         tree: &mut Tree,
-        event: Event,
+        event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
-    ) -> event::Status {
-        if let event::Status::Captured = self.content.as_widget_mut().on_event(
+    ) {
+        self.content.as_widget_mut().update(
             &mut tree.children[0],
-            event.clone(),
+            event,
             layout,
             cursor,
             renderer,
             clipboard,
             shell,
             viewport,
-        ) {
-            return event::Status::Captured;
-        }
+        );
 
         update(self, tree, event, layout, cursor, shell)
     }
@@ -227,7 +225,7 @@ where
         );
 
         match (self.interaction, content_interaction) {
-            (Some(interaction), mouse::Interaction::Idle)
+            (Some(interaction), mouse::Interaction::None)
                 if cursor.is_over(layout.bounds()) =>
             {
                 interaction
@@ -260,14 +258,16 @@ where
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        layout: Layout<'_>,
+        layout: Layout<'b>,
         renderer: &Renderer,
+        viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         self.content.as_widget_mut().overlay(
             &mut tree.children[0],
             layout,
             renderer,
+            viewport,
             translation,
         )
     }
@@ -292,11 +292,11 @@ where
 fn update<Message: Clone, Theme, Renderer>(
     widget: &mut MouseArea<'_, Message, Theme, Renderer>,
     tree: &mut Tree,
-    event: Event,
+    event: &Event,
     layout: Layout<'_>,
     cursor: mouse::Cursor,
     shell: &mut Shell<'_, Message>,
-) -> event::Status {
+) {
     if let Event::Mouse(mouse::Event::CursorMoved { .. })
     | Event::Touch(touch::Event::FingerMoved { .. }) = event
     {
@@ -326,14 +326,14 @@ fn update<Message: Clone, Theme, Renderer>(
     }
 
     if !cursor.is_over(layout.bounds()) {
-        return event::Status::Ignored;
+        return;
     }
 
     if let Some(message) = widget.on_press.as_ref() {
         if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) = event {
             shell.publish(message.clone());
-            return event::Status::Captured;
+            return;
         }
     }
 
@@ -341,7 +341,7 @@ fn update<Message: Clone, Theme, Renderer>(
         if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
         | Event::Touch(touch::Event::FingerLifted { .. }) = event {
             shell.publish(message.clone());
-            return event::Status::Ignored;
+            return;
         }
     }
 
@@ -349,7 +349,7 @@ fn update<Message: Clone, Theme, Renderer>(
         if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) =
             event {
             shell.publish(message.clone());
-            return event::Status::Captured;
+            return;
         }
     }
 
@@ -358,7 +358,7 @@ fn update<Message: Clone, Theme, Renderer>(
             mouse::Button::Right,
         )) = event {
             shell.publish(message.clone());
-            return event::Status::Captured;
+            return;
         }
     }
 
@@ -367,7 +367,7 @@ fn update<Message: Clone, Theme, Renderer>(
             mouse::Button::Middle,
         )) = event {
             shell.publish(message.clone());
-            return event::Status::Captured;
+            return;
         }
     }
 
@@ -376,11 +376,9 @@ fn update<Message: Clone, Theme, Renderer>(
             mouse::Button::Middle,
         )) = event {
             shell.publish(message.clone());
-            return event::Status::Captured;
+            return;
         }
     }
-
-    event::Status::Ignored
 }
 
 /// A container intercepting mouse events.

@@ -14,7 +14,7 @@ pub fn find_zones<F>(
     depth: Option<usize>,
 ) -> impl Operation<Vec<(Id, Rectangle)>>
 where
-    F: Fn(&Rectangle) -> bool + 'static,
+    F: Fn(&Rectangle) -> bool + 'static + Send,
 {
     struct FindDropZone<F> {
         filter: F,
@@ -26,13 +26,12 @@ where
 
     impl<F> Operation<Vec<(Id, Rectangle)>> for FindDropZone<F>
     where
-        F: Fn(&Rectangle) -> bool + 'static,
+        F: Fn(&Rectangle) -> bool + 'static + Send,
     {
         fn container(
             &mut self,
             id: Option<&Id>,
             bounds: iced::Rectangle,
-            operate_on_children: &mut dyn FnMut(&mut dyn Operation<Vec<(Id, Rectangle)>>),
         ) {
             match id {
                 Some(id) => {
@@ -47,6 +46,9 @@ where
                 }
                 None => (),
             }
+        }
+
+        fn traverse(&mut self, operate_on_children: &mut dyn for<'a> FnMut(&'a mut dyn Operation<Vec<(Id, Rectangle)>>)) {
             let goto_next = match &self.max_depth {
                 Some(m_depth) => self.c_depth < *m_depth,
                 None => true,

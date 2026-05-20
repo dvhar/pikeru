@@ -1,68 +1,14 @@
 use iced::{
     color, Border, border::Radius,
-    widget::button::{Appearance as ButAppearance, StyleSheet as ButStyle},
     Color,
     gradient, Radians,
-    widget::container::{StyleSheet as ConStyle, Appearance as ConAppearance},
-    theme::Container as ConTheme,
+    widget::button,
+    widget::container,
     Background,
 };
 
-struct TopButTheme;
-impl ButStyle for TopButTheme {
-    type Style = iced::Theme;
-
-    fn active(&self, _style: &Self::Style) -> ButAppearance {
-        gradbut(color!(0x232323), color!(0x303030), color!(0xdddddd), Radians(0.0))
-    }
-
-    fn hovered(&self, _style: &Self::Style) -> ButAppearance {
-        gradbut(color!(0x563656), color!(0x404060), color!(0xeeeeee), Radians(0.0))
-    }
-
-}
-
-struct SideButTheme;
-impl ButStyle for SideButTheme {
-    type Style = iced::Theme;
-
-    fn active(&self, _style: &Self::Style) -> ButAppearance {
-        gradbut(color!(0x262626), color!(0x2c2c28), color!(0xdddddd), Radians(280.0))
-    }
-
-    fn hovered(&self, _style: &Self::Style) -> ButAppearance {
-        gradbut(color!(0x563656), color!(0x404068), color!(0xeeeeee), Radians(280.0))
-    }
-
-}
-
-struct FlatButTheme;
-impl ButStyle for FlatButTheme {
-    type Style = iced::Theme;
-
-    fn active(&self, _style: &Self::Style) -> ButAppearance {
-        let mut appearance = ButAppearance::default();
-        appearance.background = Some(iced::Background::Color(color!(0x262626)));
-        appearance.text_color = color!(0xdddddd);
-        appearance
-    }
-}
-
-struct RedCloseTheme;
-impl ButStyle for RedCloseTheme {
-    type Style = iced::Theme;
-
-    fn active(&self, _style: &Self::Style) -> ButAppearance {
-        gradbut(color!(0x232323), color!(0x303030), color!(0xff3333), Radians(0.0))
-    }
-
-    fn hovered(&self, _style: &Self::Style) -> ButAppearance {
-        gradbut(color!(0x563656), color!(0x404060), color!(0xff5555), Radians(0.0))
-    }
-}
-
-fn gradbut(c1: Color, c2: Color, txt: Color, rad: Radians) -> ButAppearance {
-    let mut appearance = ButAppearance::default();
+fn gradbut(c1: Color, c2: Color, txt: Color, rad: Radians) -> button::Style {
+    let mut appearance = button::Style::default();
     let gradient = gradient::Linear::new(rad)
         .add_stop(0.0, c1)
         .add_stop(1.0, c2)
@@ -81,41 +27,42 @@ fn border(color: Color) -> Border {
     }
 }
 
-pub fn top_but_theme() -> iced::theme::Button {
-    iced::theme::Button::Custom(
-        Box::new(TopButTheme) as Box<dyn ButStyle<Style = iced::Theme>>
-    )
-}
-pub fn side_but_theme() -> iced::theme::Button {
-    iced::theme::Button::Custom(
-        Box::new(SideButTheme) as Box<dyn ButStyle<Style = iced::Theme>>
-    )
-}
-/// Red close button: same gradient style as Open/Cancel buttons but with red text.
-pub fn red_close_theme() -> iced::theme::Button {
-    iced::theme::Button::Custom(
-        Box::new(RedCloseTheme) as Box<dyn ButStyle<Style = iced::Theme>>
-    )
-}
-pub fn flat_but_theme() -> iced::theme::Button {
-    iced::theme::Button::Custom(
-        Box::new(FlatButTheme) as Box<dyn ButStyle<Style = iced::Theme>>
-    )
+/// Gradient button style: dark gradient background with light text.
+pub fn top_but_style() -> Box<dyn Fn(&iced::Theme, button::Status) -> button::Style + Send + Sync> {
+    Box::new(|_theme: &iced::Theme, _status: button::Status| {
+        gradbut(color!(0x232323), color!(0x303030), color!(0xdddddd), Radians(0.0))
+    })
 }
 
-struct SelectedTheme;
-impl ConStyle for SelectedTheme {
-    type Style = iced::Theme;
-    fn appearance(&self, _style: &Self::Style) -> ConAppearance {
-        let mut appearance = ConAppearance {
-            ..ConAppearance::default()
-        };
+/// Gradient button style: purple-tinted on hover, with angle rotation.
+pub fn side_but_style() -> Box<dyn Fn(&iced::Theme, button::Status) -> button::Style + Send + Sync> {
+    Box::new(|_theme: &iced::Theme, _status: button::Status| {
+        gradbut(color!(0x262626), color!(0x2c2c28), color!(0xdddddd), Radians(280.0))
+    })
+}
+
+/// Flat button style: solid dark background with no gradient.
+pub fn flat_but_style() -> Box<dyn Fn(&iced::Theme, button::Status) -> button::Style + Send + Sync> {
+    Box::new(|_theme: &iced::Theme, _status: button::Status| {
+        let mut appearance = button::Style::default();
+        appearance.background = Some(iced::Background::Color(color!(0x262626)));
+        appearance.text_color = color!(0xdddddd);
+        appearance
+    })
+}
+
+/// Red close button: same gradient style as Open/Cancel buttons but with red text.
+pub fn red_close_style() -> Box<dyn Fn(&iced::Theme, button::Status) -> button::Style + Send + Sync> {
+    Box::new(|_theme: &iced::Theme, _status: button::Status| {
+        gradbut(color!(0x232323), color!(0x303030), color!(0xff3333), Radians(0.0))
+    })
+}
+
+/// Selected item container: red background.
+pub fn selected_style() -> impl Fn(&iced::Theme) -> container::Style {
+    |_theme: &iced::Theme| {
+        let mut appearance = container::Style::default();
         appearance.background = Some(Background::Color(color!(0x990000)));
         appearance
     }
-}
-pub fn get_sel_theme() -> ConTheme {
-    ConTheme::Custom(
-        Box::new(SelectedTheme) as Box<dyn ConStyle<Style = iced::Theme>>
-    )
 }

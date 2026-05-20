@@ -18,30 +18,29 @@ mod theme;
 use iced::{
     advanced::widget::Id,
     Rectangle, Padding,
-    alignment, executor, subscription,
-    Application, Command, Length, Element,
-    mouse::Event::{ButtonPressed, WheelScrolled},
-    mouse::Button::{Back,Forward},
-    mouse::ScrollDelta,
-    keyboard::Event::{KeyPressed,KeyReleased},
-    keyboard::Key,
-    keyboard::key::Named::{Shift,Control,ArrowUp,ArrowDown,ArrowLeft,ArrowRight,Enter,Backspace,PageUp,PageDown,Space,Tab,Delete},
-    keyboard::key::Named,
+    alignment,
+    Subscription,
+    Task, Length, Element,
     widget::{
-        horizontal_space, vertical_space, slider,
-        container::Id as CId,
+        slider,
+        Id as WidgetId,
+        Id as CId,
         image, image::Handle, Column, Row, text, responsive,
-        Scrollable, scrollable, scrollable::{Direction,Properties},
-        Button, TextInput, Text, Checkbox,
+        Scrollable, scrollable, scrollable::Direction,
+        TextInput, Text, Checkbox, Stack, Button,
         column, row, container,
-        svg, text_input,
-        rule::Rule,
+        svg,
+        rule,
+        space,
     },
     futures::{
         sink::SinkExt,
         StreamExt,
     },
-    event::{self, Status, Event::{Mouse,Keyboard}},
+    event::{self, Status},
+    keyboard::Modifiers,
+    keyboard::key::Named,
+    mouse::{ScrollDelta, Button as MouseButton},
     Point, Size,
 };
 use tokio::{
@@ -68,12 +67,12 @@ use mime_guess;
 use getopts::Options;
 use inotify::{Inotify, WatchMask, WatchDescriptor, EventMask};
 use iced_aw::{
-    menu_bar,
-    menu::{Item, Menu},
-    modal, Card,
+    MenuBar, Menu,
+    Card,
     ContextMenu,
     Spinner,
 };
+use iced_aw::menu::Item;
 use md5::{Md5,Digest};
 use fuzzy_matcher::{self, FuzzyMatcher};
 use zbus::{Result,proxy,Connection,blocking};
@@ -121,16 +120,26 @@ fn main() -> iced::Result {
     conf.update(false);
     let resizeable = conf.resizeable_flag.unwrap_or(conf.resizeable.is_true());
     video_rs::init().unwrap();
-    let id = mem::take(&mut conf.id);
-    let mut settings = iced::Settings::with_flags(conf);
-    settings.id = Some(id);
-    settings.window.level = iced::window::Level::AlwaysOnTop;
-    settings.window.position = iced::window::Position::Centered;
-    settings.window.resizable = resizeable;
-    FilePicker::run(settings)
+
+    let conf_clone = conf.clone();
+    iced::application(
+        move || boot(conf_clone.clone()),
+        update,
+        view,
+    )
+    .theme(iced::Theme::Dark)
+    .window(
+        iced::window::Settings {
+            position: iced::window::Position::Centered,
+            resizable: resizeable,
+            ..iced::window::Settings::default()
+        }
+    )
+    .window_size(conf.window_size)
+    .run()
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 enum TriBool {
     True,
     False,
@@ -155,7 +164,7 @@ impl TriBool {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 enum DelConfirm {
     Always,
     Never,
@@ -183,6 +192,7 @@ impl fmt::Display for DelConfirm {
     }
 }
 
+#[derive(Clone)]
 struct Config {
     title: String,
     id: String,
@@ -223,7 +233,7 @@ impl Config {
     #[inline]
     fn dir(self: &Self) -> bool { self.mode == Mode::Dir }
 
-    fn new() -> Self {
+    fn new() -> Config {
         let args: Vec<String> = std::env::args().skip(1).collect();
         let mut opts = Options::new();
         let pwd = std::env::var("PWD").unwrap();
@@ -544,7 +554,7 @@ auto_icon_threshold = {}
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 enum Mode {
     File,
     Files,
@@ -552,7 +562,7 @@ enum Mode {
     Dir,
 }
 impl Mode {
-   fn from(opt: Option<String>) -> Self {
+   fn from(opt: Option<String>) -> Mode {
        match opt {
            None => Self::Files,
            Some(s) => {
@@ -737,13 +747,14 @@ struct Icons {
     theme_name: Option<String>,
 }
 
+#[derive(Clone)]
 struct Bookmark {
     label: String,
     path: String,
-    id: CId,
+    id: WidgetId,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Cmd {
     label: String,
     cmd: String,
@@ -801,7 +812,7 @@ struct IndexProxy<'a> {
 }
 impl<'a> IndexProxy<'a> {
 
-    async fn new(do_index: bool) -> Self {
+    async fn new(do_index: bool) -> IndexProxy<'a> {
         let proxy = if do_index {
             async {
                 let conn = Connection::session().await.ok()?;
@@ -815,7 +826,7 @@ impl<'a> IndexProxy<'a> {
             Ok(con) => Some(con),
             Err(_) => None,
         };
-        Self {
+        IndexProxy {
             proxy,
             done: HashSet::new(),
             sql,
@@ -960,7 +971,7 @@ struct NewPath {
 
 struct FilePicker {
     conf: Config,
-    scroll_id: scrollable::Id,
+    scroll_id: WidgetId,
     items: Vec<FItem>,
     displayed: Vec<usize>,
     end_idx: usize,
@@ -1005,24 +1016,20 @@ struct FilePicker {
     icon_themes: Option<Vec<String>>,
     font_names: Option<Vec<(String, PathBuf)>>,
     font: Option<iced::Font>,
-    search_id: text_input::Id,
-    filepath_id: text_input::Id,
-    unfocus_id: text_input::Id,
-    new_dir_id: text_input::Id,
-    rename_id: text_input::Id,
+    search_id: WidgetId,
+    filepath_id: WidgetId,
+    unfocus_id: WidgetId,
+    new_dir_id: WidgetId,
+    rename_id: WidgetId,
     clipboard_paths: Vec<String>,
     clipboard_cut: bool,
     pending_delete_paths: Vec<String>,
     pending_cmd: Option<usize>,
 }
 
-impl Application for FilePicker {
-    type Executor = executor::Default;
-    type Message = Message;
-    type Theme = iced::Theme;
-    type Flags = Config;
-
-    fn new(conf: Self::Flags) -> (Self, iced::Command<Self::Message>) {
+/// Boot the application (replacement for Application::new in iced 0.14).
+fn boot(conf: Config) -> (FilePicker, iced::Task<Message>) {
+    let conf_clone = conf.clone();
         let pathstr = conf.path.clone();
         let path = Path::new(&pathstr);
         let mut window_size = conf.window_size;
@@ -1055,14 +1062,14 @@ impl Application for FilePicker {
         }.to_string();
         let saving = conf.saving();
         let enable_sel_button = conf.saving() || conf.dir();
-        let search_id = text_input::Id::unique();
-        let filepath_id = text_input::Id::unique();
-        let unfocus_id = text_input::Id::unique();
-        let new_dir_id = text_input::Id::unique();
-        let rename_id = text_input::Id::unique();
+        let search_id = WidgetId::unique();
+        let filepath_id = WidgetId::unique();
+        let unfocus_id = WidgetId::unique();
+        let new_dir_id = WidgetId::unique();
+        let rename_id = WidgetId::unique();
         let icon_theme = conf.icon_theme.clone();
         (
-            Self {
+            FilePicker {
                 conf,
                 items: vec![],
                 end_idx: 0,
@@ -1080,7 +1087,7 @@ impl Application for FilePicker {
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1), preclicked: None},
                 ctrl_pressed: false,
                 shift_pressed: false,
-                scroll_id: scrollable::Id::unique(),
+                scroll_id: WidgetId::unique(),
                 nav_id: 0,
                 view_id: 0,
                 view_image: (0, Preview::None),
@@ -1119,66 +1126,59 @@ impl Application for FilePicker {
                 pending_delete_paths: vec![],
                 pending_cmd: None,
             },
-            Command::batch({
-                let mut cmds = vec![iced::window::resize(iced::window::Id::MAIN, window_size)];
+            Task::batch({
+                // TODO: iced 0.14 removed window::Id::MAIN, need to track window_id
+                let mut cmds: Vec<Task<Message>> = vec![];
                 if saving {
-                    cmds.push(text_input::focus(filepath_id));
+                    cmds.push(iced::widget::operation::focus(filepath_id));
                 } else {
-                    cmds.push(text_input::focus(search_id));
+                    cmds.push(iced::widget::operation::focus(search_id));
                 }
                 cmds
             })
         )
     }
-
-    fn theme(&self) -> iced::Theme {
-        iced::Theme::Dark
-    }
-
-    fn title(&self) -> String {
-        self.conf.title.clone()
-    }
-
-    fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
+    /// Update function (replacement for Application::update in iced 0.14).
+fn update(state: &mut FilePicker, message: Message) -> iced::Task<Message> {
         match message {
             Message::Thumbsize(size) => {
-                self.conf.thumb_size = (size / 10.0).round() * 10.0;
-                self.conf.need_update = true;
-                self.row_sizes.borrow_mut().reset(false);
+                state.conf.thumb_size = (size / 10.0).round() * 10.0;
+                state.conf.need_update = true;
+                state.row_sizes.borrow_mut().reset(false);
             },
             Message::InoCreate(file) => {
-                let mut item = FItem::new(file.as_str().into(), self.nav_id);
-                let len = self.items.len();
-                item.display_idx = self.displayed.len();
+                let mut item = FItem::new(file.as_str().into(), state.nav_id);
+                let len = state.items.len();
+                item.display_idx = state.displayed.len();
                 item.items_idx = len;
-                self.displayed.push(len);
-                if let Some(ts) = self.thumb_sender.as_ref() {
-                    tokio::spawn(item.clone().load(ts.clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                state.displayed.push(len);
+                if let Some(ts) = state.thumb_sender.as_ref() {
+                    tokio::spawn(item.clone().load(ts.clone(), state.icons.clone(), state.conf.thumb_size as u32));
                 }
-                self.items.push(item);
-                self.end_idx += 1;
+                state.items.push(item);
+                state.end_idx += 1;
             },
             Message::InoDelete(file) => {
-                if let Some(i) = self.items.iter().position(|x|x.path == file) {
-                    let dix = self.itod(i);
-                    self.items.iter_mut().for_each(|m|{
+                if let Some(i) = state.items.iter().position(|x|x.path == file) {
+                    let dix = state.itod(i);
+                    state.items.iter_mut().for_each(|m|{
                         if m.items_idx >= i { m.items_idx-=1 };
                         if m.display_idx >= dix { m.display_idx-=1 };
                     });
-                    self.displayed.iter_mut().for_each(|m| if *m >= i { *m-=1 });
-                    self.items.remove(i);
-                    self.end_idx -= 1;
-                    self.displayed.remove(dix);
-                    self.update_searcher_items(self.items.iter().map(|item|item.path.clone()).collect());
+                    state.displayed.iter_mut().for_each(|m| if *m >= i { *m-=1 });
+                    state.items.remove(i);
+                    state.end_idx -= 1;
+                    state.displayed.remove(dix);
+                    state.update_searcher_items(state.items.iter().map(|item|item.path.clone()).collect());
                 }
             },
-            Message::RunCmd(i) => return self.run_command(i),
+            Message::RunCmd(i) => return state.run_command(i),
             Message::Delete => {
-                let selected: Vec<String> = self.items.iter().filter(|item| item.sel).map(|item| item.path.clone()).collect();
-                if self.conf.delete_confirmation.need_confirm(true) {
-                    self.pending_delete_paths = selected;
-                    self.modal = FModal::DeleteConfirm(self.pending_delete_paths.clone());
-                    return Command::none();
+                let selected: Vec<String> = state.items.iter().filter(|item| item.sel).map(|item| item.path.clone()).collect();
+                if state.conf.delete_confirmation.need_confirm(true) {
+                    state.pending_delete_paths = selected;
+                    state.modal = FModal::DeleteConfirm(state.pending_delete_paths.clone());
+                    return Task::none();
                 }
                 for path in &selected {
                     if let Err(e) = OsCmd::new("rm").arg("-rf").arg(path).output() {
@@ -1187,31 +1187,31 @@ impl Application for FilePicker {
                 }
             },
             Message::DeleteConfirmOK => {
-                let paths = mem::take(&mut self.pending_delete_paths);
+                let paths = mem::take(&mut state.pending_delete_paths);
                 for path in &paths {
                     if let Err(e) = OsCmd::new("rm").arg("-rf").arg(path).output() {
                         eprintln!("Error deleting {}: {}", path, e);
                     }
                 }
-                self.modal = FModal::None;
+                state.modal = FModal::None;
             },
             Message::CommandConfirmOK => {
-                self.modal = FModal::None;
-                if let Some(cmd_idx) = self.pending_cmd {
-                    let cmd = self.run_command(cmd_idx);
-                    self.pending_cmd = None;
+                state.modal = FModal::None;
+                if let Some(cmd_idx) = state.pending_cmd {
+                    let cmd = state.run_command(cmd_idx);
+                    state.pending_cmd = None;
                     return cmd;
                 }
             },
             Message::Dummy => {},
             Message::IconThemeSelected(theme) => {
                 let theme = if theme == "None" { None } else { Some(theme) };
-                self.conf.icon_theme = theme.clone();
-                self.conf.need_update = true;
+                state.conf.icon_theme = theme.clone();
+                state.conf.need_update = true;
                 // Reload icons with the new theme
-                self.icons = Arc::new(Icons::new(self.conf.thumb_size, theme));
+                state.icons = Arc::new(Icons::new(state.conf.thumb_size, theme));
                 // Re-load current directory to refresh folder icons
-                return self.update(Message::LoadDir);
+                return update(state, Message::LoadDir);
             }
             Message::FontSelected(font_name) => {
                 let font_name = if font_name == "System default" {
@@ -1219,19 +1219,19 @@ impl Application for FilePicker {
                 } else {
                     Some(font_name)
                 };
-                self.conf.font_name = font_name.clone();
-                self.conf.need_update = true;
+                state.conf.font_name = font_name.clone();
+                state.conf.need_update = true;
 
                 if let Some(name) = font_name {
-                    if let Some((_, path)) = self.font_names.iter().flat_map(|f| f.iter()).find(|(n, _)| n == &name) {
+                    if let Some((_, path)) = state.font_names.iter().flat_map(|f| f.iter()).find(|(n, _)| n == &name) {
                         match std::fs::read(path) {
                             Ok(bytes) => {
                                 if let Some(internal_name) = theme::get_font_internal_name(path) {
                                     // Leak the internal name so we can reference it as &'static str
                                     let static_name: &'static str = Box::leak(internal_name.into_boxed_str());
                                     let load_cmd = iced::font::load(bytes);
-                                    self.font = Some(iced::Font::with_name(static_name));
-                                    return Command::batch(vec![
+                                    state.font = Some(iced::Font::with_name(static_name));
+                                    return Task::batch(vec![
                                         load_cmd.map(move |result| {
                                             match result {
                                                 Ok(_) => Message::Dummy,
@@ -1248,126 +1248,126 @@ impl Application for FilePicker {
                         }
                     } else { eprintln!("Font '{}' not found in available fonts", name); }
                 } else {
-                    self.font = None;
+                    state.font = None;
                 }
-                return Command::none();
+                return Task::none();
             }
             Message::StartDiscovery => {
-                if (self.icon_themes.is_none() || self.font_names.is_none()) && !self.discovering_themes_and_fonts {
-                    self.discovering_themes_and_fonts = true;
-                    let existing_themes = self.icon_themes.clone();
-                    let existing_fonts = self.font_names.clone();
-                    return Command::perform(
+                if (state.icon_themes.is_none() || state.font_names.is_none()) && !state.discovering_themes_and_fonts {
+                    state.discovering_themes_and_fonts = true;
+                    let existing_themes = state.icon_themes.clone();
+                    let existing_fonts = state.font_names.clone();
+                    return Task::perform(
                         async move { theme::discover_themes_async(existing_themes, existing_fonts).await },
                         Message::DiscoveryComplete,
                     );
                 }
-                return Command::none();
+                return Task::none();
             }
             Message::ToggleThemePane => {
-                self.show_theme_pane = !self.show_theme_pane;
-                return Command::none();
+                state.show_theme_pane = !state.show_theme_pane;
+                return Task::none();
             }
             Message::DiscoveryComplete((themes, fonts)) => {
-                self.icon_themes = Some(themes);
-                self.font_names = Some(fonts);
-                self.discovering_themes_and_fonts = false;
-                return Command::none();
+                state.icon_themes = Some(themes);
+                state.font_names = Some(fonts);
+                state.discovering_themes_and_fonts = false;
+                return Task::none();
             }
             Message::SetRecursive(rec) => {
-                self.recursive_search = rec;
-                if let Some(rs) = self.recurse_updater.as_ref() {
+                state.recursive_search = rec;
+                if let Some(rs) = state.recurse_updater.as_ref() {
                     if !matches!(rs.send(RecMsg::SetRecursive(rec)), Ok(_)) {
                         if !rec { // reset searchable items in case already recursed
-                            let items = self.items[..self.end_idx].iter().map(|item|item.path.clone()).collect::<Vec<_>>();
-                            let iidxs = self.items[..self.end_idx].iter().map(|item|item.items_idx).collect::<Vec<_>>();
-                            if let Some(ref mut sender) = self.search_commander {
-                                let a = sender.send(SearchEvent::NewItems(items, self.nav_id));
+                            let items = state.items[..state.end_idx].iter().map(|item|item.path.clone()).collect::<Vec<_>>();
+                            let iidxs = state.items[..state.end_idx].iter().map(|item|item.items_idx).collect::<Vec<_>>();
+                            if let Some(ref mut sender) = state.search_commander {
+                                let a = sender.send(SearchEvent::NewItems(items, state.nav_id));
                                 let b = sender.send(SearchEvent::NewView(iidxs));
-                                match (a,b) { (Ok(_),Ok(_)) => {}, _ => self.search_commander = None, };
+                                match (a,b) { (Ok(_),Ok(_)) => {}, _ => state.search_commander = None, };
                             }
                         }
-                    } else { self.recurse_updater = None; }
+                    } else { state.recurse_updater = None; }
                 }
             },
             Message::ShowHidden(show) => {
-                self.conf.show_hidden = show;
-                self.conf.need_update = true;
+                state.conf.show_hidden = show;
+                state.conf.need_update = true;
                 if !show {
-                    self.enable_sel_button = self.conf.saving() || self.conf.dir() || self.items.iter().any(|item|item.sel);
+                    state.enable_sel_button = state.conf.saving() || state.conf.dir() || state.items.iter().any(|item|item.sel);
                 }
-                let end = if self.searchbar.is_empty() { self.end_idx } else { self.displayed.len() };
-                let displayed = self.items[..end].iter().enumerate().filter_map(|(i,item)| {
+                let end = if state.searchbar.is_empty() { state.end_idx } else { state.displayed.len() };
+                let displayed = state.items[..end].iter().enumerate().filter_map(|(i,item)| {
                     if show || !item.hidden { Some(i)
                     } else { None }
                 }).collect();
-                if self.searchbar.is_empty() {
-                    self.displayed = displayed;
-                    return self.update(Message::Sort(self.conf.sort_by));
+                if state.searchbar.is_empty() {
+                    state.displayed = displayed;
+                    return update(state, Message::Sort(state.conf.sort_by));
                 } else {
-                    self.update_searcher_visible(displayed);
+                    state.update_searcher_visible(displayed);
                 }
             },
             Message::ChangeView => {
-                self.conf.icon_view = !self.conf.icon_view;
-                self.conf.need_update = true;
+                state.conf.icon_view = !state.conf.icon_view;
+                state.conf.need_update = true;
             },
             Message::Sort(i) => {
                 match i {
-                    1 => self.displayed.sort_by(|a:&usize,b:&usize| unsafe {
-                        let x = self.items.get_unchecked(*a);
-                        let y = self.items.get_unchecked(*b);
+                    1 => state.displayed.sort_by(|a:&usize,b:&usize| unsafe {
+                        let x = state.items.get_unchecked(*a);
+                        let y = state.items.get_unchecked(*b);
                         y.isdir().cmp(&x.isdir()).then_with(||x.path.cmp(&y.path))
                     }),
-                    2 => self.displayed.sort_by(|a:&usize,b:&usize| unsafe {
-                        let x = self.items.get_unchecked(*a);
-                        let y = self.items.get_unchecked(*b);
+                    2 => state.displayed.sort_by(|a:&usize,b:&usize| unsafe {
+                        let x = state.items.get_unchecked(*a);
+                        let y = state.items.get_unchecked(*b);
                         y.isdir().cmp(&x.isdir()).then_with(||y.path.cmp(&x.path))
                     }),
-                    3 => self.displayed.sort_by(|a:&usize,b:&usize| unsafe {
-                        let x = self.items.get_unchecked(*a);
-                        let y = self.items.get_unchecked(*b);
+                    3 => state.displayed.sort_by(|a:&usize,b:&usize| unsafe {
+                        let x = state.items.get_unchecked(*a);
+                        let y = state.items.get_unchecked(*b);
                         y.isdir().cmp(&x.isdir()).then_with(||y.mtime.partial_cmp(&x.mtime).unwrap())
                     }),
-                    4 => self.displayed.sort_by(|a:&usize,b:&usize| unsafe {
-                        let x = self.items.get_unchecked(*a);
-                        let y = self.items.get_unchecked(*b);
+                    4 => state.displayed.sort_by(|a:&usize,b:&usize| unsafe {
+                        let x = state.items.get_unchecked(*a);
+                        let y = state.items.get_unchecked(*b);
                         y.isdir().cmp(&x.isdir()).then_with(||x.mtime.partial_cmp(&y.mtime).unwrap())
                     }),
                     _ => unreachable!(),
                 };
-                self.displayed.iter().enumerate().for_each(|(i,j)|unsafe{self.items.get_unchecked_mut(*j)}.display_idx = i);
-                self.conf.need_update |= i != self.conf.sort_by;
-                self.conf.sort_by = i;
-                self.row_sizes.borrow_mut().reset(true);
-                return self.update(Message::LoadThumbs);
+                state.displayed.iter().enumerate().for_each(|(i,j)|unsafe{state.items.get_unchecked_mut(*j)}.display_idx = i);
+                state.conf.need_update |= i != state.conf.sort_by;
+                state.conf.sort_by = i;
+                state.row_sizes.borrow_mut().reset(true);
+                return update(state, Message::LoadThumbs);
             },
             Message::PositionInfo(elem, widget, viewport) => {
                 match elem {
                     Pos::Item => {
-                        self.content_viewport = viewport;
-                        if self.last_clicked.new {
-                            self.last_clicked.new = false;
-                            return self.keep_in_view(widget, viewport);
+                        state.content_viewport = viewport;
+                        if state.last_clicked.new {
+                            state.last_clicked.new = false;
+                            return state.keep_in_view(widget, viewport);
                         }
                     },
                     Pos::Content(clicked_offscreen) => {
-                        self.content_height = widget.height;
-                        self.content_y = widget.y;
-                        self.content_viewport.height = widget.height;
-                        if self.last_clicked.new && self.last_clicked.nav_id == self.nav_id && clicked_offscreen {
-                            self.last_clicked.new = false;
-                            let ii = self.last_clicked.iidx;
-                            if let Some(rect) = self.itopos(ii) {
-                                return self.keep_in_view(rect, self.content_viewport);
+                        state.content_height = widget.height;
+                        state.content_y = widget.y;
+                        state.content_viewport.height = widget.height;
+                        if state.last_clicked.new && state.last_clicked.nav_id == state.nav_id && clicked_offscreen {
+                            state.last_clicked.new = false;
+                            let ii = state.last_clicked.iidx;
+                            if let Some(rect) = state.itopos(ii) {
+                                return state.keep_in_view(rect, state.content_viewport);
                             }
                         }
                     },
                     Pos::Row(counter, i) => {
-                        let mut rs = self.row_sizes.borrow_mut();
+                        let mut rs = state.row_sizes.borrow_mut();
                         if counter == rs.view_counter {
                             if rs.rows.len() <= i {
-                                rs.rows.resize_with(self.num_rows(self.pos_state.borrow().max_cols),
+                                rs.rows.resize_with(state.num_rows(state.pos_state.borrow().max_cols),
                                                     Rowsize::default);
                             }
                             if i > rs.last_recv+1 {
@@ -1375,7 +1375,7 @@ impl Application for FilePicker {
                             } else if !rs.rows[i].ready {
                                 rs.last_recv = i;
                                 rs.num_ready += 1;
-                                let pos = widget.y - self.content_y;
+                                let pos = widget.y - state.content_y;
                                 rs.rows[i] = Rowsize {
                                     ready: true,
                                     end_pos: pos + widget.height,
@@ -1387,73 +1387,73 @@ impl Application for FilePicker {
                 }
             },
             Message::Scrolled(viewport) => {
-                self.update_scroll(viewport.absolute_offset().y);
+                state.update_scroll(viewport.absolute_offset().y);
             },
             Message::PageUp => {
-                let current = self.scroll_offset.y;
-                let offset = scrollable::AbsoluteOffset{x:0.0, y:(current - self.content_height).max(0.0)};
-                self.update_scroll(offset.y);
-                return scrollable::scroll_to(self.scroll_id.clone(), offset);
+                let current = state.scroll_offset.y;
+                let offset = scrollable::AbsoluteOffset{x:0.0, y:(current - state.content_height).max(0.0)};
+                state.update_scroll(offset.y);
+                return iced::widget::operation::scroll_to(state.scroll_id.clone(), offset);
             },
             Message::PageDown => {
-                let current = self.scroll_offset.y;
-                let end = if self.conf.icon_view {
-                    self.row_sizes.borrow().rows.last().map_or(self.content_height, |r|r.end_pos)
+                let current = state.scroll_offset.y;
+                let end = if state.conf.icon_view {
+                    state.row_sizes.borrow().rows.last().map_or(state.content_height, |r|r.end_pos)
                 } else {
-                    self.displayed.len() as f32 * ROW_HEIGHT
+                    state.displayed.len() as f32 * ROW_HEIGHT
                 };
-                let mut newpos = current + self.content_height;
-                let max = end - self.content_height;
+                let mut newpos = current + state.content_height;
+                let max = end - state.content_height;
                 if max >= 0.0 { newpos = newpos.min(max); }
                 let offset = scrollable::AbsoluteOffset{x:0.0, y:newpos};
-                self.update_scroll(offset.y);
-                return scrollable::scroll_to(self.scroll_id.clone(), offset);
+                state.update_scroll(offset.y);
+                return iced::widget::operation::scroll_to(state.scroll_id.clone(), offset);
             },
             Message::FocusFilepath => {
-                return text_input::focus(self.filepath_id.clone());
+                return iced::widget::operation::focus(state.filepath_id.clone());
             }
             Message::FocusSearch => {
-                return text_input::focus(self.search_id.clone());
+                return iced::widget::operation::focus(state.search_id.clone());
             }
             Message::CycleBookmark => {
-                if self.conf.bookmarks.is_empty() {
-                    return Command::none();
+                if state.conf.bookmarks.is_empty() {
+                    return Task::none();
                 }
-                let current = self.dirs.first().map(|s| s.as_str());
+                let current = state.dirs.first().map(|s| s.as_str());
                 let idx = if let Some(dir) = current {
-                    self.conf.bookmarks.iter().position(|bm| bm.path == dir)
-                        .map(|i| (i + 1) % self.conf.bookmarks.len())
+                    state.conf.bookmarks.iter().position(|bm| bm.path == dir)
+                        .map(|i| (i + 1) % state.conf.bookmarks.len())
                         .unwrap_or(0)
                 } else {
                     0
                 };
-                return self.update(Message::LoadBookmark(idx));
+                return update(state, Message::LoadBookmark(idx));
             }
             Message::CycleBookmarkBack => {
-                if self.conf.bookmarks.is_empty() {
-                    return Command::none();
+                if state.conf.bookmarks.is_empty() {
+                    return Task::none();
                 }
-                let current = self.dirs.first().map(|s| s.as_str());
+                let current = state.dirs.first().map(|s| s.as_str());
                 let idx = if let Some(dir) = current {
-                    self.conf.bookmarks.iter().position(|bm| bm.path == dir)
-                        .map(|i| if i == 0 { self.conf.bookmarks.len() - 1 } else { i - 1 })
+                    state.conf.bookmarks.iter().position(|bm| bm.path == dir)
+                        .map(|i| if i == 0 { state.conf.bookmarks.len() - 1 } else { i - 1 })
                         .unwrap_or(0)
                 } else {
                     0
                 };
-                return self.update(Message::LoadBookmark(idx));
+                return update(state, Message::LoadBookmark(idx));
             }
             Message::Spacebar => {
-                match self.view_image.1 {
+                match state.view_image.1 {
                     Preview::None => {
-                        if let Some(sel) = self.items.iter().find(|&item|item.sel) {
+                        if let Some(sel) = state.items.iter().find(|&item|item.sel) {
                             if sel.ftype == FType::Image {
-                                self.view_image = (sel.items_idx, sel.preview());
+                                state.view_image = (sel.items_idx, sel.preview());
                             }
                         }
                     }, _ => {
-                        self.view_image = (0, Preview::None);
-                        return scrollable::scroll_to(self.scroll_id.clone(), self.scroll_offset);
+                        state.view_image = (0, Preview::None);
+                        return iced::widget::operation::scroll_to(state.scroll_id.clone(), state.scroll_offset);
                     }
                 }
             },
@@ -1464,40 +1464,40 @@ impl Application for FilePicker {
                 );
             }
             Message::DeleteBookmark(idx) => {
-                self.rem_bookmark(idx);
-                self.modal = FModal::None;
+                state.rem_bookmark(idx);
+                state.modal = FModal::None;
             },
             Message::EditBookmark(idx) => {
-                self.modal = FModal::EditBookmark(idx);
-                self.new_bm_path = self.conf.bookmarks[idx].path.clone();
-                self.new_bm_label = self.conf.bookmarks[idx].label.clone();
+                state.modal = FModal::EditBookmark(idx);
+                state.new_bm_path = state.conf.bookmarks[idx].path.clone();
+                state.new_bm_label = state.conf.bookmarks[idx].label.clone();
             },
-            Message::NewBmPathInput(path) => self.new_bm_path = path,
-            Message::NewBmLabelInput(label) => self.new_bm_label = label,
+            Message::NewBmPathInput(path) => state.new_bm_path = path,
+            Message::NewBmLabelInput(label) => state.new_bm_label = label,
             Message::UpdateBookmark(idx) => {
                 let mut changed = false;
-                if !self.new_bm_path.is_empty() {
+                if !state.new_bm_path.is_empty() {
                     changed = true;
-                    self.conf.bookmarks[idx].path = mem::take(&mut self.new_bm_path);
+                    state.conf.bookmarks[idx].path = mem::take(&mut state.new_bm_path);
                 }
-                if !self.new_bm_label.is_empty() {
+                if !state.new_bm_label.is_empty() {
                     changed = true;
-                    self.conf.bookmarks[idx].label = mem::take(&mut self.new_bm_label);
+                    state.conf.bookmarks[idx].label = mem::take(&mut state.new_bm_label);
                 }
-                self.modal = FModal::None;
+                state.modal = FModal::None;
                 if changed {
-                    self.conf.update(true);
+                    state.conf.update(true);
                 }
             },
             Message::LoadBookmark(idx) => {
-                self.dir_history.push(mem::take(&mut self.dirs));
-                self.dirs = vec![self.conf.bookmarks[idx].path.clone()];
-                self.update_scroll(0.0);
-                return self.update(Message::LoadDir);
+                state.dir_history.push(mem::take(&mut state.dirs));
+                state.dirs = vec![state.conf.bookmarks[idx].path.clone()];
+                state.update_scroll(0.0);
+                return update(state, Message::LoadDir);
             },
             Message::HandleZones(idx, zones) => {
                 if zones.len() > 0 {
-                    let targets: Vec<_> = self.conf.bookmarks.iter().enumerate().filter_map(|(i, bm)| {
+                    let targets: Vec<_> = state.conf.bookmarks.iter().enumerate().filter_map(|(i, bm)| {
                         if zones[0].0 == bm.id.clone().into() {
                             Some(i)
                         } else {None}
@@ -1507,7 +1507,7 @@ impl Application for FilePicker {
                     } else if zones[0].0 == Id::new("bookmarks") {
                         Some(-1)
                     } else { None };
-                    self.add_bookmark(idx, target);
+                    state.add_bookmark(idx, target);
                 }
             }
             Message::Init((fichan, inochan, search_res, more_files)) => {
@@ -1515,322 +1515,322 @@ impl Application for FilePicker {
                 let (txsrch, search_cmds) = unbounded_channel::<SearchEvent>();
                 let (txrec, recurse_cmds) = unbounded_channel::<RecMsg>();
                 tokio::spawn(watch_inotify(watch_cmds, inochan));
-                self.search_commander = Some(txsrch.clone());
-                self.ino_updater = Some(txino);
-                self.thumb_sender = Some(fichan);
+                state.search_commander = Some(txsrch.clone());
+                state.ino_updater = Some(txino);
+                state.thumb_sender = Some(fichan);
                 tokio::spawn(recursive_add(recurse_cmds, more_files, txrec.clone(), txsrch,
-                                           self.conf.gitignore.clone(), self.conf.respect_gitignore, self.conf.do_index));
-                self.recurse_updater = Some(txrec);
+                                           state.conf.gitignore.clone(), state.conf.respect_gitignore, state.conf.do_index));
+                state.recurse_updater = Some(txrec);
                 tokio::spawn(search_loop(search_cmds, search_res));
-                return self.update(Message::LoadDir);
+                return update(state, Message::LoadDir);
             },
-            Message::PathTxtInput(txt) => self.pathbar = txt,
+            Message::PathTxtInput(txt) => state.pathbar = txt,
             Message::SearchTxtInput(txt) => {
-                self.searchbar = txt;
-                if self.searchbar.is_empty() {
-                    self.search_running = false;
-                    self.recurse_state = RecState::Stop;
+                state.searchbar = txt;
+                if state.searchbar.is_empty() {
+                    state.search_running = false;
+                    state.recurse_state = RecState::Stop;
                     let mut have_sel = false;
-                    self.displayed = self.items[..self.end_idx].iter().enumerate().filter_map(|(i,item)| {
-                        if self.conf.show_hidden || !item.hidden {
+                    state.displayed = state.items[..state.end_idx].iter().enumerate().filter_map(|(i,item)| {
+                        if state.conf.show_hidden || !item.hidden {
                             have_sel |= item.sel;
                             Some(i)
                         } else {None}
                     }).collect();
-                    self.show_goto = have_sel && self.dirs.len() > 1;
-                    self.enable_sel_button = self.conf.saving() || self.conf.dir() || have_sel;
-                    return self.update(Message::Sort(self.conf.sort_by));
-                } else if !self.search_running{
-                    if let Some(sc) = self.search_commander.as_ref() {
-                        if matches!(sc.send(SearchEvent::Search(self.searchbar.clone())), Ok(_)) {
-                            self.search_running = true;
-                            if self.recurse_state != RecState::Run {
-                                if let Some(ru) = self.recurse_updater.as_ref() {
-                                    if let Ok(_) = ru.send(RecMsg::FetchMore(self.nav_id, true)) {
-                                        self.recurse_state = RecState::Run;
+                    state.show_goto = have_sel && state.dirs.len() > 1;
+                    state.enable_sel_button = state.conf.saving() || state.conf.dir() || have_sel;
+                    return update(state, Message::Sort(state.conf.sort_by));
+                } else if !state.search_running{
+                    if let Some(sc) = state.search_commander.as_ref() {
+                        if matches!(sc.send(SearchEvent::Search(state.searchbar.clone())), Ok(_)) {
+                            state.search_running = true;
+                            if state.recurse_state != RecState::Run {
+                                if let Some(ru) = state.recurse_updater.as_ref() {
+                                    if let Ok(_) = ru.send(RecMsg::FetchMore(state.nav_id, true)) {
+                                        state.recurse_state = RecState::Run;
                                     }
                                 }
                             }
-                        } else { self.search_commander = None; }
+                        } else { state.search_commander = None; }
                     }
                 }
             },
             Message::SearchResult(res) => {
                 let mut still_running = false;
                 if let SearchEvent::Results(res, nav_id, num_items, term) = *res {
-                    if nav_id == self.nav_id && !self.searchbar.is_empty() {
-                        self.displayed = res[..1000.min(res.len())].into_iter().enumerate().map(|(di,ii)|{
-                            self.items[ii.0].display_idx = di;
+                    if nav_id == state.nav_id && !state.searchbar.is_empty() {
+                        state.displayed = res[..1000.min(res.len())].into_iter().enumerate().map(|(di,ii)|{
+                            state.items[ii.0].display_idx = di;
                             ii.0
                         }).collect();
-                        let _ = self.update(Message::LoadThumbs);
-                        if term != self.searchbar || num_items != self.items.len() {
-                            if let Some(sc) = self.search_commander.as_ref() {
-                                if matches!(sc.send(SearchEvent::Search(self.searchbar.clone())), Ok(_)) {
+                        let _ = update(state, Message::LoadThumbs);
+                        if term != state.searchbar || num_items != state.items.len() {
+                            if let Some(sc) = state.search_commander.as_ref() {
+                                if matches!(sc.send(SearchEvent::Search(state.searchbar.clone())), Ok(_)) {
                                     still_running = true;
-                                } else { self.search_commander = None; }
+                                } else { state.search_commander = None; }
                             }
                         }
-                        self.row_sizes.borrow_mut().reset(true);
+                        state.row_sizes.borrow_mut().reset(true);
                     }
                 }
-                self.search_running = still_running;
+                state.search_running = still_running;
             },
             Message::NextRecurse(mut next_items, nav_id) => {
-                if nav_id == self.nav_id {
+                if nav_id == state.nav_id {
                     let mut new_displayed = vec![];
                     let paths = next_items.iter_mut().enumerate().map(|(i,fitem)| {
-                        fitem.items_idx = self.items.len() + i;
-                        if self.conf.show_hidden || !fitem.hidden {
+                        fitem.items_idx = state.items.len() + i;
+                        if state.conf.show_hidden || !fitem.hidden {
                             new_displayed.push(fitem.items_idx);
                         }
                         fitem.path.clone()
                     }).collect();
-                    if let Some(sender) = self.search_commander.as_ref() {
-                        self.items.append(&mut next_items);
+                    if let Some(sender) = state.search_commander.as_ref() {
+                        state.items.append(&mut next_items);
                         let a = sender.send(SearchEvent::AddItems(paths));
                         let b = sender.send(SearchEvent::AddView(new_displayed));
                         match (a,b) {
                             (Ok(_),Ok(_)) => {
-                                if !self.search_running {
-                                    _ = sender.send(SearchEvent::Search(self.searchbar.clone()));
+                                if !state.search_running {
+                                    _ = sender.send(SearchEvent::Search(state.searchbar.clone()));
                                 }
-                                if self.recurse_state != RecState::Stop {
-                                    if let Some(ru) = self.recurse_updater.as_ref() {
+                                if state.recurse_state != RecState::Stop {
+                                    if let Some(ru) = state.recurse_updater.as_ref() {
                                         if matches!(ru.send(RecMsg::FetchMore(nav_id, true)), Err(_)) {
-                                            self.recurse_updater = None;
+                                            state.recurse_updater = None;
                                         }
                                     }
                                 }
                             },
-                            _ => self.search_commander = None,
+                            _ => state.search_commander = None,
                         }
                     }
                 }
             },
             Message::RecurseDone => {
-                self.recurse_state = RecState::Stop;
+                state.recurse_state = RecState::Stop;
             },
-            Message::Ctrl(pressed) => self.ctrl_pressed = pressed,
-            Message::Shift(pressed) => self.shift_pressed = pressed,
+            Message::Ctrl(pressed) => state.ctrl_pressed = pressed,
+            Message::Shift(pressed) => state.shift_pressed = pressed,
             Message::ArrowKey(key) => {
-                let didx = if self.items.iter().filter(|item|!item.recursed || !self.searchbar.is_empty()).any(|item|item.sel) {
-                    let maxcols = self.pos_state.borrow().max_cols as i64;
-                    let i = self.last_clicked.didx as i64;
+                let didx = if state.items.iter().filter(|item|!item.recursed || !state.searchbar.is_empty()).any(|item|item.sel) {
+                    let maxcols = state.pos_state.borrow().max_cols as i64;
+                    let i = state.last_clicked.didx as i64;
                     match key {
-                        ArrowUp => i - maxcols,
-                        ArrowDown => i + maxcols,
-                        ArrowLeft => i - 1,
-                        ArrowRight => i + 1,
+                        Named::ArrowUp => i - maxcols,
+                        Named::ArrowDown => i + maxcols,
+                        Named::ArrowLeft => i - 1,
+                        Named::ArrowRight => i + 1,
                         _ => -1,
                     }
                 } else { 0 };
-                match self.view_image.1 {
+                match state.view_image.1 {
                     Preview::None => {},
                     _ => {
-                        let step = didx - (self.last_clicked.didx as i64);
-                        return self.update(Message::NextImage(step));
+                        let step = didx - (state.last_clicked.didx as i64);
+                        return update(state, Message::NextImage(step));
                     },
                 }
-                if didx >= 0 && didx < self.displayed.len() as i64 {
-                    self.click_item(self.dtoi(didx as usize), self.shift_pressed, self.ctrl_pressed, false);
+                if didx >= 0 && didx < state.displayed.len() as i64 {
+                    state.click_item(state.dtoi(didx as usize), state.shift_pressed, state.ctrl_pressed, false);
                 }
             },
             Message::LoadThumbs => {
-                let mut max_load = self.nproc.min(self.displayed.len());
-                self.view_id = self.view_id.wrapping_add(1);
+                let mut max_load = state.nproc.min(state.displayed.len());
+                state.view_id = state.view_id.wrapping_add(1);
                 let mut di: usize = 0;
-                while di < self.displayed.len() && max_load > 0 {
-                    let ii = self.displayed[di];
-                    if self.items[ii].not_loaded() {
-                        if let Some(ts) = self.thumb_sender.as_ref() {
-                            let mut item = mem::replace(&mut self.items[ii], FItem::placeholder(ii, di));
-                            item.view_id = self.view_id;
-                            tokio::spawn(item.load(ts.clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                while di < state.displayed.len() && max_load > 0 {
+                    let ii = state.displayed[di];
+                    if state.items[ii].not_loaded() {
+                        if let Some(ts) = state.thumb_sender.as_ref() {
+                            let mut item = mem::replace(&mut state.items[ii], FItem::placeholder(ii, di));
+                            item.view_id = state.view_id;
+                            tokio::spawn(item.load(ts.clone(), state.icons.clone(), state.conf.thumb_size as u32));
                             max_load -= 1;
                         }
                     }
                     di += 1;
                 }
-                self.last_loaded = di;
+                state.last_loaded = di;
             },
             Message::NextItem(mut doneitem) => {
-                if doneitem.nav_id == self.nav_id {
-                    if doneitem.view_id == self.view_id {
-                        let mut prev_di = self.last_loaded;
-                        while prev_di < self.displayed.len() {
-                            let i = self.dtoi(prev_di);
-                            if self.items[i].not_loaded() {
-                                if let Some(ts) = self.thumb_sender.as_ref() {
-                                    let mut nextitem = mem::replace(&mut self.items[i], FItem::placeholder(i, prev_di));
-                                    nextitem.view_id = self.view_id;
-                                    tokio::spawn(nextitem.load(ts.clone(), self.icons.clone(), self.conf.thumb_size as u32));
+                if doneitem.nav_id == state.nav_id {
+                    if doneitem.view_id == state.view_id {
+                        let mut prev_di = state.last_loaded;
+                        while prev_di < state.displayed.len() {
+                            let i = state.dtoi(prev_di);
+                            if state.items[i].not_loaded() {
+                                if let Some(ts) = state.thumb_sender.as_ref() {
+                                    let mut nextitem = mem::replace(&mut state.items[i], FItem::placeholder(i, prev_di));
+                                    nextitem.view_id = state.view_id;
+                                    tokio::spawn(nextitem.load(ts.clone(), state.icons.clone(), state.conf.thumb_size as u32));
                                 }
                                 break;
                             }
                             prev_di += 1;
                         }
-                        self.last_loaded = prev_di + 1;
+                        state.last_loaded = prev_di + 1;
                     }
                     let j = doneitem.items_idx;
-                    doneitem.display_idx = self.items[j].display_idx;
-                    self.items[j] = doneitem;
+                    doneitem.display_idx = state.items[j].display_idx;
+                    state.items[j] = doneitem;
                 }
             },
             Message::Goto => {
-                self.goto_paths = self.items.iter().filter(|item|item.sel).map(|item|item.path.clone()).collect();
-                self.dir_history.push(mem::take(&mut self.dirs));
-                self.dirs = self.items.iter().filter(|item|item.sel).filter_map(|item|
+                state.goto_paths = state.items.iter().filter(|item|item.sel).map(|item|item.path.clone()).collect();
+                state.dir_history.push(mem::take(&mut state.dirs));
+                state.dirs = state.items.iter().filter(|item|item.sel).filter_map(|item|
                     Some(Path::new(&item.path).parent()?.to_string_lossy().to_string())).collect();
-                self.update_scroll(0.0);
-                return self.update(Message::LoadDir);
+                state.update_scroll(0.0);
+                return update(state, Message::LoadDir);
             }
             Message::LoadDir => {
-                self.view_image = (0, Preview::None);
-                self.last_clicked.new = false;
-                self.update_scroll(0.0);
-                self.pathbar = match &self.save_filename {
-                    Some(fname) => Path::new(&self.dirs[0]).join(fname).to_string_lossy().to_string(),
-                    None => self.dirs[0].clone(),
+                state.view_image = (0, Preview::None);
+                state.last_clicked.new = false;
+                state.update_scroll(0.0);
+                state.pathbar = match &state.save_filename {
+                    Some(fname) => Path::new(&state.dirs[0]).join(fname).to_string_lossy().to_string(),
+                    None => state.dirs[0].clone(),
                 };
-                self.load_dir();
-                self.show_goto = false;
-                self.search_running = false;
-                self.recurse_state = RecState::Stop;
-                if let Some(ru) = self.recurse_updater.as_ref() {
-                    if matches!(ru.send(RecMsg::NewNav(self.dirs.clone(), self.nav_id)), Err(_)) {
-                        self.recurse_updater = None;
+                state.load_dir();
+                state.show_goto = false;
+                state.search_running = false;
+                state.recurse_state = RecState::Stop;
+                if let Some(ru) = state.recurse_updater.as_ref() {
+                    if matches!(ru.send(RecMsg::NewNav(state.dirs.clone(), state.nav_id)), Err(_)) {
+                        state.recurse_updater = None;
                     }
                 }
-                let _ = self.update(Message::Sort(self.conf.sort_by));
+                let _ = update(state, Message::Sort(state.conf.sort_by));
                 // After Goto, select the previously selected files in the new directory
-                let goto_indices: Vec<usize> = self.goto_paths.iter().filter_map(|path|
-                    self.items.iter().position(|item| item.path == *path)).collect();
+                let goto_indices: Vec<usize> = state.goto_paths.iter().filter_map(|path|
+                    state.items.iter().position(|item| item.path == *path)).collect();
                 for ii in goto_indices {
-                    self.click_item(ii, false, false, false);
+                    state.click_item(ii, false, false, false);
                 }
-                self.goto_paths.clear();
-                let mut cmds = vec![scrollable::snap_to(self.scroll_id.clone(), scrollable::RelativeOffset::START)];
-                if self.conf.saving() {
-                    cmds.push(text_input::focus(self.filepath_id.clone()));
-                    let mut extlen = Path::new(self.pathbar.as_str()).extension().map_or(0, |s|s.len());
-                    let pathlen = self.pathbar.chars().count();
+                state.goto_paths.clear();
+                let mut cmds = vec![iced::widget::operation::snap_to(state.scroll_id.clone(), scrollable::RelativeOffset::START)];
+                if state.conf.saving() {
+                    cmds.push(iced::widget::operation::focus(state.filepath_id.clone()));
+                    let mut extlen = Path::new(state.pathbar.as_str()).extension().map_or(0, |s|s.len());
+                    let pathlen = state.pathbar.chars().count();
                     if extlen > 0 && pathlen > extlen+1 { extlen += 1; }
-                    cmds.push(text_input::move_cursor_to(self.filepath_id.clone(), pathlen-extlen));
+                    cmds.push(iced::widget::operation::move_cursor_to(state.filepath_id.clone(), pathlen-extlen));
                 } else {
-                    cmds.push(text_input::focus(self.search_id.clone()));
+                    cmds.push(iced::widget::operation::focus(state.search_id.clone()));
                 }
-                return Command::batch(cmds);
+                return Task::batch(cmds);
             },
             Message::DownDir => {
-                if let Some(dirs) = self.dir_history.pop() {
-                    self.dirs = dirs;
-                    self.update_scroll(0.0);
-                    return self.update(Message::LoadDir);
+                if let Some(dirs) = state.dir_history.pop() {
+                    state.dirs = dirs;
+                    state.update_scroll(0.0);
+                    return update(state, Message::LoadDir);
                 }
             },
             Message::UpDir => {
-                let dirs = mem::take(&mut self.dirs);
-                self.dirs = dirs.iter().map(|dir| {
+                let dirs = mem::take(&mut state.dirs);
+                state.dirs = dirs.iter().map(|dir| {
                     let path = Path::new(dir.as_str());
                     match path.parent() {
                         Some(par) => par.as_os_str().to_str().unwrap_or(dir.as_str()).to_string(),
                         None => dir.clone(),
                     }
                 }).unique_by(|s|s.to_owned()).collect();
-                self.dir_history.push(dirs);
-                return self.update(Message::LoadDir);
+                state.dir_history.push(dirs);
+                return update(state, Message::LoadDir);
             },
             Message::Rename => {
-                if self.new_path.basename.is_empty() {
-                    return Command::none()
+                if state.new_path.basename.is_empty() {
+                    return Task::none()
                 }
-                if let Some(ref mut item) = self.items.iter_mut().find(|i|i.sel) {
-                    match OsCmd::new("mv").arg(&item.path).arg(&self.new_path.full_path).output() {
+                if let Some(ref mut item) = state.items.iter_mut().find(|i|i.sel) {
+                    match OsCmd::new("mv").arg(&item.path).arg(&state.new_path.full_path).output() {
                         Ok(output) if output.status.success() => {
-                            (item.label, item.hidden) = make_label(&self.new_path.full_path);
-                            item.path = mem::take(&mut self.new_path.full_path);
+                            (item.label, item.hidden) = make_label(&state.new_path.full_path);
+                            item.path = mem::take(&mut state.new_path.full_path);
                         },
                         Err(e) => {
-                            let err = format!("Error renaming {} to {}: {}", item.path, self.new_path.basename, e);
+                            let err = format!("Error renaming {} to {}: {}", item.path, state.new_path.basename, e);
                             eprintln!("{}", err);
-                            self.modal = FModal::Error(err);
+                            state.modal = FModal::Error(err);
                         },
                         _ => {
-                            let err = format!("Error renaming {} to {}", item.path, self.new_path.basename);
+                            let err = format!("Error renaming {} to {}", item.path, state.new_path.basename);
                             eprintln!("{}", err);
-                            self.modal = FModal::Error(err);
+                            state.modal = FModal::Error(err);
                         },
                     }
                 }
-                self.new_path.reset();
-                match self.modal {
+                state.new_path.reset();
+                match state.modal {
                     FModal::Error(_) => {},
-                    _ => self.modal = FModal::None,
+                    _ => state.modal = FModal::None,
                 }
             }
             Message::NewDir(confirmed) => if confirmed {
-                    let path = Path::new(&self.dirs[0]).join(&self.new_path.basename);
+                    let path = Path::new(&state.dirs[0]).join(&state.new_path.basename);
                     if let Err(e) = std::fs::create_dir_all(&path) {
                         let msg = format!("Error creating directory: {:?}", e);
-                        self.modal = FModal::Error(msg);
+                        state.modal = FModal::Error(msg);
                     } else {
-                        self.modal = FModal::None;
+                        state.modal = FModal::None;
                     }
                 } else {
-                    self.new_path.reset();
-                    self.modal = FModal::NewDir;
-                    return text_input::focus(self.new_dir_id.clone());
+                    state.new_path.reset();
+                    state.modal = FModal::NewDir;
+                    return iced::widget::operation::focus(state.new_dir_id.clone());
                 },
-            Message::NewPathInput(path) => self.new_path.update(path),
-            Message::CloseModal => self.modal = FModal::None,
-            Message::MiddleClick(iidx) => self.click_item(iidx, false, true, false),
-            Message::LeftPreClick(iidx) => self.clicktimer.preclick(iidx),
+            Message::NewPathInput(path) => state.new_path.update(path),
+            Message::CloseModal => state.modal = FModal::None,
+            Message::MiddleClick(iidx) => state.click_item(iidx, false, true, false),
+            Message::LeftPreClick(iidx) => state.clicktimer.preclick(iidx),
             Message::LeftClick(iidx, always_valid) => {
-                match self.clicktimer.click(iidx, always_valid) {
-                    ClickType::Single => self.click_item(iidx, self.shift_pressed, self.ctrl_pressed, iidx == self.view_image.0),
+                match state.clicktimer.click(iidx, always_valid) {
+                    ClickType::Single => state.click_item(iidx, state.shift_pressed, state.ctrl_pressed, iidx == state.view_image.0),
                     ClickType::Double => {
-                        self.items[iidx].sel = true;
-                        return self.update(Message::Select(SelType::Click));
+                        state.items[iidx].sel = true;
+                        return update(state, Message::Select(SelType::Click));
                     },
                     ClickType::Pass => {},
                 }
-                return text_input::focus(self.unfocus_id.clone());
+                return iced::widget::operation::focus(state.unfocus_id.clone());
             },
             Message::RightClick(iidx) => {
                 if iidx >= 0 {
                     let iidx = iidx as usize;
-                    let item = &self.items[iidx];
+                    let item = &state.items[iidx];
                     if item.ftype == FType::Image {
-                        self.view_image = (item.items_idx, item.preview());
-                        self.click_item(iidx, false, false, true);
+                        state.view_image = (item.items_idx, item.preview());
+                        state.click_item(iidx, false, false, true);
                     } else {
-                        self.click_item(iidx, true, false, false);
+                        state.click_item(iidx, true, false, false);
                     }
                 } else {
-                    self.view_image = (0, Preview::None);
-                    return scrollable::scroll_to(self.scroll_id.clone(), self.scroll_offset);
+                    state.view_image = (0, Preview::None);
+                    return iced::widget::operation::scroll_to(state.scroll_id.clone(), state.scroll_offset);
                 }
-                return text_input::focus(self.unfocus_id.clone());
+                return iced::widget::operation::focus(state.unfocus_id.clone());
             },
             Message::NextImage(step) => {
-                match self.view_image.1 {
+                match state.view_image.1 {
                     Preview::None => {},
                     _ => {
-                        let mut didx = self.itod(self.view_image.0) as i64;
-                        while (step<0 && didx>0) || (step>0 && didx<((self.displayed.len()-1) as i64)) {
+                        let mut didx = state.itod(state.view_image.0) as i64;
+                        while (step<0 && didx>0) || (step>0 && didx<((state.displayed.len()-1) as i64)) {
                             didx = (didx as i64) + step;
-                            if didx<0 || didx as usize>=self.displayed.len() {
-                                return Command::none();
+                            if didx<0 || didx as usize>=state.displayed.len() {
+                                return Task::none();
                             }
                             let di = didx as usize;
-                            let ii = self.dtoi(di);
-                            if self.items[ii].ftype == FType::Image {
-                                match self.items[ii].preview() {
+                            let ii = state.dtoi(di);
+                            if state.items[ii].ftype == FType::Image {
+                                match state.items[ii].preview() {
                                     Preview::None => {},
                                     pv => {
-                                        self.view_image = (self.dtoi(di), pv);
-                                        return self.update(Message::LeftClick(self.view_image.0, true));
+                                        state.view_image = (state.dtoi(di), pv);
+                                        return update(state, Message::LeftClick(state.view_image.0, true));
                                     },
                                 }
                             }
@@ -1839,234 +1839,198 @@ impl Application for FilePicker {
                 }
             },
             Message::OverWriteOK => {
-                println!("{}", self.pathbar);
-                self.exit();
+                println!("{}", state.pathbar);
+                state.exit();
             },
             Message::Select(seltype) => {
-                if self.conf.saving() {
-                    if !self.pathbar.is_empty() {
-                        let result = Path::new(&self.pathbar);
+                if state.conf.saving() {
+                    if !state.pathbar.is_empty() {
+                        let result = Path::new(&state.pathbar);
                         if result.is_file() {
-                            self.modal = FModal::OverWrite;
+                            state.modal = FModal::OverWrite;
                         } else if result.is_dir() {
-                            self.dir_history.push(mem::take(&mut self.dirs));
-                            self.dirs = vec![self.pathbar.clone()];
-                            self.update_scroll(0.0);
-                            return self.update(Message::LoadDir);
+                            state.dir_history.push(mem::take(&mut state.dirs));
+                            state.dirs = vec![state.pathbar.clone()];
+                            state.update_scroll(0.0);
+                            return update(state, Message::LoadDir);
                         } else {
-                            println!("{}", self.pathbar);
-                            self.exit();
+                            println!("{}", state.pathbar);
+                            state.exit();
                         }
                     }
-                } else if self.conf.dir() {
-                    let sel = Path::new(match self.items.iter().find(|item|item.sel) {
+                } else if state.conf.dir() {
+                    let sel = Path::new(match state.items.iter().find(|item|item.sel) {
                         Some(item) => &item.path,
-                        None => &self.pathbar,
+                        None => &state.pathbar,
                     });
                     if sel.is_dir() {
                         if seltype == SelType::Click {
-                            self.dirs = vec![self.items.iter().find(|it|it.sel).unwrap().path.clone()];
-                            return self.update(Message::LoadDir);
+                            state.dirs = vec![state.items.iter().find(|it|it.sel).unwrap().path.clone()];
+                            return update(state, Message::LoadDir);
                         } else {
                             println!("{}", sel.to_string_lossy());
-                            self.exit();
+                            state.exit();
                         }
                     } else if sel.is_file() {
                         if let Some(p) = sel.parent() {
                             println!("{}", p.to_string_lossy());
-                            self.exit();
+                            state.exit();
                         }
                     }
                 } else {
-                    let pb =  FItem::new(PathBuf::from(&self.pathbar), self.nav_id);
+                    let pb =  FItem::new(PathBuf::from(&state.pathbar), state.nav_id);
                     let sels: Vec<&FItem> = match seltype {
                         SelType::TxtEntr => vec![&pb],
-                        _ => self.items.iter().filter(|item| item.sel ).collect(),
+                        _ => state.items.iter().filter(|item| item.sel ).collect(),
                     };
                     if sels.len() != 0 {
                         match sels[0].ftype {
                             FType::Dir => {
-                                if self.conf.dir() && sels.len() == 1 && seltype == SelType::Button {
+                                if state.conf.dir() && sels.len() == 1 && seltype == SelType::Button {
                                     println!("{}", sels[0].path);
-                                    self.exit();
+                                    state.exit();
                                 } else {
-                                    self.dirs = sels.iter().filter_map(|item| match item.ftype {
+                                    state.dirs = sels.iter().filter_map(|item| match item.ftype {
                                         FType::Dir => Some(item.path.clone()), _ => None}).collect();
-                                    return self.update(Message::LoadDir);
+                                    return update(state, Message::LoadDir);
                                 }
                             },
                             FType::NotExist => {},
                             _ => {
                                 println!("{}", sels.iter().map(|item|item.path.as_str()).join("\n"));
-                                self.exit();
+                                state.exit();
                             }
                         }
                     }
                 }
             },
             Message::Cancel => {
-                self.conf.update(false);
+                state.conf.update(false);
                 process::exit(0);
             },
         }
-        Command::none()
+        Task::none()
     }
 
-    fn scale_factor(self: &Self) -> f64 {
-        self.conf.dpi_scale
-    }
-
-    fn subscription(&self) -> iced::Subscription<Self::Message> {
-        let mut state = SubState::Starting;
-        let items = subscription::channel("", 100, |mut messager| async move {
-            loop {
-                match &mut state {
-                    SubState::Starting => {
-                        let (fi_sender, fi_reciever) = unbounded_channel::<FItem>();
-                        let (ino_sender, ino_receiver) = unbounded_channel::<Inochan>();
-                        let (search_sender, search_receiver) = unbounded_channel::<SearchEvent>();
-                        let (rec_sender, rec_receiver) = unbounded_channel::<RecMsg>();
-                        messager.send(Message::Init((fi_sender, ino_sender, search_sender, rec_sender))).await.unwrap();
-                        state = SubState::Ready((fi_reciever,ino_receiver,search_receiver, rec_receiver));
-                    }
-                    SubState::Ready((thumb_recv, ino_recv, search_recv, rec_recv)) => {
-                        tokio::select! {
-                            more = rec_recv.recv() => {
-                                if let Some(msg) = more {
-                                    match msg {
-                                        RecMsg::NextItems(items, nav_id) => {
-                                            messager.send(Message::NextRecurse(items, nav_id)).await.unwrap();
+    fn pikeru_subscription() -> iced::Subscription<Message> {
+        let items = iced::Subscription::run(|| {
+            use iced::futures::stream;
+            use iced::futures::channel::mpsc;
+            use iced::futures::StreamExt;
+            let (mut sender, receiver) = mpsc::channel(100);
+            let runner = stream::once(async move {
+                let mut state = SubState::Starting;
+                loop {
+                    match &mut state {
+                        SubState::Starting => {
+                            let (fi_sender, fi_reciever) = unbounded_channel::<FItem>();
+                            let (ino_sender, ino_receiver) = unbounded_channel::<Inochan>();
+                            let (search_sender, search_receiver) = unbounded_channel::<SearchEvent>();
+                            let (rec_sender, rec_receiver) = unbounded_channel::<RecMsg>();
+                            sender.send(Message::Init((fi_sender, ino_sender, search_sender, rec_sender))).await.unwrap();
+                            state = SubState::Ready((fi_reciever,ino_receiver,search_receiver, rec_receiver));
+                        }
+                        SubState::Ready((thumb_recv, ino_recv, search_recv, rec_recv)) => {
+                            tokio::select! {
+                                more = rec_recv.recv() => {
+                                    if let Some(msg) = more {
+                                        match msg {
+                                            RecMsg::NextItems(items, nav_id) => {
+                                                sender.send(Message::NextRecurse(items, nav_id)).await.unwrap();
+                                            }
+                                            RecMsg::Done(_nav_id) => {
+                                                sender.send(Message::RecurseDone).await.unwrap();
+                                            }
+                                            _ => {}
                                         }
-                                        RecMsg::Done(_nav_id) => {
-                                            messager.send(Message::RecurseDone).await.unwrap();
-                                        }
-                                        _ => {}
+                                    }
+                                },
+                                res = search_recv.recv() => {
+                                    if let Some(search_event) = res {
+                                        sender.send(Message::SearchResult(Box::new(search_event))).await.unwrap();
+                                    }
+                                },
+                                item = thumb_recv.recv() => sender.send(Message::NextItem(item.unwrap())).await.unwrap(),
+                                evt = ino_recv.recv() => {
+                                    match evt {
+                                        Some(Inochan::Delete(file)) => sender.send(Message::InoDelete(file)).await.unwrap(),
+                                        Some(Inochan::Create(file)) => sender.send(Message::InoCreate(file)).await.unwrap(),
+                                        _ => {},
                                     }
                                 }
-                            },
-                            res = search_recv.recv() => {
-                                if let Some(search_event) = res {
-                                    messager.send(Message::SearchResult(Box::new(search_event))).await.unwrap();
-                                }
-                            },
-                            item = thumb_recv.recv() => messager.send(Message::NextItem(item.unwrap())).await.unwrap(),
-                            evt = ino_recv.recv() => {
-                                match evt {
-                                    Some(Inochan::Delete(file)) => messager.send(Message::InoDelete(file)).await.unwrap(),
-                                    Some(Inochan::Create(file)) => messager.send(Message::InoCreate(file)).await.unwrap(),
-                                    _ => {},
-                                }
                             }
-                        }
-                    },
+                        },
+                    }
                 }
-            }
+            }).filter_map(|_| async { None });
+            stream::select(receiver, runner)
         });
-        let events = event::listen_with(|evt, stat| {
-            if stat == Status::Ignored {
-                match evt {
-                    Mouse(ButtonPressed(Back)) => Some(Message::UpDir),
-                    Mouse(ButtonPressed(Forward)) => Some(Message::DownDir),
-                    Mouse(WheelScrolled{ delta: ScrollDelta::Lines{ y, ..}}) => Some(Message::NextImage(if y<0.0 {1} else {-1})),
-                    Keyboard(KeyPressed{ key: Key::Named(Enter), .. }) => Some(Message::Select(SelType::Click)),
-                    Keyboard(KeyPressed{ key: Key::Named(Shift), .. }) => Some(Message::Shift(true)),
-                    Keyboard(KeyReleased{ key: Key::Named(Shift), .. }) => Some(Message::Shift(false)),
-                    Keyboard(KeyPressed{ key: Key::Named(Control), .. }) => Some(Message::Ctrl(true)),
-                    Keyboard(KeyReleased{ key: Key::Named(Control), .. }) => Some(Message::Ctrl(false)),
-                    Keyboard(KeyPressed{ key: Key::Named(ArrowUp), .. }) => Some(Message::ArrowKey(ArrowUp)),
-                    Keyboard(KeyPressed{ key: Key::Named(ArrowDown), .. }) => Some(Message::ArrowKey(ArrowDown)),
-                    Keyboard(KeyPressed{ key: Key::Named(ArrowLeft), .. }) => Some(Message::ArrowKey(ArrowLeft)),
-                    Keyboard(KeyPressed{ key: Key::Named(ArrowRight), .. }) => Some(Message::ArrowKey(ArrowRight)),
-                    Keyboard(KeyPressed{ key: Key::Named(Backspace), .. }) => Some(Message::UpDir),
-                    Keyboard(KeyPressed{ key: Key::Named(Delete), .. }) => Some(Message::Delete),
-                    Keyboard(KeyPressed{ key: Key::Named(PageUp), .. }) => Some(Message::PageUp),
-                    Keyboard(KeyPressed{ key: Key::Named(PageDown), .. }) => Some(Message::PageDown),
-                    Keyboard(KeyPressed{ key: Key::Named(Tab), modifiers: iced::keyboard::Modifiers::SHIFT, .. }) => Some(Message::CycleBookmarkBack),
-                    Keyboard(KeyPressed{ key: Key::Named(Tab), .. }) => Some(Message::CycleBookmark),
-                    Keyboard(KeyPressed{ key: Key::Named(Space), .. }) => Some(Message::Spacebar),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "h" => Some(Message::ArrowKey(ArrowLeft)),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "j" => Some(Message::ArrowKey(ArrowDown)),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "k" => Some(Message::ArrowKey(ArrowUp)),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "l" => Some(Message::ArrowKey(ArrowRight)),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "v" => Some(Message::ChangeView),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "i" => Some(Message::FocusFilepath),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "n" => Some(Message::NewDir(false)),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "t" => Some(Message::RunCmd(5)),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "y" => Some(Message::RunCmd(3)),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "p" => Some(Message::RunCmd(4)),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "s" || c == "/" => Some(Message::FocusSearch),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "1" => Some(Message::Sort(1)),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "2" => Some(Message::Sort(2)),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "3" => Some(Message::Sort(3)),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "4" => Some(Message::Sort(4)),
-                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "q" => Some(Message::Cancel),
-                    _ => None,
-                }
-            } else { None }
-        });
-        subscription::Subscription::batch(vec![items, events/*, native*/])
+        let events = event::listen_with(pikeru_event_filter);
+        iced::Subscription::batch(vec![items, events/*, native*/])
     }
 
-    fn view(&self) -> iced::Element<'_, Self::Message> {
+    /// View function (replacement for Application::view in iced 0.14).
+fn view<'a>(state: &'a FilePicker) -> iced::Element<'a, Message> {
         responsive(|size| {
             let view_menu = |items| Menu::new(items).max_width(180.0).offset(15.0).spacing(3.0);
-            let cmd_list = self.conf.cmds.iter().enumerate().map(
+            let cmd_list = state.conf.cmds.iter().enumerate().map(
                 |(i,cmd)|{
-                    if self.clipboard_paths.is_empty() && cmd.label == "Paste" {
-                        Item::new(Button::new(container(text(cmd.label.as_str()).width(Length::Fill)
-                                    .horizontal_alignment(alignment::Horizontal::Center)))
+                    if state.clipboard_paths.is_empty() && cmd.label == "Paste" {
+                        Item::new(Button::new(container(text(cmd.label.as_str()))
+                                    .width(Length::Fill)
+                                    .align_x(alignment::Horizontal::Center))
                             .padding(1.0)
-                            .style(style::top_but_theme()))
+                            .style(style::top_but_style()))
                     } else {
                         Item::new(menu_button(cmd.label.as_str(), Message::RunCmd(i)))
                     }
                 }).collect();
-            let (sidebar, sidebar_width) = if self.conf.show_sidebar {
-                let font = self.font;
-                (Some(self.conf.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
+            let (sidebar, sidebar_width) = if state.conf.show_sidebar {
+                let font = state.font;
+                (Some(state.conf.bookmarks.iter().enumerate().fold(column![], |col,(i,bm)| {
                         let mut txt = Text::new(bm.label.as_str())
-                            .size(15.0)
-                            .horizontal_alignment(alignment::Horizontal::Center)
-                            .width(Length::Fill);
+                            .size(15.0);
                         if let Some(f) = font { txt = txt.font(f); }
                         let bm_button = container(Button::new(
                                     container(txt)
-                                    .padding(-3.0)
-                                    .id(bm.id.clone()))
-                                 .style(style::side_but_theme())
+                                        .align_x(alignment::Horizontal::Center)
+                                        .width(Length::Fill)
+                                        .padding(-3.0)
+                                        .id(bm.id.clone()))
+                                 .style(style::side_but_style())
                                  .on_press(Message::LoadBookmark(i)));
                         let ctx_menu = ContextMenu::new(bm_button, move || {
                             column![
                                 Button::new(Text::new("Delete"))
                                     .on_press(Message::DeleteBookmark(i))
                                     .width(Length::Fill)
-                                    .style(style::top_but_theme()),
+                                    .style(style::top_but_style()),
                                 Button::new(Text::new("Edit"))
                                     .on_press(Message::EditBookmark(i))
                                     .width(Length::Fill)
-                                    .style(style::top_but_theme()),
+                                    .style(style::top_but_style()),
                             ].width(Length::Fixed(100.0)).into()
                         });
                         col.push(ctx_menu)
-                    }).push(container(vertical_space()).height(Length::Fill).width(Length::Fill)
+                    }).push(container(space::vertical()).height(Length::Fill).width(Length::Fill)
                             .id(CId::new("bookmarks"))).width(Length::Fixed(120.0))), 140.0)
             } else { (None, 10.0) };
             // Auto-switch to icon view if image count meets threshold
-            let icon_view = self.conf.icon_view ||
-                if let Some(threshold) = self.conf.auto_icon_threshold {
-                    threshold == 0 || self.displayed.iter()
-                        .filter_map(|&idx| self.items.get(idx))
+            let icon_view = state.conf.icon_view ||
+                if let Some(threshold) = state.conf.auto_icon_threshold {
+                    threshold == 0 || state.displayed.iter()
+                        .filter_map(|&idx| state.items.get(idx))
                         .filter(|item| { matches!(item.ftype, FType::Image | FType::PdfEpub) })
                         .nth(threshold - 1).is_some()
                 } else {
                     false
                 };
             let mut clicked_offscreen = false;
-            let mut ps = self.pos_state.borrow_mut();
+            let mut ps = state.pos_state.borrow_mut();
             ps.max_cols = if icon_view {
-                ((size.width-sidebar_width) / (self.conf.thumb_size+2.0)).max(1.0) as usize
+                ((size.width-sidebar_width) / (state.conf.thumb_size+2.0)).max(1.0) as usize
             } else { 1 };
-            let content: iced::Element<'_, Self::Message> = match &self.view_image.1 {
+            let content: iced::Element<'_, Message> = match &state.view_image.1 {
                 Preview::Svg(handle) => {
                     mouse_area(container(svg(handle.clone())
                                         .width(Length::Fill)
@@ -2075,7 +2039,7 @@ impl Application for FilePicker {
                                    .align_y(alignment::Vertical::Center)
                                    .width(Length::Fill).height(Length::Fill))
                         .on_right_press(Message::RightClick(-1))
-                        .on_release(Message::LeftClick(self.view_image.0, true))
+                        .on_release(Message::LeftClick(state.view_image.0, true))
                         .into()
                 },
                 Preview::Image(handle) => {
@@ -2086,7 +2050,7 @@ impl Application for FilePicker {
                                    .align_y(alignment::Vertical::Center)
                                    .width(Length::Fill).height(Length::Fill))
                         .on_right_press(Message::RightClick(-1))
-                        .on_release(Message::LeftClick(self.view_image.0, true))
+                        .on_release(Message::LeftClick(state.view_image.0, true))
                         .into()
                 },
                 Preview::Gif(frames) => {
@@ -2097,16 +2061,16 @@ impl Application for FilePicker {
                                    .align_y(alignment::Vertical::Center)
                                    .width(Length::Fill).height(Length::Fill))
                         .on_right_press(Message::RightClick(-1))
-                        .on_release(Message::LeftClick(self.view_image.0, true))
+                        .on_release(Message::LeftClick(state.view_image.0, true))
                         .into()
                 },
                 Preview::None => {
                     if icon_view {
                         let thumb_width = (size.width-sidebar_width) / ps.max_cols as f32;
-                        let num_rows = self.num_rows(ps.max_cols);
-                        let top = self.scroll_offset.y - self.conf.thumb_size*1.1;
-                        let bot = self.scroll_offset.y + self.content_height;
-                        let mut rs = self.row_sizes.borrow_mut();
+                        let num_rows = state.num_rows(ps.max_cols);
+                        let top = state.scroll_offset.y - state.conf.thumb_size*1.1;
+                        let bot = state.scroll_offset.y + state.content_height;
+                        let mut rs = state.row_sizes.borrow_mut();
                         let mut rows = Column::new();
                         rs.checkcols(ps.max_cols);
                         if rs.rows.len() < num_rows {
@@ -2114,7 +2078,7 @@ impl Application for FilePicker {
                         }
                         let first_idx = match rs.rows.iter().take_while(|r|r.ready).find_position(|r|r.pos > top) {
                             Some((i,r)) => {
-                                rows = rows.push(vertical_space().height(r.pos));
+                                rows = rows.push(space::vertical().height(r.pos));
                                 i
                             },
                             None => 0,
@@ -2127,23 +2091,23 @@ impl Application for FilePicker {
                             let past_bot = cur_row.pos > bot;
                             if num_rows <= rs.num_ready && past_bot {
                                 let last_pos = rs.rows.last().unwrap().end_pos;
-                                rows = rows.push(vertical_space().height(last_pos - cur_row.pos));
+                                rows = rows.push(space::vertical().height(last_pos - cur_row.pos));
                                 break;
                             }
                             let mut row_all_ready = next_ready;
                             let mut row_none_ready = true;
                             if past_bot {
-                                rows = rows.push(vertical_space().height(cur_row.end_pos - cur_row.pos));
+                                rows = rows.push(space::vertical().height(cur_row.end_pos - cur_row.pos));
                             } else {
                                 let start = i * ps.max_cols;
                                 let mut row = Row::new().width(Length::Fill);
                                 for j in 0..ps.max_cols {
                                     let idx = start + j;
-                                    if idx < self.displayed.len() {
-                                        let item = &self.items[self.dtoi(idx)];
+                                    if idx < state.displayed.len() {
+                                        let item = &state.items[state.dtoi(idx)];
                                         row_all_ready &= item.thumb_handle != None;
                                         row_none_ready &= item.thumb_handle == None;
-                                        let (clicked, display) = item.display_thumb(&self.last_clicked, thumb_width, self.font);
+                                        let (clicked, display) = item.display_thumb(&state.last_clicked, thumb_width, state.font);
                                         clicked_onscreen |= clicked;
                                         row = row.push(display);
                                     }
@@ -2163,102 +2127,100 @@ impl Application for FilePicker {
 
                             next_ready = row_all_ready;
                         }
-                        clicked_offscreen = self.last_clicked.new && !clicked_onscreen;
+                        clicked_offscreen = state.last_clicked.new && !clicked_onscreen;
                         Scrollable::new(rows)
                             .width(Length::Fill)
                             .height(Length::Fill)
                             .on_scroll(Message::Scrolled)
-                            .direction(Direction::Vertical(Properties::new()))
-                            .id(self.scroll_id.clone()).into()
+                            .direction(Direction::Vertical(scrollable::Scrollbar::new()))
+                            .id(state.scroll_id.clone()).into()
                     } else {
                         // list view
                         let mut rows = Column::new();
                         let mut clicked_onscreen = false;
-                        let num_total = self.displayed.len();
-                        let top = self.scroll_offset.y - ROW_HEIGHT*1.1;
-                        let bot = self.scroll_offset.y + self.content_height;
+                        let num_total = state.displayed.len();
+                        let top = state.scroll_offset.y - ROW_HEIGHT*1.1;
+                        let bot = state.scroll_offset.y + state.content_height;
                         let first_idx = (top / ROW_HEIGHT).floor().max(0.0) as usize;
                         let last_idx = (bot / ROW_HEIGHT).ceil().min((num_total.max(1) - 1) as f32) as usize;
                         if first_idx > 0 {
-                            rows = rows.push(vertical_space().height(ROW_HEIGHT * first_idx as f32));
+                            rows = rows.push(space::vertical().height(ROW_HEIGHT * first_idx as f32));
                         }
                         if num_total > 0 {
                             for i in first_idx..last_idx+1 {
-                                let item = &self.items[self.dtoi(i)];
-                                let (clicked, displayed) = item.display_row(&self.last_clicked, self.font);
+                                let item = &state.items[state.dtoi(i)];
+                                let (clicked, displayed) = item.display_row(&state.last_clicked, state.font);
                                 clicked_onscreen |= clicked;
                                 rows = rows.push(displayed);
                             }
                         }
                         if last_idx+1 < num_total {
-                            rows = rows.push(vertical_space().height(ROW_HEIGHT * (num_total-1-last_idx) as f32));
+                            rows = rows.push(space::vertical().height(ROW_HEIGHT * (num_total-1-last_idx) as f32));
                         }
-                        clicked_offscreen = self.last_clicked.new && !clicked_onscreen;
+                        clicked_offscreen = state.last_clicked.new && !clicked_onscreen;
                         Scrollable::new(rows)
                             .width(Length::Fill)
                             .height(Length::Fill)
                             .on_scroll(Message::Scrolled)
-                            .direction(Direction::Vertical(Properties::new()))
-                            .id(self.scroll_id.clone()).into()
+                            .direction(Direction::Vertical(scrollable::Scrollbar::new()))
+                            .id(state.scroll_id.clone()).into()
                     }
                 },
             };
-            let count = Text::new(format!("  {} items", self.displayed.len()));
+            let count = Text::new(format!("  {} items", state.displayed.len()));
             let ctrlbar = column![
                 row![
-                    match (&self.last_clicked.size, self.show_goto) {
-                        (Some(size), true) => row![Text::new(size),count, horizontal_space(), top_icon(self.icons.goto.clone(), Message::Goto)],
-                        (Some(size), false) => row![Text::new(size),count, horizontal_space()],
-                        (None, true) => row![count, horizontal_space(), top_icon(self.icons.goto.clone(), Message::Goto)],
-                        (None, false) => row![count, horizontal_space()]
+                    match (&state.last_clicked.size, state.show_goto) {
+                        (Some(size), true) => row![Text::new(size),count, space::horizontal(), top_icon(state.icons.goto.clone(), Message::Goto)],
+                        (Some(size), false) => row![Text::new(size),count, space::horizontal()],
+                        (None, true) => row![count, space::horizontal(), top_icon(state.icons.goto.clone(), Message::Goto)],
+                        (None, false) => row![count, space::horizontal()]
                     },
-                    if self.search_running || matches!(self.recurse_state, RecState::Run) {
+                    if state.search_running || matches!(state.recurse_state, RecState::Run) {
                         Element::from(Spinner::new().width(16).height(16).circle_radius(1.5))
                     } else {
-                        Element::from(horizontal_space().width(16))
+                        Element::from(space::horizontal().width(16))
                     },
-                    menu_bar![
-                        (top_icon(self.icons.cmds.clone(), Message::Dummy), 
-                            view_menu(cmd_list))
-                        (top_icon(self.icons.settings.clone(), Message::StartDiscovery),
-                            view_menu(self.build_settings_menu()))
-                    ].spacing(1.0),
-                    top_icon(self.icons.newdir.clone(), Message::NewDir(false)),
-                    top_icon(self.icons.updir.clone(), Message::UpDir),
+                    Element::<Message>::from(MenuBar::new(vec![
+                        Item::with_menu(top_icon(state.icons.cmds.clone(), Message::Dummy), view_menu(cmd_list)),
+                        Item::with_menu(top_icon(state.icons.settings.clone(), Message::StartDiscovery), view_menu(state.build_settings_menu())),
+                    ]).spacing(1.0)),
+                    top_icon(state.icons.newdir.clone(), Message::NewDir(false)),
+                    top_icon(state.icons.updir.clone(), Message::UpDir),
                     top_button("Cancel", 100.0, Message::Cancel),
-                    if self.enable_sel_button {
-                        top_button(&self.select_button, 100.0, Message::Select(SelType::Button))
+                    if state.enable_sel_button {
+                        top_button(&state.select_button, 100.0, Message::Select(SelType::Button))
                     } else {
-                        top_button_off(&self.select_button, 100.0)
+                        top_button_off(&state.select_button, 100.0)
                     }
                 ].spacing(1).height(31.0),
                 row![
                 {
-                    let mut input: TextInput<'_, Message, iced::Theme, iced::Renderer> = TextInput::new("directory or file path", self.pathbar.as_str())
+                    let mut input: TextInput<'_, Message, iced::Theme, iced::Renderer> = TextInput::new("directory or file path", state.pathbar.as_str())
                         .on_input(Message::PathTxtInput)
                         .on_paste(Message::PathTxtInput)
                         .on_submit(Message::Select(SelType::TxtEntr))
                         .width(Length::FillPortion(8))
                         .padding(2.0)
-                        .id(self.filepath_id.clone());
-                    if let Some(f) = self.font { input = input.font(f); }
+                        .id(state.filepath_id.clone());
+                    if let Some(f) = state.font { input = input.font(f); }
                     Element::from(input)
                 },
                 {
-                    let mut input: TextInput<'_, Message, iced::Theme, iced::Renderer> = TextInput::new("search", self.searchbar.as_str())
+                    let mut input: TextInput<'_, Message, iced::Theme, iced::Renderer> = TextInput::new("search", state.searchbar.as_str())
                         .on_input(Message::SearchTxtInput)
                         .on_paste(Message::SearchTxtInput)
                         .width(Length::FillPortion(2))
                         .padding(2.0)
-                        .id(self.search_id.clone());
-                    if let Some(f) = self.font { input = input.font(f); }
+                        .id(state.search_id.clone());
+                    if let Some(f) = state.font { input = input.font(f); }
                     Element::from(input)
                 },
-                Button::new("X").on_press(Message::SearchTxtInput("".to_string())).style(style::flat_but_theme())
+                Button::new("X").on_press(Message::SearchTxtInput("".to_string())).style(style::flat_but_style())
                     .padding(Padding::from([2.0, 5.0]))
                 ]
-            ].align_items(iced::Alignment::End).width(Length::Fill);
-            let send = clicked_offscreen || ps.total_width != size.width || ps.total_height != size.height || self.content_height == 0.0;
+            ].align_x(alignment::Horizontal::Right).width(Length::Fill);
+            let send = clicked_offscreen || ps.total_width != size.width || ps.total_height != size.height || state.content_height == 0.0;
             let mainview = column![
                 ctrlbar,
                     {
@@ -2268,129 +2230,108 @@ impl Application for FilePicker {
                                Pos::Content(clicked_offscreen),a,b), send);
                         r = r.push(content_with_locator);
                         // Show theme pane on the right if enabled
-                        if self.show_theme_pane {
-                            r = r.push(container(self.build_theme_pane()).width(Length::Fixed(250.0)));
-                        } else if !icon_view && self.items.iter().any(|item| item.sel) {
+                        if state.show_theme_pane {
+                            r = r.push(container(state.build_theme_pane()).width(Length::Fixed(250.0)));
+                        } else if !icon_view && state.items.iter().any(|item| item.sel) {
                             // In list mode, show preview pane only when files are selected
-                            r = r.push(container(self.build_preview_pane()).width(Length::Fixed(250.0)));
+                            r = r.push(container(state.build_preview_pane()).width(Length::Fixed(250.0)));
                         }
                         r
                     }
             ];
             ps.total_width = size.width;
             ps.total_height = size.height;
-            match self.modal {
+            match state.modal {
                 FModal::None => mainview.into(),
-                FModal::EditBookmark(i) => modal(mainview, Some(Card::new(
-                        Text::new("Edit bookmark"),
-                        column![
-                            Text::new("Label:"),
-                            TextInput::new(&self.conf.bookmarks[i].label, self.new_bm_label.as_str())
-                                .on_input(Message::NewBmLabelInput)
-                                .on_submit(Message::UpdateBookmark(i))
-                                .on_paste(Message::NewBmLabelInput),
-                            Text::new("Directory path:"),
-                            TextInput::new(&self.conf.bookmarks[i].path, self.new_bm_path.as_str())
-                                .on_input(Message::NewBmPathInput)
-                                .on_submit(Message::UpdateBookmark(i))
-                                .on_paste(Message::NewBmPathInput),
-                            row![
-                                Button::new("Update").on_press(Message::UpdateBookmark(i)).style(style::top_but_theme()),
-                                Button::new("Delete").on_press(Message::DeleteBookmark(i)).style(style::top_but_theme()),
-                                Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_theme()),
-                            ].spacing(5.0)
-                        ]
+                FModal::EditBookmark(i) => modal_overlay(mainview.into(),
+                        Card::new(
+                            Text::new("Edit bookmark"),
+                            Element::<Message>::from(column![
+                                Text::new("Label:"),
+                                TextInput::new(&state.conf.bookmarks[i].label, state.new_bm_label.as_str())
+                                    .on_input(Message::NewBmLabelInput)
+                                    .on_submit(Message::UpdateBookmark(i))
+                                    .on_paste(Message::NewBmLabelInput),
+                                Text::new("Directory path:"),
+                                TextInput::new(&state.conf.bookmarks[i].path, state.new_bm_path.as_str())
+                                    .on_input(Message::NewBmPathInput)
+                                    .on_submit(Message::UpdateBookmark(i))
+                                    .on_paste(Message::NewBmPathInput),
+                                row![
+                                    Button::new("Update").on_press(Message::UpdateBookmark(i)).style(style::top_but_style()),
+                                    Button::new("Delete").on_press(Message::DeleteBookmark(i)).style(style::top_but_style()),
+                                    Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_style()),
+                                ].spacing(5.0)
+                            ])
                         ).max_width(500.0)
-                        .on_close(Message::CloseModal))
-                    )
-                    .backdrop(Message::CloseModal)
-                    .on_esc(Message::CloseModal)
-                    .align_y(alignment::Vertical::Center)
-                    .into(),
-                FModal::Rename(ref filename) => modal(mainview, Some(Card::new(
-                        Text::new("Rename File"),
-                        column![
-                            TextInput::new(filename, &self.new_path.basename)
-                                .id(self.rename_id.clone())
-                                .on_input(Message::NewPathInput)
-                                .on_submit(Message::Rename)
-                                .on_paste(Message::NewPathInput),
-                            row![
-                                Button::new("Rename").on_press(Message::Rename).style(style::top_but_theme()),
-                                Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_theme()),
-                            ].spacing(5.0)
-                        ]
+                        .into(),
+                    Message::CloseModal),
+                FModal::Rename(ref filename) => modal_overlay(mainview.into(),
+                        Card::new(
+                            Text::new("Rename File"),
+                            column![
+                                TextInput::new(filename, &state.new_path.basename)
+                                    .id(state.rename_id.clone())
+                                    .on_input(Message::NewPathInput)
+                                    .on_submit(Message::Rename)
+                                    .on_paste(Message::NewPathInput),
+                                row![
+                                    Button::new("Rename").on_press(Message::Rename).style(style::top_but_style()),
+                                    Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_style()),
+                                ].spacing(5.0)
+                            ]
                         ).max_width(500.0)
-                        .on_close(Message::CloseModal))
-                    )
-                    .backdrop(Message::CloseModal)
-                    .on_esc(Message::CloseModal)
-                    .align_y(alignment::Vertical::Center)
-                    .into(),
-                FModal::Error(ref msg) => modal(mainview, Some(Card::new(
-                            Text::new("Error"), text(msg)).max_width(500.0))
-                    )
-                    .backdrop(Message::CloseModal)
-                    .on_esc(Message::CloseModal)
-                    .align_y(alignment::Vertical::Center)
-                    .into(),
-                FModal::OverWrite => modal(mainview, Some(Card::new(
-                        Text::new("File exists. Overwrite?"),
-                        row![
-                            Button::new("Overwrite").on_press(Message::OverWriteOK),
-                            Button::new("Cancel").on_press(Message::CloseModal),
-                        ].spacing(5.0)).max_width(500.0))
-                    )
-                    .backdrop(Message::CloseModal)
-                    .on_esc(Message::CloseModal)
-                    .align_y(alignment::Vertical::Center)
-                    .into(),
-                FModal::NewDir => modal(mainview, Some(Card::new(
-                        Text::new("Enter new directory name"),
-                        column![
-                            TextInput::new("Untitled", self.new_path.basename.as_str())
-                                .id(self.new_dir_id.clone())
-                                .on_input(Message::NewPathInput)
-                                .on_submit(Message::NewDir(true))
-                                .on_paste(Message::NewPathInput),
+                        .into(),
+                    Message::CloseModal),
+                FModal::Error(ref msg) => modal_overlay(mainview.into(),
+                        Card::new(Text::new("Error"), text(msg)).max_width(500.0).into(),
+                    Message::CloseModal),
+                FModal::OverWrite => modal_overlay(mainview.into(),
+                        Card::new(
+                            Text::new("File exists. Overwrite?"),
                             row![
-                                Button::new("Create").on_press(Message::NewDir(true)).style(style::top_but_theme()),
-                                Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_theme()),
+                                Button::new("Overwrite").on_press(Message::OverWriteOK),
+                                Button::new("Cancel").on_press(Message::CloseModal),
                             ].spacing(5.0)
-                        ]
-                        ).max_width(500.0)
-                        .on_close(Message::CloseModal))
-                    )
-                    .backdrop(Message::CloseModal)
-                    .on_esc(Message::CloseModal)
-                    .align_y(alignment::Vertical::Center)
-                    .into(),
-                FModal::CommandConfirm(ref label) => modal(mainview, Some(Card::new(
-                        Text::new(format!("Run \"{}\"?" , label)),
-                        row![
-                            Button::new("Run").on_press(Message::CommandConfirmOK),
-                            Button::new("Cancel").on_press(Message::CloseModal),
-                        ].spacing(5.0)).max_width(500.0))
-                    )
-                    .backdrop(Message::CloseModal)
-                    .on_esc(Message::CloseModal)
-                    .align_y(alignment::Vertical::Center)
-                    .into(),
-                FModal::DeleteConfirm(ref paths) => modal(mainview, Some(Card::new(
-                        Text::new(format!("Delete {} file{}?", paths.len(), if paths.len() == 1 { "" } else { "s" })),
-                        row![
-                            Button::new("Delete").on_press(Message::DeleteConfirmOK),
-                            Button::new("Cancel").on_press(Message::CloseModal),
-                        ].spacing(5.0)).max_width(500.0))
-                    )
-                    .backdrop(Message::CloseModal)
-                    .on_esc(Message::CloseModal)
-                    .align_y(alignment::Vertical::Center)
-                    .into(),
+                        ).max_width(500.0).into(),
+                    Message::CloseModal),
+                FModal::NewDir => modal_overlay(mainview.into(),
+                        Card::new(
+                            Text::new("Enter new directory name"),
+                            column![
+                                TextInput::new("Untitled", state.new_path.basename.as_str())
+                                    .id(state.new_dir_id.clone())
+                                    .on_input(Message::NewPathInput)
+                                    .on_submit(Message::NewDir(true))
+                                    .on_paste(Message::NewPathInput),
+                                row![
+                                    Button::new("Create").on_press(Message::NewDir(true)).style(style::top_but_style()),
+                                    Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_style()),
+                                ].spacing(5.0)
+                            ]
+                        ).max_width(500.0).into(),
+                    Message::CloseModal),
+                FModal::CommandConfirm(ref label) => modal_overlay(mainview.into(),
+                        Card::new(
+                            Text::new(format!("Run \"{}\"?" , label)),
+                            row![
+                                Button::new("Run").on_press(Message::CommandConfirmOK),
+                                Button::new("Cancel").on_press(Message::CloseModal),
+                            ].spacing(5.0)
+                        ).max_width(500.0).into(),
+                    Message::CloseModal),
+                FModal::DeleteConfirm(ref paths) => modal_overlay(mainview.into(),
+                        Card::new(
+                            Text::new(format!("Delete {} file{}?", paths.len(), if paths.len() == 1 { "" } else { "s" })),
+                            row![
+                                Button::new("Delete").on_press(Message::DeleteConfirmOK),
+                                Button::new("Cancel").on_press(Message::CloseModal),
+                            ].spacing(5.0)
+                        ).max_width(500.0).into(),
+                    Message::CloseModal),
             }
         }).into()
     }
-}
 
 impl NewPath {
     fn reset(&mut self) {
@@ -2407,64 +2348,86 @@ impl NewPath {
     }
 }
 
-fn menu_button(txt: &str, msg: Message) -> Element<'static, Message> {
-    Button::new(container(text(txt)
+/// Create a modal overlay using Stack (replacement for iced_aw::modal which was removed).
+/// In iced 0.14, iced_aw::modal was removed in favor of using iced's Stack widget.
+fn modal_overlay<'a, Message: Clone + 'a>(
+    background: Element<'a, Message>,
+    modal_content: Element<'a, Message>,
+    backdrop_msg: Message,
+) -> Element<'a, Message> {
+    Stack::new()
+        .push(
+            Element::<Message>::from(mouse_area(container(background).width(Length::Fill).height(Length::Fill))
+                .on_press(backdrop_msg)),
+        )
+        .push(
+            Element::<Message>::from(container(modal_content)
+                .align_x(alignment::Horizontal::Center)
+                .align_y(alignment::Vertical::Center)
                 .width(Length::Fill)
-                .horizontal_alignment(alignment::Horizontal::Center)))
-        .style(style::top_but_theme())
+                .height(Length::Fill)),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+fn menu_button(txt: &str, msg: Message) -> Element<'_, Message> {
+    Button::new(container(text(txt))
+                .width(Length::Fill)
+                .align_x(alignment::Horizontal::Center))
+        .style(style::top_but_style())
         .padding(1.0)
         .on_press(msg).into()
 }
 
 /// Create a checkbox for toggling settings in the menu.
-fn menu_button_checkbox(txt: &str, checked: bool, msg: Message) -> Element<'static, Message> {
-    Checkbox::new(txt, checked)
+fn menu_button_checkbox(txt: &str, checked: bool, msg: Message) -> Element<'_, Message> {
+    Checkbox::new(checked)
+        .label(txt)
         .on_toggle(move |_| msg.clone())
         .width(Length::Fill)
         .into()
 }
 
 /// Create a theme selection button with a visual indicator for the selected theme.
-fn theme_button(selected: bool, theme_name: &str) -> Element<'static, Message> {
-    let label = format!("  {}", theme_name);
-    Button::new(container(text(&label)
+fn theme_button<'a>(selected: bool, theme_name: &'a str) -> Element<'a, Message> {
+    Button::new(container(text(theme_name))
                 .width(Length::Fill)
-                .horizontal_alignment(alignment::Horizontal::Center)))
-        .style(if selected { style::top_but_theme() } else { style::flat_but_theme() })
+                .align_x(alignment::Horizontal::Center)
+                .padding([0.0, 10.0]))
+        .style(if selected { style::top_but_style() } else { style::flat_but_style() })
         .padding(1.0)
         .on_press(Message::IconThemeSelected(theme_name.to_string())).into()
 }
 /// Create a font selection button with a visual indicator for the selected font.
-fn font_button(txt: &str, selected: bool, font_name: &str) -> Element<'static, Message> {
-    let label = if selected {
-        format!("  {}", txt)
-    } else {
-        format!("   {}", txt)
-    };
-    Button::new(container(text(&label)
+fn font_button<'a>(txt: &'a str, selected: bool, font_name: &'a str) -> Element<'a, Message> {
+    let padding_right = if selected { 10.0 } else { 15.0 };
+    Button::new(container(text(txt))
                 .width(Length::Fill)
-                .horizontal_alignment(alignment::Horizontal::Center)))
-        .style(if selected { style::top_but_theme() } else { style::flat_but_theme() })
+                .align_x(alignment::Horizontal::Center)
+                .padding([0.0, padding_right]))
+        .style(if selected { style::top_but_style() } else { style::flat_but_style() })
         .padding(1.0)
         .on_press(Message::FontSelected(font_name.to_string())).into()
 }
-fn top_button(txt: &str, size: f32, msg: Message) -> Element<'static, Message> {
-    Button::new(text(txt)
+fn top_button(txt: &str, size: f32, msg: Message) -> Element<'_, Message> {
+    Button::new(container(text(txt))
                 .width(size)
-                .horizontal_alignment(alignment::Horizontal::Center))
-        .style(style::top_but_theme())
+                .align_x(alignment::Horizontal::Center))
+        .style(style::top_but_style())
         .on_press(msg).into()
 }
-fn top_button_off(txt: &str, size: f32) -> Element<'static, Message> {
-    Button::new(text(txt)
+fn top_button_off(txt: &str, size: f32) -> Element<'_, Message> {
+    Button::new(container(text(txt))
                 .width(size)
-                .horizontal_alignment(alignment::Horizontal::Center))
-        .style(style::top_but_theme()).into()
+                .align_x(alignment::Horizontal::Center))
+        .style(style::top_but_style()).into()
 }
 fn top_icon(img: svg::Handle, msg: Message) -> Element<'static, Message> {
     Button::new(svg(img)
                 .width(40.0))
-        .style(style::top_but_theme())
+        .style(style::top_but_style())
         .on_press(msg).into()
 }
 
@@ -2523,7 +2486,7 @@ impl FItem {
     #[inline]
     fn not_loaded(self: &Self) -> bool { self.thumb_handle == None && !self.path.is_empty() }
 
-    fn display_row(&self, last_clicked: &LastClicked, font: Option<iced::Font>) -> (bool, Element<'static, Message>) {
+    fn display_row(&self, last_clicked: &LastClicked, font: Option<iced::Font>) -> (bool, Element<'_, Message>) {
         let mut row = Row::new();
         let idx = self.items_idx;
         if let Some(h) = &self.thumb_handle {
@@ -2558,14 +2521,14 @@ impl FItem {
         let clickable = match (self.isdir(), self.sel) {
             (true, true) => {
                 let dr = iced_drop::droppable(row).on_drop(move |point,_| Message::DropBookmark(idx, point));
-                mouse_area(container(dr).height(ROW_HEIGHT).width(Length::Fill).style(style::get_sel_theme()))
+                mouse_area(container(dr).height(ROW_HEIGHT).width(Length::Fill).style(style::selected_style()))
             },
             (true, false) => {
                 let dr = iced_drop::droppable(row).on_drop(move |point,_| Message::DropBookmark(idx, point));
                 mouse_area(container(dr).height(ROW_HEIGHT).width(Length::Fill))
             },
             (false, true) => {
-                mouse_area(container(row).height(ROW_HEIGHT).width(Length::Fill).style(style::get_sel_theme()))
+                mouse_area(container(row).height(ROW_HEIGHT).width(Length::Fill).style(style::selected_style()))
             },
             (false, false) => {
                 mouse_area(container(row).height(ROW_HEIGHT).width(Length::Fill))
@@ -2584,13 +2547,13 @@ impl FItem {
         }
     }
 
-    fn display_thumb(&self, last_clicked: &LastClicked, thumbsize: f32, font: Option<iced::Font>) -> (bool, Element<'static, Message>) {
+    fn display_thumb(&self, last_clicked: &LastClicked, thumbsize: f32, font: Option<iced::Font>) -> (bool, Element<'_, Message>) {
         const PAD: f32 = 2.0;
         let mut col = Column::new()
-            .align_items(iced::Alignment::Center)
+            .align_x(alignment::Horizontal::Center)
             .width(Length::Fixed(thumbsize-PAD*2.0));
         if let Some(handle) = &self.thumb_handle {
-            if let iced::advanced::image::Data::Rgba{width,height,..} = handle.data() {
+            if let image::Handle::Rgba{width,height,..} = handle {
                 let (w,h) = (*width as f32, *height as f32);
                 let scale = thumbsize as f32 / w.max(h);
                 let w = w * scale;
@@ -2607,14 +2570,14 @@ impl FItem {
         let clickable = match (self.isdir(), self.sel) {
             (true, true) => {
                 let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::DropBookmark(idx, point));
-                mouse_area(container(dr).style(style::get_sel_theme()).padding(PAD))
+                mouse_area(container(dr).style(style::selected_style()).padding(PAD))
             },
             (true, false) => {
                 let dr = iced_drop::droppable(col).on_drop(move |point,_| Message::DropBookmark(idx, point));
                 mouse_area(container(dr).padding(PAD))
             },
             (false, true) => {
-                mouse_area(container(col).style(style::get_sel_theme()).padding(PAD))
+                mouse_area(container(col).style(style::selected_style()).padding(PAD))
             },
             (false, false) => {
                 mouse_area(container(col).padding(PAD))
@@ -2653,7 +2616,7 @@ impl FItem {
                         match load_from_memory(data.as_ref()) {
                             Ok(img) => {
                                 let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-                                Preview::Image(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                                Preview::Image(Handle::from_rgba(w, h, rgba.as_raw().clone()))
                             },
                             Err(e) => {
                                 eprintln!("Error decoding image {}:{}", self.path, e);
@@ -2672,14 +2635,14 @@ impl FItem {
         }
     }
 
-    fn placeholder(ii: usize, di: usize) -> Self {
+    fn placeholder(ii: usize, di: usize) -> FItem {
         let mut ret = FItem(Box::new(Default::default()));
         ret.items_idx = ii;
         ret.display_idx = di;
         ret
     }
 
-    fn new(pth: PathBuf, nav_id: u8) -> Self {
+    fn new(pth: PathBuf, nav_id: u8) -> FItem {
         let (ftype, mtime, size) = match pth.metadata() {
             Ok(metadata) => {
                 if metadata.is_dir() {
@@ -2754,7 +2717,7 @@ impl FItem {
             file.read_to_end(&mut buffer).await.unwrap_or(0);
             let img = load_from_memory(buffer.as_ref()).ok()?;
             let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-            return Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+            return Some(Handle::from_rgba(w, h, rgba.as_raw().clone()))
         }
         if (imgtype == ImgType::Pdf && !icons.cando_pdf) || (imgtype == ImgType::Epub && !icons.cando_epub) {
             return Some(icons.doc.clone());
@@ -2766,7 +2729,7 @@ impl FItem {
             let img = load_from_memory(buffer.as_ref()).ok()?;
             let thumb = img.thumbnail(thumbsize, thumbsize);
             let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
-            Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+            Some(Handle::from_rgba(w, h, rgba.as_raw().clone()))
         } else if imgtype == ImgType::Vid {
             vid_frame(&path, Some(thumbsize), Some(&cache_path))
         } else if imgtype == ImgType::Epub {
@@ -2780,7 +2743,7 @@ impl FItem {
                             file.read_to_end(&mut buffer).await.unwrap_or(0);
                             let img = load_from_memory(buffer.as_ref()).ok()?;
                             let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-                            Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                            Some(Handle::from_rgba(w, h, rgba.as_raw().clone()))
                         },
                         Err(_) => None,
                     }
@@ -2799,7 +2762,7 @@ impl FItem {
                             file.read_to_end(&mut buffer).await.unwrap_or(0);
                             let img = load_from_memory(buffer.as_ref()).ok()?;
                             let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-                            Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                            Some(Handle::from_rgba(w, h, rgba.as_raw().clone()))
                         },
                         Err(_) => None,
                     }
@@ -2828,7 +2791,7 @@ impl FItem {
                                 let encoder = webp::Encoder::from_rgba(pixels.as_ref(), w, h);
                                 let wp = encoder.encode_simple(false, 50.0).ok()?;
                                 std::fs::write(cache_path, &*wp).ok()?;
-                                Some(Handle::from_pixels(w, h, pixels))
+                                Some(Handle::from_rgba(w, h, pixels))
                             },
                             Err(e) => {
                                 eprintln!("Error decoding svg {}: {}", self.path, e);
@@ -2844,7 +2807,7 @@ impl FItem {
                                 let encoder = webp::Encoder::from_rgba(rgba.as_ref(), w, h);
                                 let wp = encoder.encode_simple(false, 50.0).ok()?;
                                 std::fs::write(cache_path, &*wp).ok()?;
-                                Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                                Some(Handle::from_rgba(w, h, rgba.as_raw().clone()))
                             },
                             Err(e) => {
                                 eprintln!("Error decoding image {}: {}", self.path, e);
@@ -3140,7 +3103,7 @@ impl FilePicker {
         self.displayed.len() / maxcols + if self.displayed.len() % maxcols != 0 { 1 } else { 0 }
     }
 
-    fn run_command(self: &mut Self, icmd: usize) -> Command<Message> {
+    fn run_command(self: &mut Self, icmd: usize) -> Task<Message> {
         let cmd = &self.conf.cmds[icmd];
         if cmd.builtin && cmd.label == "Terminal" {
             let cwd = self.dirs[0].clone();
@@ -3180,29 +3143,29 @@ impl FilePicker {
                     };
                 });
             }
-            return Command::none();
+            return Task::none();
         }
         if cmd.builtin && cmd.label == "Paste" {
             if self.dirs.len() != 1 {
                 self.modal = FModal::Error("Cannot paste when multiple directories are open".into());
-                return Command::none();
+                return Task::none();
             }
             self.clipboard_paths.iter_mut().for_each(|path| {
                 tokio::spawn(paste(mem::take(path), self.dirs[0].clone(), self.clipboard_cut));
             });
             self.clipboard_paths.clear();
-            return Command::none();
+            return Task::none();
         }
         let selected: Vec<&FItem> = self.items.iter().filter(|item| item.sel).collect();
         if !cmd.builtin && self.conf.command_confirmation && !selected.is_empty() && self.pending_cmd.is_none() {
             self.pending_cmd = Some(icmd);
             self.modal = FModal::CommandConfirm(cmd.label.clone());
-            return Command::none();
+            return Task::none();
         }
         if cmd.builtin && cmd.label == "Delete" && self.conf.delete_confirmation.need_confirm(false) {
             self.pending_delete_paths = selected.iter().map(|item| item.path.clone()).collect();
             self.modal = FModal::DeleteConfirm(self.pending_delete_paths.clone());
-            return Command::none();
+            return Task::none();
         }
         // Handle Rename before the loop so we can return a focus command
         if cmd.builtin && cmd.label == "Rename" {
@@ -3211,10 +3174,10 @@ impl FilePicker {
                     self.new_path.basename = item.path.rsplitn(2, '/').next().unwrap().to_string();
                     self.new_path.full_path = item.path.clone();
                     self.modal = FModal::Rename(item.path.clone());
-                    return text_input::focus(self.rename_id.clone());
+                    return iced::widget::operation::focus(self.rename_id.clone());
                 } else {
                     self.modal = FModal::Error("Select only one file to rename".into());
-                    return Command::none();
+                    return Task::none();
                 }
             }
         }
@@ -3268,10 +3231,10 @@ impl FilePicker {
                 });
             }
         });
-        Command::none()
+        Task::none()
     }
 
-    fn keep_in_view(self: &mut Self, w: Rectangle, v: Rectangle) -> Command<Message> {
+    fn keep_in_view(self: &mut Self, w: Rectangle, v: Rectangle) -> Task<Message> {
         let wbot = w.y + w.height;
         let abspos = if w.y < v.y {
             w.y
@@ -3281,9 +3244,9 @@ impl FilePicker {
         if abspos >= 0.0 {
             let offset = scrollable::AbsoluteOffset{x:0.0, y:abspos - self.content_y};
             self.update_scroll(offset.y);
-            return scrollable::scroll_to(self.scroll_id.clone(), offset);
+            return iced::widget::operation::scroll_to(self.scroll_id.clone(), offset);
         }
-        Command::none()
+        Task::none()
     }
 
     fn click_item(self: &mut Self, ii: usize, shift: bool, ctrl: bool, always_sel: bool) {
@@ -3452,14 +3415,14 @@ impl FilePicker {
     }
 
     /// Build the theme and font selection pane.
-    fn build_theme_pane(&self) -> Element<'static, Message> {
+    fn build_theme_pane(&self) -> Element<'_, Message> {
         let font = self.font;
         let mut col = Column::new().padding(10.0).spacing(10.0);
 
         // Close button at top
         col = col.push(Button::new(Text::new("Close"))
             .on_press(Message::ToggleThemePane)
-            .style(style::red_close_theme())
+            .style(style::red_close_style())
             .width(Length::Fill)
             .padding(2.0));
 
@@ -3469,7 +3432,7 @@ impl FilePicker {
         if let Some(f) = font { theme_title = theme_title.font(f); }
         theme_col = theme_col.push(container(theme_title)
             .padding(Padding { left: 5.0, ..Padding::ZERO }));
-        theme_col = theme_col.push(Rule::horizontal(2.0));
+        theme_col = theme_col.push(rule::horizontal(2.0));
         let is_none = self.conf.icon_theme.as_deref() == Some("None") || self.conf.icon_theme.is_none();
         theme_col = theme_col.push(theme_button(is_none, "None"));
         let is_default = self.conf.icon_theme.as_deref() == Some("System default");
@@ -3494,7 +3457,7 @@ impl FilePicker {
         if let Some(f) = font { font_title = font_title.font(f); }
         font_col = font_col.push(container(font_title)
             .padding(Padding { left: 5.0, ..Padding::ZERO }));
-        font_col = font_col.push(Rule::horizontal(2.0));
+        font_col = font_col.push(rule::horizontal(2.0));
         
         let font_is_default = self.conf.font_name.is_none();
         font_col = font_col.push(font_button("System default", font_is_default, "System default"));
@@ -3515,7 +3478,7 @@ impl FilePicker {
         // Close button at bottom
         col = col.push(Button::new(Text::new("Close"))
             .on_press(Message::ToggleThemePane)
-            .style(style::red_close_theme())
+            .style(style::red_close_style())
             .width(Length::Fill)
             .padding(2.0));
 
@@ -3523,7 +3486,7 @@ impl FilePicker {
     }
 
     /// Build the preview pane showing thumbnails of selected files (list mode only).
-    fn build_preview_pane(&self) -> Element<'static, Message> {
+    fn build_preview_pane(&self) -> Element<'_, Message> {
         let font = self.font;
         let mut col = Column::new().padding(10.0).spacing(10.0);
         let selected: Vec<_> = self.items.iter().filter(|item| item.sel).collect();
@@ -3559,7 +3522,7 @@ async fn paste(path: String, dest: String, cut: bool) {
 }
 
 impl Icons {
-    fn new(thumbsize: f32, icon_theme: Option<String>) -> Self {
+    fn new(thumbsize: f32, icon_theme: Option<String>) -> Icons {
         let home = std::env::var("HOME").unwrap();
         let tpath = Path::new(&home).join(".cache").join("pikeru").join("thumbnails");
         let cando_pdf = std::process::Command::new("which").arg("pdftoppm").output().map_or(false, |output| output.status.success());
@@ -3632,7 +3595,7 @@ impl Icons {
             thumbsize,
         );
 
-        Self {
+        Icons {
             folder,
             unknown,
             doc,
@@ -3684,7 +3647,7 @@ impl Icons {
                                     Ok(img) => {
                                         let rgba = img.into_rgba8();
                                         let (w, h) = (rgba.width(), rgba.height());
-                                        Handle::from_pixels(w, h, rgba.into_raw())
+                                        Handle::from_rgba(w, h, rgba.into_raw())
                                     }
                                     Err(_) => Self::prerender_svg(fallback_bytes, thumbsize)
                                 }
@@ -3709,7 +3672,7 @@ impl Icons {
         let mut pixels = vec![0; numpix as usize];
         let mut pixmap = tiny_skia::PixmapMut::from_bytes(&mut pixels, w, h).unwrap();
         resvg::render(&tree, transforem, &mut pixmap);
-        Handle::from_pixels(w, h, pixels)
+        Handle::from_rgba(w, h, pixels)
     }
 
     /// Look up the best icon for a given MIME type and extension from the
@@ -3788,17 +3751,17 @@ impl Icons {
 }
 
 impl Bookmark {
-    fn new(label: &str, path: &str) -> Self {
+    fn new(label: &str, path: &str) -> Bookmark {
         Bookmark {
             label: label.into(),
             path: path.into(),
-            id: CId::new(label.to_string()),
+            id: WidgetId::unique(),
         }
     }
 }
 
 impl Cmd {
-    fn new(label: &str, cmd: &str) -> Self {
+    fn new(label: &str, cmd: &str) -> Cmd {
         Cmd {
             label: label.into(),
             cmd: cmd.into(),
@@ -3806,7 +3769,7 @@ impl Cmd {
         }
     }
 
-    fn builtin(label: &str) -> Self {
+    fn builtin(label: &str) -> Cmd {
         Cmd {
             label: label.into(),
             cmd: Default::default(),
@@ -3899,7 +3862,7 @@ fn vid_frame(src: &str, thumbnail: Option<u32>, savepath: Option<&PathBuf>) -> O
         let wp = encoder.encode_simple(false, 50.0).unwrap();
         std::fs::write(out, &*wp).unwrap();
     }
-    Some(Handle::from_pixels(w, h, rgba))
+    Some(Handle::from_rgba(w, h, rgba))
 }
 
 async fn search_loop(mut commands: UReceiver<SearchEvent>,
@@ -4068,4 +4031,50 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
             _ => {},
         };
     }
+}
+
+/// Event filter for iced::event::listen_with.
+/// In iced 0.14, listen_with requires a fn pointer, not a closure.
+fn pikeru_event_filter(evt: iced::Event, stat: Status, _window: iced::window::Id) -> Option<Message> {
+    use iced::keyboard::key::Named;
+    if stat == Status::Ignored {
+        match evt {
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(MouseButton::Back)) => Some(Message::UpDir),
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(MouseButton::Forward)) => Some(Message::DownDir),
+            iced::Event::Mouse(iced::mouse::Event::WheelScrolled{ delta: ScrollDelta::Lines{ y, ..}}) => Some(Message::NextImage(if y<0.0 {1} else {-1})),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::Enter), .. }) => Some(Message::Select(SelType::Click)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::Shift), .. }) => Some(Message::Shift(true)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyReleased{ key: iced::keyboard::Key::Named(Named::Shift), .. }) => Some(Message::Shift(false)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::Control), .. }) => Some(Message::Ctrl(true)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyReleased{ key: iced::keyboard::Key::Named(Named::Control), .. }) => Some(Message::Ctrl(false)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::ArrowUp), .. }) => Some(Message::ArrowKey(Named::ArrowUp)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::ArrowDown), .. }) => Some(Message::ArrowKey(Named::ArrowDown)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::ArrowLeft), .. }) => Some(Message::ArrowKey(Named::ArrowLeft)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::ArrowRight), .. }) => Some(Message::ArrowKey(Named::ArrowRight)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::Backspace), .. }) => Some(Message::UpDir),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::Delete), .. }) => Some(Message::Delete),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::PageUp), .. }) => Some(Message::PageUp),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::PageDown), .. }) => Some(Message::PageDown),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::Tab), modifiers, .. }) if modifiers.contains(Modifiers::SHIFT) => Some(Message::CycleBookmarkBack),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::Tab), .. }) => Some(Message::CycleBookmark),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::Space), .. }) => Some(Message::Spacebar),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "h" => Some(Message::ArrowKey(Named::ArrowLeft)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "j" => Some(Message::ArrowKey(Named::ArrowDown)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "k" => Some(Message::ArrowKey(Named::ArrowUp)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "l" => Some(Message::ArrowKey(Named::ArrowRight)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "v" => Some(Message::ChangeView),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "i" => Some(Message::FocusFilepath),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "n" => Some(Message::NewDir(false)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "t" => Some(Message::RunCmd(5)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "y" => Some(Message::RunCmd(3)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "p" => Some(Message::RunCmd(4)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "s" || c.as_ref() == "/" => Some(Message::FocusSearch),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "1" => Some(Message::Sort(1)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "2" => Some(Message::Sort(2)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "3" => Some(Message::Sort(3)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "4" => Some(Message::Sort(4)),
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Character(ref c), .. }) if c.as_ref() == "q" => Some(Message::Cancel),
+            _ => None,
+        }
+    } else { None }
 }

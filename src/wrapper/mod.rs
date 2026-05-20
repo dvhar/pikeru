@@ -3,7 +3,6 @@ use std::vec;
 
 use iced::advanced::widget::{Operation, Tree, Widget};
 use iced::advanced::{self, layout, mouse, overlay, renderer, Layout};
-use iced::event::Status;
 use iced::{Element, Point, Rectangle, Size, Vector};
 
 pub struct Wrapper<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
@@ -74,67 +73,60 @@ where
         self.content.as_widget().size()
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         tree: &mut iced::advanced::widget::Tree,
-        event: iced::Event,
+        event: &iced::Event,
         layout: iced::advanced::Layout<'_>,
         cursor: iced::advanced::mouse::Cursor,
         _renderer: &Renderer,
         _clipboard: &mut dyn iced::advanced::Clipboard,
         shell: &mut iced::advanced::Shell<'_, Message>,
-        viewport: &iced::Rectangle,
-    ) -> iced::advanced::graphics::core::event::Status {
+        _viewport: &iced::Rectangle,
+    ) {
         // handle the on event of the content first, in case that the wrapper is nested
-        let status = self.content.as_widget_mut().on_event(
+        self.content.as_widget_mut().update(
             &mut tree.children[0],
-            event.clone(),
+            event,
             layout,
             cursor,
             _renderer,
             _clipboard,
             shell,
-            viewport,
+            _viewport,
         );
-        // this should really only be captured if the wrapper is nested or it contains some other
-        // widget that captures the event
-        if status == Status::Captured {
-            return status;
-        };
         if let Some(send_info) = self.send_info.as_deref() {
-            let message = (send_info)(layout.bounds(), *viewport);
+            let message = (send_info)(layout.bounds(), *_viewport);
             shell.publish(message);
         }
-        status
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut iced::advanced::widget::Tree,
         renderer: &Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
         let content_node = self
             .content
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits);
         content_node
     }
 
     fn operate(
-        &self,
+        &mut self,
         tree: &mut Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
-        operation: &mut dyn Operation<Message>,
+        operation: &mut dyn Operation,
     ) {
         let state = tree.state.downcast_mut::<State>();
-        operation.custom(state, self.id.as_ref());
-        operation.container(self.id.as_ref(), layout.bounds(), &mut |operation| {
-            self.content
-                .as_widget()
-                .operate(&mut tree.children[0], layout, renderer, operation);
-        });
+        operation.custom(self.id.as_ref(), layout.bounds(), state);
+        operation.container(self.id.as_ref(), layout.bounds());
+        self.content
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
     }
 
     fn draw(
@@ -161,8 +153,9 @@ where
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        layout: Layout<'_>,
+        layout: Layout<'b>,
         renderer: &Renderer,
+        viewport: &iced::Rectangle,
         _translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         let mut children = tree.children.iter_mut();
@@ -170,6 +163,7 @@ where
             children.next().unwrap(),
             layout,
             renderer,
+            viewport,
             _translation,
         )
     }
@@ -224,7 +218,7 @@ struct Overlay<'a, 'b, Message, Theme, Renderer>
 where
     Renderer: renderer::Renderer,
 {
-    content: &'b Element<'a, Message, Theme, Renderer>,
+    content: &'b mut Element<'a, Message, Theme, Renderer>,
     tree: &'b mut advanced::widget::Tree,
     overlay_bounds: Rectangle,
 }
@@ -236,7 +230,7 @@ where
 {
     fn layout(&mut self, renderer: &Renderer, _bounds: Size) -> layout::Node {
         Widget::<Message, Theme, Renderer>::layout(
-            self.content.as_widget(),
+            self.content.as_widget_mut(),
             self.tree,
             renderer,
             &layout::Limits::new(Size::ZERO, self.overlay_bounds.size()),
@@ -260,12 +254,8 @@ where
             inherited_style,
             layout,
             cursor_position,
-            &Rectangle::with_size(Size::INFINITY),
+            &Rectangle::with_size(Size::INFINITE),
         );
-    }
-
-    fn is_over(&self, _layout: Layout<'_>, _renderer: &Renderer, _cursor_position: Point) -> bool {
-        false
     }
 }
 
@@ -281,4 +271,3 @@ where
 {
     Wrapper::new(content)
 }
-
