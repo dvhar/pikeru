@@ -24,7 +24,7 @@ itertools = "0.12.1"
 video-rs = { path = "src/video-rs", features = ["ndarray"] }
 ndarray = "0.16.1"
 getopts = "0.2.21"
-iced_aw = { path = "/home/d/gits/iced_aw", features = ["menu","context_menu","spinner","card"], package = "iced_aw" }
+iced_aw = { path = "/home/d/gits/iced_aw", features = ["menu","context_menu","spinner"], package = "iced_aw" }
 #iced_aw = { version = "0.9.3", features = ["menu","context_menu"] }
 inotify = "0.11"
 md-5 = "0.10.6"

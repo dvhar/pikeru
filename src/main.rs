@@ -17,7 +17,7 @@ mod style;
 mod theme;
 use iced::{
     advanced::widget::Id,
-    Rectangle, Padding,
+    Rectangle, Padding, Color,
     alignment,
     Task, Length, Element,
     widget::{
@@ -26,8 +26,9 @@ use iced::{
         Id as CId,
         image, image::Handle, Column, Row, text, responsive,
         Scrollable, scrollable, scrollable::Direction,
-        TextInput, Text, Checkbox, Stack, Button,
+        TextInput, Text, Checkbox, Button,
         column, row, container,
+        stack, opaque, center,
         svg,
         rule,
         space,
@@ -67,7 +68,6 @@ use getopts::Options;
 use inotify::{Inotify, WatchMask, WatchDescriptor, EventMask};
 use iced_aw::{
     MenuBar, Menu,
-    Card,
     ContextMenu,
     Spinner,
 };
@@ -2240,91 +2240,128 @@ fn view<'a>(state: &'a FilePicker) -> iced::Element<'a, Message> {
             match state.modal {
                 FModal::None => mainview.into(),
                 FModal::EditBookmark(i) => modal_overlay(mainview.into(),
-                        Card::new(
-                            Text::new("Edit bookmark"),
-                            Element::<Message>::from(column![
-                                Text::new("Label:"),
-                                TextInput::new(&state.conf.bookmarks[i].label, state.new_bm_label.as_str())
-                                    .on_input(Message::NewBmLabelInput)
-                                    .on_submit(Message::UpdateBookmark(i))
-                                    .on_paste(Message::NewBmLabelInput),
-                                Text::new("Directory path:"),
-                                TextInput::new(&state.conf.bookmarks[i].path, state.new_bm_path.as_str())
-                                    .on_input(Message::NewBmPathInput)
-                                    .on_submit(Message::UpdateBookmark(i))
-                                    .on_paste(Message::NewBmPathInput),
-                                row![
-                                    Button::new("Update").on_press(Message::UpdateBookmark(i)).style(style::top_but_style()),
-                                    Button::new("Delete").on_press(Message::DeleteBookmark(i)).style(style::top_but_style()),
-                                    Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_style()),
-                                ].spacing(5.0)
-                            ])
-                        ).max_width(500.0)
-                        .into(),
-                    Message::CloseModal),
+                    container(column![
+                        Text::new("Edit bookmark").size(24),
+                        column![
+                            Text::new("Label").size(12),
+                            TextInput::new(&state.conf.bookmarks[i].label, state.new_bm_label.as_str())
+                                .on_input(Message::NewBmLabelInput)
+                                .on_submit(Message::UpdateBookmark(i))
+                                .on_paste(Message::NewBmLabelInput)
+                                .padding(5),
+                        ].spacing(5),
+                        column![
+                            Text::new("Directory path").size(12),
+                            TextInput::new(&state.conf.bookmarks[i].path, state.new_bm_path.as_str())
+                                .on_input(Message::NewBmPathInput)
+                                .on_submit(Message::UpdateBookmark(i))
+                                .on_paste(Message::NewBmPathInput)
+                                .padding(5),
+                        ].spacing(5),
+                        row![
+                            Button::new("Update").on_press(Message::UpdateBookmark(i)).style(style::top_but_style()),
+                            Button::new("Delete").on_press(Message::DeleteBookmark(i)).style(style::top_but_style()),
+                            Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_style()),
+                        ].spacing(5.0),
+                    ].spacing(10))
+                    .padding(10)
+                    .style(container::rounded_box)
+                    .width(500.0)
+                    .into(),
+                Message::CloseModal),
                 FModal::Rename(ref filename) => modal_overlay(mainview.into(),
-                        Card::new(
-                            Text::new("Rename File"),
-                            column![
-                                TextInput::new(filename, &state.new_path.basename)
-                                    .id(state.rename_id.clone())
-                                    .on_input(Message::NewPathInput)
-                                    .on_submit(Message::Rename)
-                                    .on_paste(Message::NewPathInput),
-                                row![
-                                    Button::new("Rename").on_press(Message::Rename).style(style::top_but_style()),
-                                    Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_style()),
-                                ].spacing(5.0)
-                            ]
-                        ).max_width(500.0)
-                        .into(),
-                    Message::CloseModal),
+                    container(column![
+                        Text::new("Rename File").size(24),
+                        column![
+                            Text::new("Filename").size(12),
+                            TextInput::new(filename, &state.new_path.basename)
+                                .id(state.rename_id.clone())
+                                .on_input(Message::NewPathInput)
+                                .on_submit(Message::Rename)
+                                .on_paste(Message::NewPathInput)
+                                .padding(5),
+                        ].spacing(5),
+                        row![
+                            Button::new("Rename").on_press(Message::Rename).style(style::top_but_style()),
+                            Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_style()),
+                        ].spacing(5.0),
+                    ].spacing(10))
+                    .padding(10)
+                    .style(container::rounded_box)
+                    .width(500.0)
+                    .into(),
+                Message::CloseModal),
                 FModal::Error(ref msg) => modal_overlay(mainview.into(),
-                        Card::new(Text::new("Error"), text(msg)).max_width(500.0).into(),
-                    Message::CloseModal),
+                    container(column![
+                        Text::new("Error").size(24),
+                        text(msg),
+                    ].spacing(10))
+                    .padding(10)
+                    .style(container::rounded_box)
+                    .width(500.0)
+                    .into(),
+                Message::CloseModal),
                 FModal::OverWrite => modal_overlay(mainview.into(),
-                        Card::new(
-                            Text::new("File exists. Overwrite?"),
-                            row![
-                                Button::new("Overwrite").on_press(Message::OverWriteOK),
-                                Button::new("Cancel").on_press(Message::CloseModal),
-                            ].spacing(5.0)
-                        ).max_width(500.0).into(),
-                    Message::CloseModal),
+                    container(column![
+                        Text::new("File exists. Overwrite?").size(24),
+                        row![
+                            Button::new("Overwrite").on_press(Message::OverWriteOK),
+                            Button::new("Cancel").on_press(Message::CloseModal),
+                        ].spacing(5.0),
+                    ].spacing(10))
+                    .padding(10)
+                    .style(container::rounded_box)
+                    .width(500.0)
+                    .into(),
+                Message::CloseModal),
                 FModal::NewDir => modal_overlay(mainview.into(),
-                        Card::new(
-                            Text::new("Enter new directory name"),
-                            column![
-                                TextInput::new("Untitled", state.new_path.basename.as_str())
-                                    .id(state.new_dir_id.clone())
-                                    .on_input(Message::NewPathInput)
-                                    .on_submit(Message::NewDir(true))
-                                    .on_paste(Message::NewPathInput),
-                                row![
-                                    Button::new("Create").on_press(Message::NewDir(true)).style(style::top_but_style()),
-                                    Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_style()),
-                                ].spacing(5.0)
-                            ]
-                        ).max_width(500.0).into(),
-                    Message::CloseModal),
+                    container(column![
+                        Text::new("Enter new directory name").size(24),
+                        column![
+                            Text::new("Directory name").size(12),
+                            TextInput::new("Untitled", state.new_path.basename.as_str())
+                                .id(state.new_dir_id.clone())
+                                .on_input(Message::NewPathInput)
+                                .on_submit(Message::NewDir(true))
+                                .on_paste(Message::NewPathInput)
+                                .padding(5),
+                        ].spacing(5),
+                        row![
+                            Button::new("Create").on_press(Message::NewDir(true)).style(style::top_but_style()),
+                            Button::new("Cancel").on_press(Message::CloseModal).style(style::top_but_style()),
+                        ].spacing(5.0),
+                    ].spacing(10))
+                    .padding(10)
+                    .style(container::rounded_box)
+                    .width(500.0)
+                    .into(),
+                Message::CloseModal),
                 FModal::CommandConfirm(ref label) => modal_overlay(mainview.into(),
-                        Card::new(
-                            Text::new(format!("Run \"{}\"?" , label)),
-                            row![
-                                Button::new("Run").on_press(Message::CommandConfirmOK),
-                                Button::new("Cancel").on_press(Message::CloseModal),
-                            ].spacing(5.0)
-                        ).max_width(500.0).into(),
-                    Message::CloseModal),
+                    container(column![
+                        Text::new(format!("Run \"{}\"?" , label)).size(24),
+                        row![
+                            Button::new("Run").on_press(Message::CommandConfirmOK),
+                            Button::new("Cancel").on_press(Message::CloseModal),
+                        ].spacing(5.0),
+                    ].spacing(10))
+                    .padding(10)
+                    .style(container::rounded_box)
+                    .width(500.0)
+                    .into(),
+                Message::CloseModal),
                 FModal::DeleteConfirm(ref paths) => modal_overlay(mainview.into(),
-                        Card::new(
-                            Text::new(format!("Delete {} file{}?", paths.len(), if paths.len() == 1 { "" } else { "s" })),
-                            row![
-                                Button::new("Delete").on_press(Message::DeleteConfirmOK),
-                                Button::new("Cancel").on_press(Message::CloseModal),
-                            ].spacing(5.0)
-                        ).max_width(500.0).into(),
-                    Message::CloseModal),
+                    container(column![
+                        Text::new(format!("Delete {} file{}?", paths.len(), if paths.len() == 1 { "" } else { "s" })).size(24),
+                        row![
+                            Button::new("Delete").on_press(Message::DeleteConfirmOK),
+                            Button::new("Cancel").on_press(Message::CloseModal),
+                        ].spacing(5.0),
+                    ].spacing(10))
+                    .padding(10)
+                    .style(container::rounded_box)
+                    .width(500.0)
+                    .into(),
+                Message::CloseModal),
             }
         }).into()
     }
@@ -2344,28 +2381,31 @@ impl NewPath {
     }
 }
 
-/// Create a modal overlay using Stack (replacement for iced_aw::modal which was removed).
-/// In iced 0.14, iced_aw::modal was removed in favor of using iced's Stack widget.
+/// Create a modal overlay using native iced widgets (based on iced's modal example).
+/// Replaces iced_aw::Card for modal dialogs.
 fn modal_overlay<'a, Message: Clone + 'a>(
     background: Element<'a, Message>,
     modal_content: Element<'a, Message>,
     backdrop_msg: Message,
 ) -> Element<'a, Message> {
-    Stack::new()
-        .push(
-            Element::<Message>::from(mouse_area(container(background).width(Length::Fill).height(Length::Fill))
-                .on_press(backdrop_msg)),
+    stack![
+        background,
+        opaque(
+            mouse_area(
+                center(
+                    container(
+                        modal_content
+                    )
+                    .style(|_| container::Style {
+                        background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.8).into()),
+                        ..container::Style::default()
+                    })
+                )
+            )
+            .on_press(backdrop_msg)
         )
-        .push(
-            Element::<Message>::from(container(modal_content)
-                .align_x(alignment::Horizontal::Center)
-                .align_y(alignment::Vertical::Center)
-                .width(Length::Fill)
-                .height(Length::Fill)),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    ]
+    .into()
 }
 
 fn menu_button(txt: &str, msg: Message) -> Element<'_, Message> {
@@ -4035,6 +4075,10 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
 /// In iced 0.14, listen_with requires a fn pointer, not a closure.
 fn pikeru_event_filter(evt: iced::Event, stat: Status, _window: iced::window::Id) -> Option<Message> {
     use iced::keyboard::key::Named;
+    // Handle Escape to close modals regardless of widget focus
+    if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed{ key: iced::keyboard::Key::Named(Named::Escape), .. }) = evt {
+        return Some(Message::CloseModal);
+    }
     if stat == Status::Ignored {
         match evt {
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(MouseButton::Back)) => Some(Message::UpDir),
