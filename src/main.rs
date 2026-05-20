@@ -121,6 +121,7 @@ fn main() -> iced::Result {
     video_rs::init().unwrap();
 
     let win_size = conf.window_size;
+    let app_id = mem::take(&mut conf.id);
     iced::application(
         move || boot(conf.clone()),
         update,
@@ -128,10 +129,15 @@ fn main() -> iced::Result {
     )
     .subscription(|_| pikeru_subscription())
     .theme(iced::Theme::Dark)
+    .title(|state: &FilePicker| state.conf.title.clone())
     .window(
         iced::window::Settings {
             position: iced::window::Position::Centered,
             resizable: resizeable,
+            platform_specific: iced::window::settings::PlatformSpecific {
+                application_id: app_id,
+                ..iced::window::settings::PlatformSpecific::default()
+            },
             ..iced::window::Settings::default()
         }
     )
