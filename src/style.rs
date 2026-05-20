@@ -29,21 +29,31 @@ fn border(color: Color) -> Border {
 
 /// Gradient button style: dark gradient background with light text.
 pub fn top_but_style() -> Box<dyn Fn(&iced::Theme, button::Status) -> button::Style + Send + Sync> {
-    Box::new(|_theme: &iced::Theme, _status: button::Status| {
-        gradbut(color!(0x232323), color!(0x303030), color!(0xdddddd), Radians(0.0))
+    Box::new(move |_theme: &iced::Theme, status: button::Status| {
+        match status {
+            button::Status::Hovered | button::Status::Pressed => {
+                gradbut(color!(0x563656), color!(0x404060), color!(0xeeeeee), Radians(0.0))
+            }
+            _ => gradbut(color!(0x232323), color!(0x303030), color!(0xdddddd), Radians(0.0)),
+        }
     })
 }
 
 /// Gradient button style: purple-tinted on hover, with angle rotation.
 pub fn side_but_style() -> Box<dyn Fn(&iced::Theme, button::Status) -> button::Style + Send + Sync> {
-    Box::new(|_theme: &iced::Theme, _status: button::Status| {
-        gradbut(color!(0x262626), color!(0x2c2c28), color!(0xdddddd), Radians(280.0))
+    Box::new(move |_theme: &iced::Theme, status: button::Status| {
+        match status {
+            button::Status::Hovered | button::Status::Pressed => {
+                gradbut(color!(0x563656), color!(0x404068), color!(0xeeeeee), Radians(280.0))
+            }
+            _ => gradbut(color!(0x262626), color!(0x2c2c28), color!(0xdddddd), Radians(280.0)),
+        }
     })
 }
 
 /// Flat button style: solid dark background with no gradient.
 pub fn flat_but_style() -> Box<dyn Fn(&iced::Theme, button::Status) -> button::Style + Send + Sync> {
-    Box::new(|_theme: &iced::Theme, _status: button::Status| {
+    Box::new(move |_theme: &iced::Theme, _status: button::Status| {
         let mut appearance = button::Style::default();
         appearance.background = Some(iced::Background::Color(color!(0x262626)));
         appearance.text_color = color!(0xdddddd);
@@ -53,8 +63,13 @@ pub fn flat_but_style() -> Box<dyn Fn(&iced::Theme, button::Status) -> button::S
 
 /// Red close button: same gradient style as Open/Cancel buttons but with red text.
 pub fn red_close_style() -> Box<dyn Fn(&iced::Theme, button::Status) -> button::Style + Send + Sync> {
-    Box::new(|_theme: &iced::Theme, _status: button::Status| {
-        gradbut(color!(0x232323), color!(0x303030), color!(0xff3333), Radians(0.0))
+    Box::new(move |_theme: &iced::Theme, status: button::Status| {
+        match status {
+            button::Status::Hovered | button::Status::Pressed => {
+                gradbut(color!(0x563656), color!(0x404060), color!(0xff5555), Radians(0.0))
+            }
+            _ => gradbut(color!(0x232323), color!(0x303030), color!(0xff3333), Radians(0.0)),
+        }
     })
 }
 
