@@ -630,8 +630,6 @@ enum Message {
     DeleteBookmark(usize),
     HandleZones(usize, Vec<(Id, iced::Rectangle)>),
     NextImage(i64),
-    PreviewReady(usize, Preview),
-    PreviewAllocated(usize, Preview),
     Scrolled(scrollable::Viewport),
     PositionInfo(Pos, Rectangle, Rectangle),
     Sort(i32),
@@ -912,12 +910,11 @@ impl<'a> IndexProxy<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
 enum Preview {
     None,
     Svg(svg::Handle),
     Image(Handle),
-    Gif(std::sync::Arc<iced_gif::Frames>),
+    Gif(iced_gif::Frames),
 }
 
 #[derive(Debug, Default)]
@@ -1451,12 +1448,9 @@ fn update(state: &mut FilePicker, message: Message) -> iced::Task<Message> {
             Message::Spacebar => {
                 match state.view_image.1 {
                     Preview::None => {
-                        if let Some(idx) = state.items.iter().position(|item|item.sel) {
-                            let item = &state.items[idx];
-                            if item.ftype == FType::Image {
-                                return state.load_preview(
-                                    item.items_idx, item.path.clone(), item.svg, item.vid, item.gif
-                                );
+                        if let Some(sel) = state.items.iter().find(|&item|item.sel) {
+                            if sel.ftype == FType::Image {
+                                state.view_image = (sel.items_idx, sel.preview());
                             }
                         }
                     }, _ => {
@@ -1810,12 +1804,8 @@ fn update(state: &mut FilePicker, message: Message) -> iced::Task<Message> {
                     let iidx = iidx as usize;
                     let item = &state.items[iidx];
                     if item.ftype == FType::Image {
-                        return Task::batch([
-                            state.load_preview(
-                                item.items_idx, item.path.clone(), item.svg, item.vid, item.gif
-                            ),
-                            iced::widget::operation::focus(state.unfocus_id.clone()),
-                        ]);
+                        state.view_image = (item.items_idx, item.preview());
+                        state.click_item(iidx, false, false, true);
                     } else {
                         state.click_item(iidx, true, false, false);
                     }
@@ -1838,37 +1828,17 @@ fn update(state: &mut FilePicker, message: Message) -> iced::Task<Message> {
                             let di = didx as usize;
                             let ii = state.dtoi(di);
                             if state.items[ii].ftype == FType::Image {
-                                let item = &state.items[ii];
-                                return state.load_preview(
-                                    item.items_idx, item.path.clone(), item.svg, item.vid, item.gif
-                                );
+                                match state.items[ii].preview() {
+                                    Preview::None => {},
+                                    pv => {
+                                        state.view_image = (state.dtoi(di), pv);
+                                        return update(state, Message::LeftClick(state.view_image.0, true));
+                                    },
+                                }
                             }
                         }
                     },
                 }
-            },
-            Message::PreviewReady(idx, preview) => {
-                // Only apply if this is still the requested image
-                if idx != state.view_image.0 { return Task::none(); }
-                match preview {
-                    Preview::Image(handle) => {
-                        // Allocate on GPU, then show only when ready (prevents flicker)
-                        let handle2 = handle.clone();
-                        return image::allocate(handle).map(move |_| {
-                            Message::PreviewAllocated(idx, Preview::Image(handle2.clone()))
-                        });
-                    },
-                    Preview::None => return Task::none(),
-                    pv => {
-                        state.view_image = (idx, pv);
-                        state.click_item(idx, state.shift_pressed, state.ctrl_pressed, true);
-                    },
-                }
-            },
-            Message::PreviewAllocated(idx, preview) => {
-                if idx != state.view_image.0 { return Task::none(); }
-                state.view_image = (idx, preview);
-                state.click_item(idx, state.shift_pressed, state.ctrl_pressed, true);
             },
             Message::OverWriteOK => {
                 println!("{}", state.pathbar);
@@ -2668,25 +2638,20 @@ impl FItem {
         }
     }
 
-    /// Async version of preview() that loads the image in the background.
-    async fn load_preview_async(path: String, is_svg: bool, is_vid: bool, is_gif: bool) -> Preview {
-        if is_svg {
-            Preview::Svg(svg::Handle::from_path(&path))
-        } else if is_vid {
-            match vid_frame(&path, None, None) {
+    fn preview(self: &Self) -> Preview {
+        if self.svg {
+            Preview::Svg(svg::Handle::from_path(&self.path))
+        } else if self.vid {
+            match vid_frame(self.path.as_str(), None, None) {
                 None => Preview::None,
                 Some(a) => Preview::Image(a),
             }
-        } else {
-            match File::open(&path).await {
-                Ok(mut file) => {
-                    let mut data = Vec::new();
-                    if file.read_to_end(&mut data).await.is_err() {
-                        return Preview::None;
-                    }
-                    if is_gif {
+        } else if self.ftype == FType::Image {
+            match std::fs::read(self.path.as_str()) {
+                Ok(data) => {
+                    if self.gif {
                         match iced_gif::Frames::from_bytes(data) {
-                            Ok(f) => return Preview::Gif(std::sync::Arc::new(f)),
+                            Ok(f) => return Preview::Gif(f),
                             Err(_) => return Preview::None,
                         };
                     } else {
@@ -2696,17 +2661,19 @@ impl FItem {
                                 Preview::Image(Handle::from_rgba(w, h, rgba.as_raw().clone()))
                             },
                             Err(e) => {
-                                eprintln!("Error decoding image {}:{}", path, e);
+                                eprintln!("Error decoding image {}:{}", self.path, e);
                                 Preview::None
                             },
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Error reading image {}:{}", path, e);
+                    eprintln!("Error reading image {}:{}", self.path, e);
                     Preview::None
                 },
             }
+        } else {
+            Preview::None
         }
     }
 
@@ -3148,16 +3115,6 @@ impl FilePicker {
     fn update_scroll(self: &mut Self, y: f32) {
         self.scroll_offset.y = y;
         self.content_viewport.y = y + self.content_y;
-    }
-
-    /// Kick off async preview loading for an image item.
-    /// Sets the stale-guard index and spawns the background task.
-    fn load_preview(&mut self, idx: usize, path: String, is_svg: bool, is_vid: bool, is_gif: bool) -> Task<Message> {
-        self.view_image = (idx, self.view_image.1.clone());
-        Task::perform(
-            FItem::load_preview_async(path, is_svg, is_vid, is_gif),
-            move |preview| Message::PreviewReady(idx, preview),
-        )
     }
 
     #[inline]
