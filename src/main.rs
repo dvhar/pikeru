@@ -1163,6 +1163,7 @@ fn update(state: &mut FilePicker, message: Message) -> iced::Task<Message> {
             Message::InoDelete(file) => {
                 if let Some(i) = state.items.iter().position(|x|x.path == file) {
                     let dix = state.itod(i);
+                    let was_previewed = state.view_image.0 == i;
                     state.items.iter_mut().for_each(|m|{
                         if m.items_idx >= i { m.items_idx-=1 };
                         if m.display_idx >= dix { m.display_idx-=1 };
@@ -1171,6 +1172,15 @@ fn update(state: &mut FilePicker, message: Message) -> iced::Task<Message> {
                     state.items.remove(i);
                     state.end_idx -= 1;
                     state.displayed.remove(dix);
+                    // If the deleted item was being previewed, switch to an adjacent one
+                    if was_previewed {
+                        if let Some((ii, pv)) = state.find_adjacent_preview(dix) {
+                            state.view_image = (ii, pv);
+                            state.click_item(ii, false, false, true);
+                        } else {
+                            state.view_image = (0, Preview::None);
+                        }
+                    }
                     state.update_searcher_items(state.items.iter().map(|item|item.path.clone()).collect());
                 }
             },
@@ -1831,8 +1841,9 @@ fn update(state: &mut FilePicker, message: Message) -> iced::Task<Message> {
                                 match state.items[ii].preview() {
                                     Preview::None => {},
                                     pv => {
-                                        state.view_image = (state.dtoi(di), pv);
-                                        return update(state, Message::LeftClick(state.view_image.0, true));
+                                        state.view_image = (ii, pv);
+                                        state.click_item(ii, false, false, true);
+                                        return Task::none();
                                     },
                                 }
                             }
@@ -3111,6 +3122,29 @@ impl FilePicker {
     fn itod(self: &Self, i: usize) -> usize { self.items[i].display_idx }
     #[inline]
     fn dtoi(self: &Self, i: usize) -> usize { self.displayed[i] }
+
+    /// Find the next or previous visible item that can be previewed.
+    /// `deleted_dix` is the display index of the item that was just removed.
+    /// Tries forward first (next item), then backward if that fails.
+    fn find_adjacent_preview(self: &Self, deleted_dix: usize) -> Option<(usize, Preview)> {
+        let len = self.displayed.len();
+        // Try next items first
+        for di in (deleted_dix as i64 + 1)..len as i64 {
+            let ii = self.dtoi(di as usize);
+            if let pv @ Preview::Image(_) | pv @ Preview::Svg(_) | pv @ Preview::Gif(_) = self.items[ii].preview() {
+                return Some((ii, pv));
+            }
+        }
+        // Fall back to previous items
+        let start = 0i64.max(deleted_dix as i64 - 1);
+        for di in (start..deleted_dix as i64).rev() {
+            let ii = self.dtoi(di as usize);
+            if let pv @ Preview::Image(_) | pv @ Preview::Svg(_) | pv @ Preview::Gif(_) = self.items[ii].preview() {
+                return Some((ii, pv));
+            }
+        }
+        None
+    }
 
     #[inline]
     fn update_scroll(self: &mut Self, y: f32) {
