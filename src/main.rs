@@ -1161,6 +1161,7 @@ impl Application for FilePicker {
             Message::InoDelete(file) => {
                 if let Some(i) = self.items.iter().position(|x|x.path == file) {
                     let dix = self.itod(i);
+                    let was_previewed = self.view_image.0 == i;
                     self.items.iter_mut().for_each(|m|{
                         if m.items_idx >= i { m.items_idx-=1 };
                         if m.display_idx >= dix { m.display_idx-=1 };
@@ -1169,6 +1170,15 @@ impl Application for FilePicker {
                     self.items.remove(i);
                     self.end_idx -= 1;
                     self.displayed.remove(dix);
+                    // If the deleted item was being previewed, switch to an adjacent one
+                    if was_previewed {
+                        if let Some((ii, pv)) = self.find_adjacent_preview(dix) {
+                            self.view_image = (ii, pv);
+                            self.click_item(ii, false, false, true);
+                        } else {
+                            self.view_image = (0, Preview::None);
+                        }
+                    }
                     self.update_searcher_items(self.items.iter().map(|item|item.path.clone()).collect());
                 }
             },
@@ -1829,8 +1839,9 @@ impl Application for FilePicker {
                                 match self.items[ii].preview() {
                                     Preview::None => {},
                                     pv => {
-                                        self.view_image = (self.dtoi(di), pv);
-                                        return self.update(Message::LeftClick(self.view_image.0, true));
+                                        self.view_image = (ii, pv);
+                                        self.click_item(ii, false, false, true);
+                                        return Command::none();
                                     },
                                 }
                             }
@@ -3105,6 +3116,30 @@ impl FilePicker {
     fn itod(self: &Self, i: usize) -> usize { self.items[i].display_idx }
     #[inline]
     fn dtoi(self: &Self, i: usize) -> usize { self.displayed[i] }
+
+    /// Find the next or previous visible item that can be previewed.
+    /// `deleted_dix` is the display index of the item that was just removed.
+    /// Tries forward first (next item), then backward if that fails.
+    fn find_adjacent_preview(self: &Self, deleted_dix: usize) -> Option<(usize, Preview)> {
+        let len = self.displayed.len();
+        // Try next items first (start at deleted_dix because the item at dix+1
+        // shifted into dix after the removal)
+        for di in deleted_dix as i64..len as i64 {
+            let ii = self.dtoi(di as usize);
+            if let pv @ Preview::Image(_) | pv @ Preview::Svg(_) | pv @ Preview::Gif(_) = self.items[ii].preview() {
+                return Some((ii, pv));
+            }
+        }
+        // Fall back to previous items
+        let start = 0i64.max(deleted_dix as i64 - 1);
+        for di in (start..deleted_dix as i64).rev() {
+            let ii = self.dtoi(di as usize);
+            if let pv @ Preview::Image(_) | pv @ Preview::Svg(_) | pv @ Preview::Gif(_) = self.items[ii].preview() {
+                return Some((ii, pv));
+            }
+        }
+        None
+    }
 
     #[inline]
     fn update_scroll(self: &mut Self, y: f32) {
