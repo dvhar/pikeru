@@ -15,7 +15,7 @@ name = "portal"
 path = "src/portal.rs"
 
 [dependencies]
-iced = { version = "0.14", features = ["image", "tokio", "advanced", "lazy", "svg"] }
+iced = { path = "/home/d/gits/worktrees/iced13", features = ["image", "tokio", "advanced", "lazy", "svg", "instant-images"] }
 num_cpus = "1.16.0"
 tokio = { version = "1.37.0", features = ["full"] }
 img = { package = "image", version = "0.25.1" }
@@ -44,3 +44,23 @@ chrono = "0.4.38"
 linicon = "2.3.0"
 ttf-parser = "0.21.0"
 mime_guess = "2"
+
+[patch.crates-io]
+iced_core = { path = "/home/d/gits/worktrees/iced13/core" }
+iced_widget = { path = "/home/d/gits/worktrees/iced13/widget" }
+iced_renderer = { path = "/home/d/gits/worktrees/iced13/renderer" }
+iced_wgpu = { path = "/home/d/gits/worktrees/iced13/wgpu" }
+iced_tiny_skia = { path = "/home/d/gits/worktrees/iced13/tiny_skia" }
+iced_futures = { path = "/home/d/gits/worktrees/iced13/futures" }
+iced_runtime = { path = "/home/d/gits/worktrees/iced13/runtime" }
+iced_graphics = { path = "/home/d/gits/worktrees/iced13/graphics" }
+iced_debug = { path = "/home/d/gits/worktrees/iced13/debug" }
+iced_winit = { path = "/home/d/gits/worktrees/iced13/winit" }
+iced_test = { path = "/home/d/gits/worktrees/iced13/test" }
+iced_beacon = { path = "/home/d/gits/worktrees/iced13/beacon" }
+iced_highlighter = { path = "/home/d/gits/worktrees/iced13/highlighter" }
+iced_selector = { path = "/home/d/gits/worktrees/iced13/selector" }
+iced_program = { path = "/home/d/gits/worktrees/iced13/program" }
+iced_tester = { path = "/home/d/gits/worktrees/iced13/tester" }
+iced_devtools = { path = "/home/d/gits/worktrees/iced13/devtools" }
+
