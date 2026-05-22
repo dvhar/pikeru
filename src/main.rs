@@ -1232,7 +1232,7 @@ fn update(state: &mut FilePicker, message: Message) -> iced::Task<Message> {
                                     // Leak the internal name so we can reference it as &'static str
                                     let static_name: &'static str = Box::leak(internal_name.into_boxed_str());
                                     let load_cmd = iced::font::load(bytes);
-                                    state.font = Some(iced::Font::with_name(static_name));
+                                    state.font = Some(iced::Font::new(static_name));
                                     return Task::batch(vec![
                                         load_cmd.map(move |result| {
                                             match result {
@@ -2047,7 +2047,8 @@ fn view<'a>(state: &'a FilePicker) -> iced::Element<'a, Message> {
                 Preview::Image(handle) => {
                     mouse_area(container(image(handle.clone())
                                         .width(Length::Fill)
-                                        .height(Length::Fill))
+                                        .height(Length::Fill)
+                                        .load_blocking(true))
                                    .align_x(alignment::Horizontal::Center)
                                    .align_y(alignment::Vertical::Center)
                                    .width(Length::Fill).height(Length::Fill))

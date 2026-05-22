@@ -5,7 +5,7 @@ use iced::Event;
 use iced::touch;
 use iced::advanced::widget::{Operation, Tree, tree, Widget};
 use iced::Length;
-use iced::advanced::{Clipboard, Shell, layout, mouse, overlay, renderer, Layout};
+use iced::advanced::{Shell, layout, mouse, overlay, renderer, Layout};
 use iced::{Element, Point, Rectangle, Size, Vector};
 
 /// Emit messages on mouse events.
@@ -190,7 +190,6 @@ where
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
@@ -200,7 +199,6 @@ where
             layout,
             cursor,
             renderer,
-            clipboard,
             shell,
             viewport,
         );

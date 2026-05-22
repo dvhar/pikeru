@@ -80,7 +80,6 @@ where
         layout: iced::advanced::Layout<'_>,
         cursor: iced::advanced::mouse::Cursor,
         _renderer: &Renderer,
-        _clipboard: &mut dyn iced::advanced::Clipboard,
         shell: &mut iced::advanced::Shell<'_, Message>,
         _viewport: &iced::Rectangle,
     ) {
@@ -91,7 +90,6 @@ where
             layout,
             cursor,
             _renderer,
-            _clipboard,
             shell,
             _viewport,
         );

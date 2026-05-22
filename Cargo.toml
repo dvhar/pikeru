@@ -15,7 +15,7 @@ name = "portal"
 path = "src/portal.rs"
 
 [dependencies]
-iced = { path = "/home/d/gits/worktrees/iced13", features = ["image", "tokio", "advanced", "lazy", "svg", "instant-images"] }
+iced = { path = "/home/d/gits/iced/", features = ["image", "tokio", "advanced", "lazy", "svg"] }
 num_cpus = "1.16.0"
 tokio = { version = "1.37.0", features = ["full"] }
 img = { package = "image", version = "0.25.1" }
@@ -24,7 +24,7 @@ itertools = "0.12.1"
 video-rs = { path = "src/video-rs", features = ["ndarray"] }
 ndarray = "0.16.1"
 getopts = "0.2.21"
-iced_aw = { path = "/home/d/gits/iced_aw", features = ["menu","context_menu","spinner"], package = "iced_aw" }
+iced_aw = { path = "/home/d/gits/iced_aw", features = ["menu","context_menu","spinner"], default-features = false, package = "iced_aw" }
 #iced_aw = { version = "0.9.3", features = ["menu","context_menu"] }
 inotify = "0.11"
 md-5 = "0.10.6"
@@ -35,7 +35,7 @@ ignore = "0.4.22"
 log = "0.4.21"
 env_logger = "0.11.3"
 ctrlc = { version = "3.4.4", features = ["termination"] }
-iced_gif = "0.14"
+iced_gif = { path = "iced_gif" }
 resvg = "0.42.0"
 tiny-skia = "0.11.4"
 unicode-segmentation = "1.11.0"
@@ -46,21 +46,15 @@ ttf-parser = "0.21.0"
 mime_guess = "2"
 
 [patch.crates-io]
-iced_core = { path = "/home/d/gits/worktrees/iced13/core" }
-iced_widget = { path = "/home/d/gits/worktrees/iced13/widget" }
-iced_renderer = { path = "/home/d/gits/worktrees/iced13/renderer" }
-iced_wgpu = { path = "/home/d/gits/worktrees/iced13/wgpu" }
-iced_tiny_skia = { path = "/home/d/gits/worktrees/iced13/tiny_skia" }
-iced_futures = { path = "/home/d/gits/worktrees/iced13/futures" }
-iced_runtime = { path = "/home/d/gits/worktrees/iced13/runtime" }
-iced_graphics = { path = "/home/d/gits/worktrees/iced13/graphics" }
-iced_debug = { path = "/home/d/gits/worktrees/iced13/debug" }
-iced_winit = { path = "/home/d/gits/worktrees/iced13/winit" }
-iced_test = { path = "/home/d/gits/worktrees/iced13/test" }
-iced_beacon = { path = "/home/d/gits/worktrees/iced13/beacon" }
-iced_highlighter = { path = "/home/d/gits/worktrees/iced13/highlighter" }
-iced_selector = { path = "/home/d/gits/worktrees/iced13/selector" }
-iced_program = { path = "/home/d/gits/worktrees/iced13/program" }
-iced_tester = { path = "/home/d/gits/worktrees/iced13/tester" }
-iced_devtools = { path = "/home/d/gits/worktrees/iced13/devtools" }
+iced_core = { path = "/home/d/gits/iced/core" }
+iced_widget = { path = "/home/d/gits/iced/widget" }
+iced_renderer = { path = "/home/d/gits/iced/renderer" }
+iced_wgpu = { path = "/home/d/gits/iced/wgpu" }
+iced_tiny_skia = { path = "/home/d/gits/iced/tiny_skia" }
+iced_futures = { path = "/home/d/gits/iced/futures" }
+iced_runtime = { path = "/home/d/gits/iced/runtime" }
+iced_graphics = { path = "/home/d/gits/iced/graphics" }
+iced_debug = { path = "/home/d/gits/iced/debug" }
+iced_winit = { path = "/home/d/gits/iced/winit" }
+iced_program = { path = "/home/d/gits/iced/program" }
 
