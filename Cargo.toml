@@ -1,6 +1,6 @@
 [package]
 name = "pikeru"
-version = "1.15.0"
+version = "2.0.0"
 edition = "2024"
 default-run = "pikeru"
 
