@@ -412,6 +412,9 @@ fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
 #[derive(Debug)]
 struct Config {
     home: String,
+    db_path: String,
+    dbus_service: String,
+    dbus_object_path: String,
     postproc_dir: String,
     postprocessor: String,
     def_save_dir: String,
@@ -499,17 +502,22 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
         let args: Vec<String> = std::env::args().skip(1).collect();
         let mut opts = Options::new();
         opts.optopt("c", "config", "Path to config file", "PATH");
+        opts.optopt("d", "db", "Path to index database (for testing)", "PATH");
         opts.optopt("l", "log", "Log level", "[off error warn info debug trace]");
-        let matches = match opts.parse(args) {
-            Ok(m) => m,
+        opts.optopt("s", "service", "D-Bus service name (tests only)", "NAME");
+        opts.optopt("p", "path", "D-Bus object path (tests only)", "PATH");
+        let parsed = match opts.parse(args) {
+            Ok(p) => p,
             Err(e) => {
                 eprintln!("Bad args: {}", e);
                 std::process::exit(1);
             }
         };
-        let conf_path = matches.opt_str("c").unwrap_or(Config::find_config());
+        let conf_path = parsed.opt_str("c").unwrap_or(Config::find_config());
         eprintln!("Conf path:{}", conf_path);
         let home = std::env::var("HOME").unwrap();
+        let default_db = Path::new(&home).join(".cache").join("pikeru").join("index.db").to_string_lossy().into_owned();
+        let db_path_override = parsed.opt_str("d");
         let mut postproc_dir = "/tmp/pk_postprocess".to_string();
         let mut def_save_dir = Path::new(&home).join("Downloads").to_string_lossy().to_string();
         let fp_cmds = ["/usr/share/xdg-desktop-portal-pikeru/pikeru-wrapper.sh",
@@ -524,6 +532,8 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
         let mut indexer_enabled = false;
         let mut use_prev_path_for_save = false;
         let mut log_level = "info".to_string();
+        let mut dbus_service = String::from("org.freedesktop.impl.portal.desktop.pikeru");
+        let mut dbus_object_path = String::from("/org/freedesktop/portal/desktop");
         let txt = match std::fs::read_to_string(&conf_path) {
             Ok(content) => content,
             Err(err) => {
@@ -574,7 +584,9 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
                 }
             }
         }
-        matches.opt_str("l").map(|l|log_level = l);
+        parsed.opt_str("l").map(|l|log_level = l);
+        if let Some(s) = parsed.opt_str("s") { dbus_service = s; }
+        if let Some(p) = parsed.opt_str("p") { dbus_object_path = p; }
         let ll = match log_level.as_str() {
             "off" => LevelFilter::Off,
             "error" => LevelFilter::Error,
@@ -600,6 +612,9 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
             indexer_exts,
             indexer_enabled,
             home,
+            db_path: db_path_override.unwrap_or(default_db),
+            dbus_service,
+            dbus_object_path,
             use_prev_path_for_save,
         }
     }
@@ -760,7 +775,7 @@ impl FilePicker {
 async fn main() -> Result<(), Box<dyn Error>> {
     let mut config = Config::new();
     eprintln!("Running {:#?}", config);
-    let idxfile = Path::new(&config.home).join(".cache").join("pikeru").join("index.db");
+    let idxfile = Path::new(&config.db_path);
     let sht = Arc::new(AsyncMtx::new(Shtate::default()));
     let (tx, rx) = unbounded_channel::<Msg>();
     std::fs::create_dir_all(idxfile.parent().unwrap()).unwrap();
@@ -769,10 +784,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let indexer = Indexer::new(tx, sht.clone(), db.clone());
     let manager = IdxManager::new(sht.clone(), &mut config, db);
     tokio::spawn(index_loop(manager, rx, config.indexer_enabled));
+    let service_name = config.dbus_service.clone();
+    let object_path = config.dbus_object_path.clone();
+    eprintln!("D-Bus: {} @ {}", service_name, object_path);
+    let obj = ObjectPath::from_string_unchecked(object_path.clone());
     let _conn = connection::Builder::session()?
-        .name("org.freedesktop.impl.portal.desktop.pikeru")?
-        .serve_at("/org/freedesktop/portal/desktop", picker)?
-        .serve_at("/org/freedesktop/portal/desktop", indexer)?
+        .name(service_name)?
+        .serve_at(&obj, picker)?
+        .serve_at(&obj, indexer)?
         .build()
         .await?;
     pending::<()>().await;
