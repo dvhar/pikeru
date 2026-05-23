@@ -45,3 +45,6 @@ linicon = "2.3.0"
 ttf-parser = "0.21.0"
 mime_guess = "2"
 
+[dev-dependencies]
+tempfile = "3"
+filetime = "0.2"
