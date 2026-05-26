@@ -243,6 +243,7 @@ impl Config {
         opts.optflag("f", "forget", "Don't update the config with any changed settings");
         opts.optflag("x", "noindex", "Don't update the semantic search index with visited directories");
         opts.optflag("s", "noside", "No sidebar");
+        opts.optopt("a", "auto-icon-threshold", "Auto-switch to icon view when visible images >= N (implies list mode; 0=always)", "N");
         opts.optflag("h", "help", "Show usage information");
         opts.optflag("v", "version", "Show pikeru version");
         let matches = match opts.parse(&args) {
@@ -432,6 +433,10 @@ impl Config {
             icon_view = false;
         } else if matches.opt_present("n") {
             icon_view = true;
+        }
+        if let Some(v) = matches.opt_str("a") {
+            icon_view = false;
+            auto_icon_threshold = if v.is_empty() { None } else { Some(v.parse().unwrap_or(0)) };
         }
         Config {
             mode: Mode::from(matches.opt_str("m")),
