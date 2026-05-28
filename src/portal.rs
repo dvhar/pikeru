@@ -39,7 +39,6 @@ use ignore::{gitignore,Match};
 #[derive(Default, Debug)]
 struct Shtate {
     idx_running: bool,
-    picker_open: bool,
     respect_gitignore: bool,
     current_searchignore: String,
 }
@@ -107,7 +106,7 @@ async fn index_loop(mut mgr: IdxManager, mut chan: UReceiver<Msg>, enabled: bool
             Msg::Start => {
                 debug!("Starting index round");
                 mgr.shtate.lock().await.idx_running = true;
-                while {let state = mgr.shtate.lock().await; state.idx_running && !state.picker_open} {
+                while {let state = mgr.shtate.lock().await; state.idx_running} {
                     if let Some(dir) = done_map.iter().find(|v|!v.1) {
                         if mgr.update_dir(dir.0).await != DirResult::Fail {
                             done_map.entry(dir.0.to_string()).and_modify(|v| *v = true);
@@ -356,7 +355,7 @@ impl Indexer {
     async fn update(&self, dirs: Vec<String>) {
         self.tx.send(Msg::Dirs(dirs)).unwrap(); 
         let st = self.shtate.lock().await;
-        if !st.idx_running && !st.picker_open {
+        if !st.idx_running {
             self.tx.send(Msg::Start).unwrap();
         }
     }
@@ -393,7 +392,6 @@ struct FilePicker {
     home: String,
     shtate: Arc<AsyncMtx<Shtate>>,
     db: Arc<Mutex<rusqlite::Connection>>,
-    tx: USender<Msg>,
     use_prev: bool,
 }
 enum Section {
@@ -622,7 +620,7 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
 
 impl FilePicker {
 
-    fn new(conf: &mut Config, shtate: Arc<AsyncMtx<Shtate>>, tx: USender<Msg>, db: Arc<Mutex<rusqlite::Connection>>) -> Self {
+    fn new(conf: &mut Config, shtate: Arc<AsyncMtx<Shtate>>, db: Arc<Mutex<rusqlite::Connection>>) -> Self {
         Self {
             prev_path: AsyncMtx::new(conf.home.clone()),
             prev_path_set_at: AsyncMtx::new(SystemTime::now()),
@@ -633,7 +631,6 @@ impl FilePicker {
             home: take(&mut conf.home),
             shtate,
             db,
-            tx,
             use_prev: conf.use_prev_path_for_save,
         }
     }
@@ -666,7 +663,6 @@ impl FilePicker {
         };
         self.db.lock().unwrap().cache_flush().unwrap();
         debug!("CMD:{}", cmd);
-        self.shtate.lock().await.picker_open = true;
         let output = match tokio::process::Command::new("sh").arg("-c").arg(cmd).output().await {
             Ok(out) => {
                 if out.stderr.len() > 0 {
@@ -681,13 +677,6 @@ impl FilePicker {
             },
             Err(e) => {eprintln!("Process error: {}", e); "".to_owned()},
         };
-        {
-            let mut state = self.shtate.lock().await;
-            state.picker_open = false;
-            if !state.idx_running {
-                self.tx.send(Msg::Start).unwrap();
-            }
-        }
         let mut gotfirst = false;
         let mut arr = Vec::new();
         let mut builder = gitignore::GitignoreBuilder::new("");
@@ -780,7 +769,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (tx, rx) = unbounded_channel::<Msg>();
     std::fs::create_dir_all(idxfile.parent().unwrap()).unwrap();
     let db = Arc::new(Mutex::new(rusqlite::Connection::open(idxfile).unwrap()));
-    let picker = FilePicker::new(&mut config, sht.clone(), tx.clone(), db.clone());
+    let picker = FilePicker::new(&mut config, sht.clone(), db.clone());
     let indexer = Indexer::new(tx, sht.clone(), db.clone());
     let manager = IdxManager::new(sht.clone(), &mut config, db);
     tokio::spawn(index_loop(manager, rx, config.indexer_enabled));

@@ -628,39 +628,4 @@ fn test_db_path_flag_works() {
     assert!(custom_db.exists(), "Custom DB path should be used");
 }
 
-/// Verify that picker_open is properly reset after a file picker call,
-/// allowing the indexer to auto-start on subsequent operations.
-#[test]
-fn test_picker_reset_allows_indexing() {
-    let ws = test_workspace();
-    // Create real directories for the indexer to scan
-    let idx_dir = ws.path().join("scan_me");
-    fs::create_dir_all(&idx_dir).unwrap();
-    fs::write(idx_dir.join("test.txt"), "content").unwrap();
 
-    let wrapper = create_mock_wrapper(&ws, &["/tmp/result.txt"]);
-    let (db_path, _svc, _obj) = write_test_config(
-        &ws, wrapper.to_str().unwrap(), "echo idx", "exit 0", "txt",
-    );
-    let _guard = PortalGuard::new(db_path.to_str().unwrap(), ws.path().join("portal.conf").to_str().unwrap());
-    std::thread::sleep(Duration::from_millis(200));
-
-    let client = PortalClient::new(&_guard.service_name, &_guard.object_path);
-
-    // 1. Trigger a file picker call (this sets picker_open=true then false)
-    let result = client.open_file(false, false).expect("open_file should succeed");
-    assert_eq!(result.status, 0);
-
-    // 2. Now update the indexer — this sends Msg::Dirs which checks
-    //    !picker_open before auto-starting. If picker_open was not reset,
-    //    the indexing won't start.
-    client.update_index(&[idx_dir.to_str().unwrap()]).expect("update_index should succeed");
-
-    // Give it time to index and write to DB
-    std::thread::sleep(Duration::from_millis(500));
-
-    // 3. Verify the indexer actually ran by checking the DB
-    let conn = open_test_db(db_path.to_str().unwrap());
-    assert!(count_descriptions(&conn) > 0,
-        "Indexer should have run after picker reset; expected entries in descriptions table");
-}
