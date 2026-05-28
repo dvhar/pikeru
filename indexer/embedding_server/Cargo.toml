@@ -1,0 +1,21 @@
+[package]
+name = "embedding-server"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "embedding-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "tiff"] }
+fastembed = { path = "../../../fastembed-rs", features = ["image-models", "hf-hub-native-tls"] }
+axum = "0.7"
+tower-http = { version = "0.5", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
