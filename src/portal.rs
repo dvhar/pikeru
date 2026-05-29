@@ -99,28 +99,37 @@ impl Indexer {
         info!("Cleared indexing queue");
     }
     async fn update(&self, dirs: Vec<String>) {
+        // Check if a loop is already running before adding dirs.
+        let already_running = self.lock().await.shtate.lock().await.idx_running;
+        // Populate done_map and set idx_running=true so index_loop proceeds.
         {
             let inner = self.lock().await;
+            let mut state = inner.shtate.lock().await;
+            state.idx_running = true;
+            drop(state);
             inner.done_map.lock().await.clear();
             for dir in dirs { inner.done_map.lock().await.entry(dir).or_default(); }
         }
-        // Only spawn a new loop if one isn't already running.
-        // If idx_running is true, the current task will pick up the new dirs.
-        if !self.lock().await.shtate.lock().await.idx_running {
+        // Spawn a new loop only if one wasn't already running.
+        if !already_running {
             let this = self.clone();
             tokio::spawn(async move {
                 this.index_loop().await;
             });
         }
     }
-    async fn configure(&mut self, respect_gitignore: bool, search_ignore: String) {
+    async fn configure(&self, respect_gitignore: bool, search_ignore: String) {
         trace!("Got gitignore configure request: {}", search_ignore);
+        // Update shared state in a scoped block so the lock is released
+        // before we call update_ignore() (which also needs to lock self).
         {
             let inner = self.lock().await;
             let mut state = inner.shtate.lock().await;
             state.respect_gitignore = respect_gitignore;
             state.current_searchignore = search_ignore;
+            // Locks drop here when the block ends
         }
+        // Rebuild the ignore matcher.
         self.update_ignore().await;
     }
 
