@@ -1063,3 +1063,95 @@ fn test_db_path_flag_works() {
 
     assert!(custom_db.exists(), "Custom DB path should be used");
 }
+
+/// Test that indexer_enabled=false in config prevents indexing.
+#[test]
+fn test_indexer_disabled_by_config() {
+    let ws = TempDir::new().unwrap();
+    let wrapper = create_mock_wrapper(&ws, &[]);
+
+    // Write config with indexer disabled from the start.
+    let conf = ws.path().join("portal.conf");
+    fs::write(&conf, format!(
+        r#"log_level = trace
+
+[filepicker]
+cmd = {}
+default_save_dir = /tmp/psave
+
+[indexer]
+enable = false
+cmd = cat
+check = exit 0
+extensions = txt,cache,log,tmp,png,jpg
+"#,
+        wrapper.to_str().unwrap()
+    )).unwrap();
+    let db_path = ws.path().join("index.db");
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+
+    // Create indexable files.
+    let root = create_indexable_tree(&ws);
+    let _file1 = fs::File::create(root.join("should_not_be_indexed.txt")).unwrap();
+
+    // Call update — it should be silently ignored because indexer is disabled.
+    assert!(client.update_index(&[root.to_str().unwrap()]).is_ok());
+
+    // Wait long enough that indexing would complete if enabled.
+    std::thread::sleep(Duration::from_millis(1500));
+
+    // DB should remain empty — no files indexed while disabled.
+    let conn = open_test_db(db_path.to_str().unwrap());
+    let count = common::count_descriptions(&conn);
+    assert_eq!(count, 0, "No files should be indexed when indexer is disabled");
+}
+
+/// Test that enable=false prevents configure from triggering indexing work.
+#[test]
+fn test_indexer_disabled_configure_noop() {
+    let ws = TempDir::new().unwrap();
+    let wrapper = create_mock_wrapper(&ws, &[]);
+
+    // Write config with indexer disabled.
+    let conf = ws.path().join("portal.conf");
+    fs::write(&conf, format!(
+        r#"log_level = trace
+
+[filepicker]
+cmd = {}
+default_save_dir = /tmp/psave
+
+[indexer]
+enable = false
+cmd = cat
+check = exit 0
+extensions = txt,cache,log,tmp,png,jpg
+"#,
+        wrapper.to_str().unwrap()
+    )).unwrap();
+    let db_path = ws.path().join("index.db");
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+
+    // Configure should succeed (no-op internally) without error.
+    assert!(client.configure_indexer(false, "*.cache").is_ok());
+
+    // Update should also succeed silently but do nothing.
+    let root = create_indexable_tree(&ws);
+    let _file1 = fs::File::create(root.join("should_not_be_indexed.txt")).unwrap();
+    assert!(client.update_index(&[root.to_str().unwrap()]).is_ok());
+
+    // Wait for any potential (but disabled) indexing to run.
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let conn = open_test_db(db_path.to_str().unwrap());
+    let count = common::count_descriptions(&conn);
+    assert_eq!(count, 0, "No files should be indexed when indexer is disabled after configure");
+}

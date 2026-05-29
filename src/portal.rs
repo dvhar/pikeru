@@ -30,8 +30,8 @@ use ignore::{gitignore,Match};
 
 #[derive(Default, Debug)]
 struct Shtate {
-    idx_running: bool,
-    respect_gitignore: bool,
+    /// Shared between Indexer and FilePicker — the search-ignore patterns
+    /// entered in the file picker UI.
     current_searchignore: String,
 }
 
@@ -58,13 +58,6 @@ fn build_cumulative_gitignore(start_dir: &Path) -> gitignore::Gitignore {
     builder.build().unwrap_or(gitignore::Gitignore::new("").0)
 }
 
-#[derive(Debug)]
-enum Msg {
-    Start(Vec<String>),
-    Ignore,
-    ClearQueue,
-}
-
 /// Shared state behind an Arc<Mutex<>>, so clones are just handles to the same data.
 struct IndexerInner {
     shtate: Arc<AsyncMtx<Shtate>>,
@@ -75,6 +68,9 @@ struct IndexerInner {
     exts: Vec<&'static str>,
     ignore: gitignore::Gitignore,
     igtxt: String,
+    idx_running: bool,
+    indexer_enabled: bool,
+    respect_gitignore: bool,
 }
 
 /// Thin handle wrapper — like FItem(Box<FItemb>) pattern.
@@ -93,20 +89,22 @@ impl std::ops::Deref for Indexer {
 impl Indexer {
     async fn clear_queue(&self) {
         debug!("Got clear queue message");
-        let inner = self.lock().await;
-        inner.shtate.lock().await.idx_running = false;
+        let mut inner = self.lock().await;
+        if !inner.indexer_enabled { return; }
+        inner.idx_running = false;
         inner.done_map.lock().await.clear();
         info!("Cleared indexing queue");
     }
     async fn update(&self, dirs: Vec<String>) {
+        // Gate on indexer_enabled — disabled indexers silently ignore update requests.
+        let enabled = self.lock().await.indexer_enabled;
+        if !enabled { return; }
         // Check if a loop is already running before adding dirs.
-        let already_running = self.lock().await.shtate.lock().await.idx_running;
+        let already_running = self.lock().await.idx_running;
         // Populate done_map and set idx_running=true so index_loop proceeds.
         {
-            let inner = self.lock().await;
-            let mut state = inner.shtate.lock().await;
-            state.idx_running = true;
-            drop(state);
+            let mut inner = self.lock().await;
+            inner.idx_running = true;
             inner.done_map.lock().await.clear();
             for dir in dirs { inner.done_map.lock().await.entry(dir).or_default(); }
         }
@@ -120,14 +118,13 @@ impl Indexer {
     }
     async fn configure(&self, respect_gitignore: bool, search_ignore: String) {
         trace!("Got gitignore configure request: {}", search_ignore);
-        // Update shared state in a scoped block so the lock is released
+        // Update indexer-local state in a scoped block so the lock is released
         // before we call update_ignore() (which also needs to lock self).
         {
-            let inner = self.lock().await;
-            let mut state = inner.shtate.lock().await;
-            state.respect_gitignore = respect_gitignore;
-            state.current_searchignore = search_ignore;
-            // Locks drop here when the block ends
+            let mut inner = self.lock().await;
+            inner.respect_gitignore = respect_gitignore;
+            inner.shtate.lock().await.current_searchignore = search_ignore;
+            drop(inner);
         }
         // Rebuild the ignore matcher.
         self.update_ignore().await;
@@ -140,7 +137,7 @@ impl Indexer {
     async fn index_loop(self: &Self) {
         // Start with a 1-minute timeout so we check indexer online status right away.
         let mut timeout = Instant::now().checked_add(Duration::from_secs(60)).unwrap();
-        if !self.lock().await.shtate.lock().await.idx_running {
+        if !self.lock().await.idx_running {
             warn!("index_loop: idx_running is false, nothing to index");
             return;
         }
@@ -152,7 +149,7 @@ impl Indexer {
                 let online = self.indexer_online().await;
                 if !online { warn!("indexer offline"); }
             }
-            if !self.lock().await.shtate.lock().await.idx_running {
+            if !self.lock().await.idx_running {
                 debug!("index_loop: idx_running cleared, exiting");
                 break;
             }
@@ -165,7 +162,7 @@ impl Indexer {
             drop(inner);
             if to_process.is_empty() {
                 debug!("Indexing batch finished");
-                self.lock().await.shtate.lock().await.idx_running = false;
+                self.lock().await.idx_running = false;
                 break;
             }
             for dir in &to_process {
@@ -173,7 +170,7 @@ impl Indexer {
                 if result == DirResult::Fail {
                     error!("Indexing batch failed");
                     self.lock().await.done_map.lock().await.clear();
-                    self.lock().await.shtate.lock().await.idx_running = false;
+                    self.lock().await.idx_running = false;
                     break;
                 }
                 // Mark this dir as done.
@@ -208,6 +205,9 @@ impl Indexer {
             exts: Box::new(take(&mut config.indexer_exts)).leak().split(',').collect(),
             ignore: gitignore::Gitignore::new("").0,
             igtxt: String::new(),
+            idx_running: false,
+            indexer_enabled: config.indexer_enabled,
+            respect_gitignore: true,
         })))
     }
 
@@ -311,7 +311,7 @@ impl Indexer {
 
     async fn update_dir(self: &Self, dir: &String) -> DirResult {
         let inner = self.lock().await;
-        let local_ignore = if inner.shtate.lock().await.respect_gitignore {
+        let local_ignore = if inner.respect_gitignore {
             build_cumulative_gitignore(Path::new(dir))
         } else {
             gitignore::Gitignore::empty()
@@ -324,7 +324,7 @@ impl Indexer {
         match std::fs::read_dir(dir) {
             Ok(read_dir) => {
                 for dir_entry in read_dir {
-                    if !self.lock().await.shtate.lock().await.idx_running {
+                    if !self.lock().await.idx_running {
                         break;
                     }
                     if let Ok(de) = dir_entry {
@@ -566,7 +566,7 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
                                 "cmd" => indexer_cmd = v.to_string(),
                                 "check" => indexer_check = v.to_string(),
                                 "extensions" => indexer_exts = v.to_string(),
-                                "enable" => indexer_enabled = v.parse().unwrap(),
+                                "enable" => indexer_enabled = v.parse().unwrap_or(false),
                                 _ => eprintln!("Unknown indexer config value:{}", line),
                             }
                         },
@@ -602,7 +602,12 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
             "trace" => LevelFilter::Trace,
             _ => { eprintln!("Unknown log level:{}. Defaulting to 'info'", log_level); LevelFilter::Info },
         };
-        Builder::new().filter_level(ll).init();
+        Builder::new()
+            .filter_level(ll)
+            .filter_module("zbus", LevelFilter::Off)
+            .filter_module("zbus_proxy", LevelFilter::Off)
+            .filter_module("smol_net", LevelFilter::Off)
+            .init();
         eprintln!("Log level: {}", ll);
         if !Path::new(&fp_cmd).is_file() {
             eprintln!("No filepicker executable found: {}", fp_cmd);
