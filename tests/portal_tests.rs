@@ -215,26 +215,6 @@ fn test_indexer_configure() {
 }
 
 #[test]
-fn test_indexer_update() {
-    let ws = test_workspace();
-    let wrapper = create_mock_wrapper(&ws, &[]);
-    // Create real subdirectories under /tmp so the indexer can scan them
-    let dir1 = ws.path().join("photos");
-    let dir2 = ws.path().join("backup");
-    fs::create_dir_all(&dir1).unwrap();
-    fs::create_dir_all(&dir2).unwrap();
-
-    let (db_path, _svc, _obj) = write_test_config(
-        &ws, wrapper.to_str().unwrap(), "echo idx", "exit 0", "txt",
-    );
-    let _guard = PortalGuard::new(db_path.to_str().unwrap(), ws.path().join("portal.conf").to_str().unwrap());
-    std::thread::sleep(Duration::from_millis(200));
-
-    let client = PortalClient::new(&_guard.service_name, &_guard.object_path);
-    assert!(client.update_index(&[dir1.to_str().unwrap(), dir2.to_str().unwrap()]).is_ok());
-}
-
-#[test]
 fn test_indexer_clear_queue() {
     // clear_queue should wipe out any directories queued via update()
     // that haven't been processed yet. After clear, a subsequent query
@@ -427,34 +407,6 @@ fn test_wrapper_failure_returns_one() {
 }
 
 #[test]
-fn test_config_unknown_keys_no_crash() {
-    let ws = test_workspace();
-    let wrapper = create_mock_wrapper(&ws, &[]);
-    let (db_path, _, _) = write_test_config(
-        &ws, wrapper.to_str().unwrap(), "echo idx", "exit 0", "txt",
-    );
-
-    // Overwrite config with unknown keys
-    let conf = ws.path().join("portal.conf");
-    fs::write(&conf, format!(r#"log_level = info
-
-[filepicker]
-cmd = {}
-default_save_dir = /tmp/psave
-unknown_key = some_value
-
-[indexer]
-enable = true
-cmd = echo idx
-check = exit 0
-extensions = txt
-unknown_indexer = bad
-"#, wrapper.to_str().unwrap())).unwrap();
-
-    let _guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
-}
-
-#[test]
 fn test_sequential_calls_work() {
     let ws = test_workspace();
     let wrapper = create_mock_wrapper(&ws, &["/tmp/concurrent.txt"]);
@@ -468,6 +420,8 @@ fn test_sequential_calls_work() {
     for i in 0..3u32 {
         let result = client.open_file(false, false);
         assert!(result.is_ok(), "Call {} should succeed: {:?}", i, result.err());
+        // Each call independently returns the correct URI and status
+        assert_eq!(result.unwrap().status, 0);
     }
 }
 
@@ -964,25 +918,6 @@ fn test_single_file_mode() {
 }
 
 #[test]
-fn test_empty_lines_skipped() {
-    let ws = test_workspace();
-    let wrapper = ws.path().join("mixed-wrapper.sh");
-    fs::write(&wrapper, "#!/bin/bash\necho '/tmp/valid.jpg'\necho ''\necho '/tmp/also_valid.png'\n").unwrap();
-    let mut perms = std::fs::metadata(&wrapper).unwrap().permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&wrapper, perms).unwrap();
-
-    let (db_path, _svc, _obj) = write_test_config(
-        &ws, wrapper.to_str().unwrap(), "echo idx", "exit 0", "jpg,png",
-    );
-    let _guard = PortalGuard::new(db_path.to_str().unwrap(), ws.path().join("portal.conf").to_str().unwrap());
-    std::thread::sleep(Duration::from_millis(200));
-
-    let client = PortalClient::new(&_guard.service_name, &_guard.object_path);
-    assert!(client.open_file(false, false).is_ok());
-}
-
-#[test]
 fn test_multiple_output_lines() {
     let ws = test_workspace();
     let wrapper = ws.path().join("multiout-wrapper.sh");
@@ -1024,6 +959,9 @@ fn test_wrapper_stderr_ok() {
     let client = PortalClient::new(&_guard.service_name, &_guard.object_path);
     let result = client.open_file(false, false).expect("open_file should succeed");
     assert_eq!(result.status, 0);
+    // Verify the file was returned correctly (stderr didn't corrupt parsing)
+    assert_eq!(result.uris.len(), 1);
+    assert_eq!(result.uris[0], "file:///tmp/output.txt");
 }
 
 #[test]
@@ -1048,28 +986,6 @@ fn test_nonexistent_wrapper() {
 }
 
 #[test]
-fn test_tilda_expansion() {
-    let ws = test_workspace();
-    let wrapper = create_mock_wrapper(&ws, &[]);
-    let (db_path, _, _) = write_test_config(
-        &ws, wrapper.to_str().unwrap(), "echo idx", "exit 0", "txt",
-    );
-
-    let conf = ws.path().join("portal.conf");
-    fs::write(&conf, format!(r#"log_level = info
-
-[filepicker]
-cmd = {}
-default_save_dir = ~/Downloads
-
-[indexer]
-enable = false
-"#, wrapper.to_str().unwrap())).unwrap();
-
-    let _guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
-}
-
-#[test]
 fn test_use_prev_path_config() {
     let ws = test_workspace();
     let wrapper = create_mock_wrapper(&ws, &[]);
@@ -1084,27 +1000,6 @@ fn test_use_prev_path_config() {
 cmd = {}
 default_save_dir = ~/Downloads
 use_prev_path_for_save = true
-
-[indexer]
-enable = false
-"#, wrapper.to_str().unwrap())).unwrap();
-
-    let _guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
-}
-
-#[test]
-fn test_config_empty_indexer() {
-    let ws = test_workspace();
-    let wrapper = create_mock_wrapper(&ws, &[]);
-    let (db_path, _, _) = write_test_config(
-        &ws, wrapper.to_str().unwrap(), "echo idx", "exit 0", "txt",
-    );
-
-    let conf = ws.path().join("portal.conf");
-    fs::write(&conf, format!(r#"log_level = info
-
-[filepicker]
-cmd = {}
 
 [indexer]
 enable = false

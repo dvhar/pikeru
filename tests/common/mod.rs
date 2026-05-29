@@ -89,15 +89,6 @@ pub fn create_slow_mock_wrapper(workspace: &TempDir, delay_ms: u64, outputs: &[&
     script
 }
 
-pub fn create_mock_indexer_check(workspace: &TempDir) -> PathBuf {
-    let script = workspace.path().join("mock-check.sh");
-    std::fs::write(&script, "#!/bin/bash\nexit 0\n").unwrap();
-    let mut perms = std::fs::metadata(&script).unwrap().permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(&script, perms).unwrap();
-    script
-}
-
 pub fn create_test_dir(workspace: &TempDir, filenames: &[&str]) -> PathBuf {
     let dir = workspace.path().join("testdir");
     std::fs::create_dir_all(&dir).unwrap();
