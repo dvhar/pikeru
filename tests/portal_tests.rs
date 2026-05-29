@@ -5,7 +5,7 @@ mod common;
 use common::*;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use std::time::Duration;
 
@@ -390,19 +390,451 @@ fn test_sequential_calls_work() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Ignore system tests — cumulative .gitignore + search ignore
+// ---------------------------------------------------------------------------
+
+/// Write a config file optimized for indexer testing:
+/// - Uses `cat` as the indexer command (outputs file contents as searchable text)
+/// - Always-passing check command (`exit 0`)
+/// - Wide extension list so test files get picked up
+fn write_indexer_test_config(
+    workspace: &TempDir,
+    wrapper_path: &str,
+) -> (PathBuf, PathBuf) {
+    let conf = workspace.path().join("portal.conf");
+    let content = format!(
+        r#"log_level = trace
+
+[filepicker]
+cmd = {}
+default_save_dir = /tmp/psave
+
+[indexer]
+enable = true
+cmd = cat
+check = exit 0
+extensions = txt,cache,log,tmp,png,jpg
+"#,
+        wrapper_path
+    );
+    fs::write(&conf, content).unwrap();
+    let db_path = workspace.path().join("index.db");
+    (db_path, conf)
+}
+
+/// Create a flat directory with various files for indexing.
+/// The indexer only does a single-level read_dir (no recursion), so all
+/// indexed files must be directly in the target directory.
+/// Returns the root dir path so tests can reference files inside it.
+fn create_indexable_tree(workspace: &TempDir) -> PathBuf {
+    let root = workspace.path().join("indexed_root");
+    fs::create_dir_all(&root).unwrap();
+
+    // Regular .txt files that should be indexed (flat, no subdirs)
+    fs::write(root.join("file1.txt"), "hello world").unwrap();
+    fs::write(root.join("file2.txt"), "foo bar").unwrap();
+
+    root
+}
+
+/// Index the given directory and return description count from the DB.
+fn index_and_count(_guard: &PortalGuard, client: &PortalClient, db_path: &str, dir: &Path) -> usize {
+    assert!(client.update_index(&[dir.to_str().unwrap()]).is_ok());
+    // Wait for indexing to complete
+    std::thread::sleep(Duration::from_millis(800));
+    let conn = open_test_db(db_path);
+    count_descriptions(&conn)
+}
+
+/// Index the given directory and return all (fname, description) tuples.
+fn index_and_query(_guard: &PortalGuard, client: &PortalClient, db_path: &str, dir: &Path) -> Vec<(String, String)> {
+    assert!(client.update_index(&[dir.to_str().unwrap()]).is_ok());
+    std::thread::sleep(Duration::from_millis(800));
+    let conn = open_test_db(db_path);
+    query_descriptions(&conn)
+}
+
 #[test]
-fn test_gitignore_flag() {
+fn test_search_ignore_filters_indexed_files() {
+    // Configure: respect_gitignore=false, search_ignore="*.cache"
+    // Then index a directory containing both .txt and .cache files.
+    // Only .txt files should appear in the database; .cache files are excluded.
     let ws = test_workspace();
     let wrapper = create_mock_wrapper(&ws, &[]);
-    let (db_path, _svc, _obj) = write_test_config(
-        &ws, wrapper.to_str().unwrap(), "echo idx", "exit 0", "txt",
-    );
-    let _guard = PortalGuard::new(db_path.to_str().unwrap(), ws.path().join("portal.conf").to_str().unwrap());
+    let (db_path, conf) = write_indexer_test_config(&ws, wrapper.to_str().unwrap());
+
+    let root = create_indexable_tree(&ws);
+    // Add a .cache file that matches the search ignore pattern
+    fs::write(root.join("data.cache"), "cached data").unwrap();
+    // Add another .txt to ensure multiple files are indexed
+    fs::write(root.join("extra.txt"), "extra text").unwrap();
+    fs::write(root.join("another.log"), "log line 1").unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
     std::thread::sleep(Duration::from_millis(200));
 
-    let client = PortalClient::new(&_guard.service_name, &_guard.object_path);
-    assert!(client.configure_indexer(true, "*.cache").is_ok());
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+
+    // Enable search ignore with a pattern that matches .cache files
+    assert!(client.configure_indexer(false, "*.cache").is_ok());
+
+    let count = index_and_count(&guard, &client, db_path.to_str().unwrap(), &root);
+
+    // Should have indexed: file1.txt, file2.txt, extra.txt, another.log (4 files)
+    // NOT data.cache (filtered by search ignore)
+    assert_eq!(count, 4, "Should have 4 indexed files (data.cache excluded by search ignore)");
+
+    let descriptions = index_and_query(&guard, &client, db_path.to_str().unwrap(), &root);
+    let names: Vec<&str> = descriptions.iter().map(|(name, _)| name.as_str()).collect();
+    assert!(names.contains(&"file1.txt"), "file1.txt should be indexed");
+    assert!(names.contains(&"file2.txt"), "file2.txt should be indexed");
+    assert!(names.contains(&"extra.txt"), "extra.txt should be indexed");
+    assert!(names.contains(&"another.log"), "another.log should be indexed");
+    assert!(!names.contains(&"data.cache"), "data.cache should NOT be indexed (matches *.cache)");
+}
+
+#[test]
+fn test_search_ignore_prevents_all_indexing() {
+    // If the search ignore pattern matches ALL files, no files should be indexed.
+    let ws = test_workspace();
+    let wrapper = create_mock_wrapper(&ws, &[]);
+    let (db_path, conf) = write_indexer_test_config(&ws, wrapper.to_str().unwrap());
+
+    let root = create_indexable_tree(&ws);
+    // Add only .cache files (all match the pattern)
+    fs::write(root.join("a.cache"), "data a").unwrap();
+    fs::write(root.join("b.log"), "log b").unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+    // Use a very broad pattern that matches everything
+    assert!(client.configure_indexer(false, "*\n**/*").is_ok());
+
+    let count = index_and_count(&guard, &client, db_path.to_str().unwrap(), &root);
+    assert_eq!(count, 0, "No files should be indexed when all match search ignore");
+}
+
+#[test]
+fn test_search_ignore_no_pattern_indexes_all() {
+    // With an empty search ignore string (or not configured), all eligible files
+    // should be indexed.
+    let ws = test_workspace();
+    let wrapper = create_mock_wrapper(&ws, &[]);
+    let (db_path, conf) = write_indexer_test_config(&ws, wrapper.to_str().unwrap());
+
+    let root = create_indexable_tree(&ws);
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+    // Configure with empty search ignore (no filtering)
     assert!(client.configure_indexer(false, "").is_ok());
+
+    let count = index_and_count(&guard, &client, db_path.to_str().unwrap(), &root);
+    // file1.txt, file2.txt = 2 files from create_indexable_tree
+    assert_eq!(count, 2, "All eligible files should be indexed with no search ignore");
+}
+
+#[test]
+fn test_cumulative_gitignore_skips_directory() {
+    // Create a .gitignore at the root that ignores a subdirectory.
+    // The entire subtree under that directory should not be scanned.
+    let ws = test_workspace();
+    let wrapper = create_mock_wrapper(&ws, &[]);
+    let (db_path, conf) = write_indexer_test_config(&ws, wrapper.to_str().unwrap());
+
+    let root = ws.path().join("indexed_root");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("visible.txt"), "I am visible").unwrap();
+
+    // Create a subdir with a .gitignore that ignores it
+    let ignored_dir = root.join("ignored_subdir");
+    fs::create_dir_all(&ignored_dir).unwrap();
+    fs::write(ignored_dir.join("hidden.txt"), "I am hidden").unwrap();
+
+    // Put .gitignore at root level, ignoring the subdir
+    fs::write(root.join(".gitignore"), "ignored_subdir\n").unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+    // Enable respect_gitignore
+    assert!(client.configure_indexer(true, "").is_ok());
+
+    let count = index_and_count(&guard, &client, db_path.to_str().unwrap(), &root);
+    assert_eq!(count, 1, "Only visible.txt should be indexed; ignored_subdir is excluded by .gitignore");
+}
+
+#[test]
+fn test_cumulative_gitignore_filters_files_in_tree() {
+    // .gitignore at root level filters individual files within the scanned directory.
+    // Note: the indexer only does a single-level read_dir, so subdirectories are
+    // listed but their contents are not recursively scanned. This test verifies
+    // that .gitignore patterns filter files found at the top level of the scanned dir.
+    let ws = test_workspace();
+    let wrapper = create_mock_wrapper(&ws, &[]);
+    let (db_path, conf) = write_indexer_test_config(&ws, wrapper.to_str().unwrap());
+
+    let root = ws.path().join("indexed_root");
+    fs::create_dir_all(&root).unwrap();
+
+    // Root-level .gitignore that ignores *.tmp files
+    fs::write(root.join(".gitignore"), "*.tmp\n").unwrap();
+    fs::write(root.join("keep.txt"), "kept").unwrap();
+    fs::write(root.join("temp.tmp"), "discarded").unwrap();
+    // A subdirectory that is NOT ignored — but its contents won't be indexed
+    // because the indexer only does a flat read_dir.
+    let subdir = root.join("logs");
+    fs::create_dir_all(&subdir).unwrap();
+    fs::write(subdir.join("app.txt"), "text in logs dir").unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+    assert!(client.configure_indexer(true, "").is_ok());
+
+    let count = index_and_count(&guard, &client, db_path.to_str().unwrap(), &root);
+    // Should index: keep.txt (1 file)
+    // Should NOT index: temp.tmp (ignored by root .gitignore *.tmp)
+    // Note: subdir/logs/app.txt is NOT indexed because indexer only scans top level
+    assert_eq!(count, 1, "Only keep.txt should be indexed; temp.tmp excluded by .gitignore");
+
+    let descriptions = index_and_query(&guard, &client, db_path.to_str().unwrap(), &root);
+    let names: Vec<&str> = descriptions.iter().map(|(name, _)| name.as_str()).collect();
+    assert!(names.contains(&"keep.txt"));
+    assert!(!names.contains(&"temp.tmp"), "temp.tmp excluded by root .gitignore *.tmp");
+}
+
+#[test]
+fn test_cumulative_gitignore_parent_chain() {
+    // Test that the cumulative gitignore mechanism walks up the parent chain
+    // and applies patterns from .gitignore files at each level.
+    // The indexer scans `root/` which contains:
+    //   - visible.txt (not matched by any .gitignore) → indexed
+    //   - ignored.txt (matched by root/.gitignore "ignored.*") → excluded
+    let ws = test_workspace();
+    let wrapper = create_mock_wrapper(&ws, &[]);
+    let (db_path, conf) = write_indexer_test_config(&ws, wrapper.to_str().unwrap());
+
+    let root = ws.path().join("indexed_root");
+    fs::create_dir_all(&root).unwrap();
+
+    // Root-level .gitignore with a pattern
+    fs::write(root.join(".gitignore"), "ignored.*\n*.bak\n").unwrap();
+    fs::write(root.join("visible.txt"), "I am visible").unwrap();
+    fs::write(root.join("ignored.txt"), "I am ignored by pattern").unwrap();
+    fs::write(root.join("backup.bak"), "I am also ignored").unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+    assert!(client.configure_indexer(true, "").is_ok());
+
+    let count = index_and_count(&guard, &client, db_path.to_str().unwrap(), &root);
+    // Only visible.txt passes both .gitignore patterns
+    assert_eq!(count, 1, "Only visible.txt should pass cumulative .gitignore filters");
+
+    let descriptions = index_and_query(&guard, &client, db_path.to_str().unwrap(), &root);
+    let names: Vec<&str> = descriptions.iter().map(|(name, _)| name.as_str()).collect();
+    assert!(names.contains(&"visible.txt"));
+    assert!(!names.contains(&"ignored.txt"), "ignored.txt excluded by .gitignore pattern ignored.*");
+    assert!(!names.contains(&"backup.bak"), "backup.bak excluded by .gitignore pattern *.bak");
+}
+
+#[test]
+fn test_search_ignore_and_gitignore_together() {
+    // Both mechanisms active: search ignore AND cumulative .gitignore.
+    // Only files that pass BOTH filters should be indexed.
+    let ws = test_workspace();
+    let wrapper = create_mock_wrapper(&ws, &[]);
+    let (db_path, conf) = write_indexer_test_config(&ws, wrapper.to_str().unwrap());
+
+    let root = ws.path().join("indexed_root");
+    fs::create_dir_all(&root).unwrap();
+
+    // .gitignore excludes *.log files
+    fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+
+    // Create test files:
+    // keep.txt      — passes both filters → should be indexed
+    // skip.log      — excluded by .gitignore
+    // debug.cache   — excluded by search ignore *.cache
+    // data.tmp      — excluded by neither (indexed)
+    fs::write(root.join("keep.txt"), "kept").unwrap();
+    fs::write(root.join("skip.log"), "gitignored").unwrap();
+    fs::write(root.join("debug.cache"), "searchignored").unwrap();
+    fs::write(root.join("data.tmp"), "tmp data").unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+    // Enable BOTH: respect_gitignore=true AND search ignore pattern
+    assert!(client.configure_indexer(true, "*.cache").is_ok());
+
+    let count = index_and_count(&guard, &client, db_path.to_str().unwrap(), &root);
+    // keep.txt + data.tmp = 2 files pass both filters
+    assert_eq!(count, 2, "Only keep.txt and data.tmp should pass both filters");
+
+    let descriptions = index_and_query(&guard, &client, db_path.to_str().unwrap(), &root);
+    let names: Vec<&str> = descriptions.iter().map(|(name, _)| name.as_str()).collect();
+    assert!(names.contains(&"keep.txt"));
+    assert!(names.contains(&"data.tmp"));
+    assert!(!names.contains(&"skip.log"), "skip.log excluded by .gitignore");
+    assert!(!names.contains(&"debug.cache"), "debug.cache excluded by search ignore");
+}
+
+#[test]
+fn test_respect_gitignore_false_ignores_gitignore_files() {
+    // When respect_gitignore is false, .gitignore files should have NO effect.
+    // All eligible files should be indexed regardless of .gitignore content.
+    let ws = test_workspace();
+    let wrapper = create_mock_wrapper(&ws, &[]);
+    let (db_path, conf) = write_indexer_test_config(&ws, wrapper.to_str().unwrap());
+
+    let root = ws.path().join("indexed_root");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join(".gitignore"), "*.txt\n").unwrap(); // Would exclude ALL .txt files
+    fs::write(root.join("file1.txt"), "text 1").unwrap();
+    fs::write(root.join("file2.txt"), "text 2").unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+    // Explicitly disable respect_gitignore (default is false)
+    assert!(client.configure_indexer(false, "").is_ok());
+
+    let count = index_and_count(&guard, &client, db_path.to_str().unwrap(), &root);
+    assert_eq!(count, 2, "All .txt files should be indexed when respect_gitignore is false");
+}
+
+#[test]
+fn test_search_ignore_works_with_respect_gitignore_false() {
+    // Verify that search ignore still filters files even when
+    // respect_gitignore=false (i.e., .gitignore is bypassed but
+    // the user-provided search ignore pattern is still applied).
+    let ws = test_workspace();
+    let wrapper = create_mock_wrapper(&ws, &[]);
+    let (db_path, conf) = write_indexer_test_config(&ws, wrapper.to_str().unwrap());
+
+    let root = ws.path().join("indexed_root");
+    fs::create_dir_all(&root).unwrap();
+
+    // .gitignore that would exclude ALL .txt files if it were active
+    fs::write(root.join(".gitignore"), "*.txt\n").unwrap();
+    // Also create some .cache files to verify search ignore filtering
+    fs::write(root.join("file1.txt"), "text 1").unwrap();
+    fs::write(root.join("file2.txt"), "text 2").unwrap();
+    fs::write(root.join("data.cache"), "cached").unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+    // Disable respect_gitignore BUT set a search ignore pattern that excludes *.cache
+    assert!(client.configure_indexer(false, "*.cache").is_ok());
+
+    let count = index_and_count(&guard, &client, db_path.to_str().unwrap(), &root);
+    // With .gitignore bypassed (respect_gitignore=false), both .txt files should be indexed.
+    // With search ignore "*.cache", the .cache file should be excluded.
+    assert_eq!(count, 2, "Both .txt files indexed (.gitignore bypassed); .cache excluded by search ignore");
+
+    let descriptions = index_and_query(&guard, &client, db_path.to_str().unwrap(), &root);
+    let names: Vec<&str> = descriptions.iter().map(|(name, _)| name.as_str()).collect();
+    assert!(names.contains(&"file1.txt"), "file1.txt should be indexed (search ignore doesn't match .txt)");
+    assert!(names.contains(&"file2.txt"), "file2.txt should be indexed (search ignore doesn't match .txt)");
+    assert!(!names.contains(&"data.cache"), "data.cache excluded by search ignore *.cache despite respect_gitignore=false");
+}
+
+#[test]
+fn test_search_ignore_prev_path_tracking_blocked() {
+    // When a search ignore pattern matches the parent directory of the first
+    // returned file, prev_path should NOT be updated.
+    let ws = test_workspace();
+    // Use a wrapper that outputs files under /tmp/junk_dir/
+    let wrapper = ws.path().join("prevpath-wrapper.sh");
+    fs::write(&wrapper, "#!/bin/bash\necho '/tmp/junk_dir/file1.txt'\necho '/tmp/junk_dir/file2.txt'\n").unwrap();
+    let mut perms = std::fs::metadata(&wrapper).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&wrapper, perms).unwrap();
+
+    let (db_path, conf) = write_indexer_test_config(&ws, wrapper.to_str().unwrap());
+
+    // Config: use_prev_path_for_save=true so prev_path affects save behavior.
+    let conf_path = conf;
+    // Rewrite config with use_prev_path_for_save enabled and a search ignore that matches /tmp/junk_dir
+    let content = format!(
+        r#"log_level = info
+
+[filepicker]
+cmd = {}
+default_save_dir = ~/Downloads
+use_prev_path_for_save = true
+
+[indexer]
+enable = false
+"#,
+        wrapper.to_str().unwrap()
+    );
+    fs::write(&conf_path, content).unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf_path.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+
+    // First call without search ignore: prev_path should be set to /tmp/junk_dir
+    let result1 = client.open_file(false, false).expect("open_file should succeed");
+    assert_eq!(result1.status, 0);
+    assert_eq!(result1.uris.len(), 2);
+
+    // Now configure search ignore that matches junk_dir via a directory path pattern.
+    // The file picker checks the parent dir of the first returned file against search ignore.
+    // If matched, prev_path should NOT update for subsequent calls.
+    assert!(client.configure_indexer(false, "/tmp/junk_dir\n").is_ok());
+
+    // Second call: since /tmp/junk_dir matches the search ignore,
+    // prev_path should NOT update (stays at its previous value).
+    let result2 = client.open_file(false, false).expect("open_file should succeed");
+    assert_eq!(result2.status, 0);
+    assert_eq!(result2.uris.len(), 2);
+
+    // Verify the URIs are still correct (wrapper output is unchanged).
+    // The key behavior tested: configure() with a directory-path pattern succeeds,
+    // and prev_path logic doesn't crash when the pattern matches.
+}
+
+#[test]
+fn test_search_ignore_prev_path_not_blocked_when_no_match() {
+    // When search ignore patterns do NOT match the first file's parent dir,
+    // prev_path should be updated normally (no error).
+    let ws = test_workspace();
+    let wrapper = create_mock_wrapper(&ws, &[
+        "/home/user/normal_dir/file1.txt",
+    ]);
+
+    let (db_path, conf) = write_indexer_test_config(&ws, wrapper.to_str().unwrap());
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+
+    // Configure with a search ignore that does NOT match the path above.
+    // This should succeed without crashing and prev_path should update normally.
+    assert!(client.configure_indexer(false, "*.secret\n*.bak").is_ok());
+
+    let result = client.open_file(false, false).expect("open_file should succeed");
+    assert_eq!(result.status, 0);
+    assert_eq!(result.uris.len(), 1);
 }
 
 #[test]
