@@ -627,5 +627,3 @@ fn test_db_path_flag_works() {
 
     assert!(custom_db.exists(), "Custom DB path should be used");
 }
-
-
