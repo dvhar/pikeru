@@ -236,16 +236,97 @@ fn test_indexer_update() {
 
 #[test]
 fn test_indexer_clear_queue() {
+    // clear_queue should wipe out any directories queued via update()
+    // that haven't been processed yet. After clear, a subsequent query
+    // must return zero indexed files.
     let ws = test_workspace();
-    let wrapper = create_mock_wrapper(&ws, &[]);
-    let (db_path, _svc, _obj) = write_test_config(
-        &ws, wrapper.to_str().unwrap(), "echo idx", "exit 0", "txt",
+    // Create a slow indexer wrapper: sleep 500ms then echo the argument.
+    let slow_idx = common::create_slow_mock_wrapper(&ws, 500, &["indexed"]);
+    // Filepicker cmd needs to be a real script (even though filepicker isn't used).
+    let fp_cmd = common::create_mock_wrapper(&ws, &[]);
+    let (db_path, conf) = write_indexer_test_config_with_cmd(
+        &ws,
+        fp_cmd.to_str().unwrap(),
+        slow_idx.to_str().unwrap(),
     );
-    let _guard = PortalGuard::new(db_path.to_str().unwrap(), ws.path().join("portal.conf").to_str().unwrap());
+
+    let root = ws.path().join("indexed_root");
+    fs::create_dir_all(&root).unwrap();
+
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
     std::thread::sleep(Duration::from_millis(200));
 
-    let client = PortalClient::new(&_guard.service_name, &_guard.object_path);
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+
+    // Queue a directory for indexing
+    assert!(client.update_index(&[root.to_str().unwrap()]).is_ok());
+
+    // Immediately clear the queue before indexing completes (wrapper is 500ms)
     assert!(client.clear_index_queue().is_ok());
+
+    // Give the portal time to process both messages and let the wrapper finish.
+    std::thread::sleep(Duration::from_millis(800));
+
+    // After clearing, no files should have been indexed because the
+    // done_map was wiped out before index_loop could process any directories.
+    let count = { let conn = open_test_db(db_path.to_str().unwrap()); common::count_descriptions(&conn) };
+    assert_eq!(count, 0, "No files should be indexed after clear_queue empties the pending directory queue");
+}
+
+#[test]
+fn test_indexer_clear_queue_stops_active_indexing() {
+    // When clear_queue is called while indexing is actively in progress,
+    // the done_map is cleared mid-flight. Since index_loop only processes
+    // directories present in done_map, any remaining unindexed dirs are lost.
+    let ws = test_workspace();
+    // Slow indexer wrapper: sleep 1s per file so we can precisely time the clear.
+    let slow_idx = common::create_slow_mock_wrapper(&ws, 1000, &["content"]);
+    let fp_cmd = common::create_mock_wrapper(&ws, &[]);
+    let (db_path, conf) = write_indexer_test_config_with_cmd(
+        &ws,
+        fp_cmd.to_str().unwrap(),
+        slow_idx.to_str().unwrap(),
+    );
+
+    let root1 = ws.path().join("indexed_root_1");
+    fs::create_dir_all(&root1).unwrap();
+    fs::write(root1.join("file_a.txt"), "content a").unwrap();
+
+    let root2 = ws.path().join("indexed_root_2");
+    fs::create_dir_all(&root2).unwrap();
+    fs::write(root2.join("file_b.txt"), "content b").unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+
+    // Queue TWO directories. The indexer processes them one at a time.
+    assert!(client.update_index(&[root1.to_str().unwrap(), root2.to_str().unwrap()]).is_ok());
+
+    // Wait ~600ms: enough for the index_loop to pick up root1 and start
+    // indexing it, but NOT enough for it to complete (wrapper is 1s).
+    std::thread::sleep(Duration::from_millis(600));
+
+    // Clear the queue mid-indexing. This wipes done_map including root2,
+    // so when root1 finishes and the loop checks done_map again, only root1
+    // remains (and it's already marked Done). Root2 is silently dropped.
+    assert!(client.clear_index_queue().is_ok());
+
+    // Give it time for the in-flight wrapper to finish and the loop to
+    // re-check done_map and exit.
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let count = { let conn = open_test_db(db_path.to_str().unwrap()); common::count_descriptions(&conn) };
+    // The first directory's wrapper is in-flight when clear_queue arrives.
+    // Since update_dir() blocks until the wrapper finishes, the loop can't
+    // process Msg::ClearQueue until root1 completes (~1s). But idx_running
+    // was set to false immediately by clear_queue, so after root1 finishes
+    // and is marked Done in done_map, the while condition check finds
+    // idx_running=false and exits. The second directory's entry in done_map
+    // was already cleared, so it's never processed.
+    assert_eq!(count, 1, "Only first directory should be indexed; clear_queue dropped second dir from queue");
 }
 
 #[test]
@@ -398,6 +479,34 @@ fn test_sequential_calls_work() {
 /// - Uses `cat` as the indexer command (outputs file contents as searchable text)
 /// - Always-passing check command (`exit 0`)
 /// - Wide extension list so test files get picked up
+/// Like `write_indexer_test_config` but allows specifying a custom
+/// indexer command (useful for slow wrappers that need to simulate
+/// time-consuming indexing operations).
+fn write_indexer_test_config_with_cmd(
+    workspace: &TempDir,
+    filepicker_cmd: &str,
+    indexer_cmd: &str,
+) -> (PathBuf, PathBuf) {
+    let conf = workspace.path().join("portal.conf");
+    let content = format!(
+        r#"log_level = trace
+
+[filepicker]
+cmd = {}
+default_save_dir = /tmp/psave
+
+[indexer]
+enable = true
+cmd = {}
+check = exit 0
+extensions = txt,cache,log,tmp,png,jpg
+"#,
+        filepicker_cmd, indexer_cmd
+    );
+    fs::write(&conf, content).unwrap();
+    (workspace.path().join("index.db"), conf)
+}
+
 fn write_indexer_test_config(
     workspace: &TempDir,
     wrapper_path: &str,

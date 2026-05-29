@@ -66,6 +66,29 @@ pub fn create_mock_indexer(workspace: &TempDir, description: &str) -> PathBuf {
 }
 
 #[allow(dead_code)]
+/// Creates a mock wrapper that sleeps for approximately `delay_ms` milliseconds
+/// per invocation (using Python for sub-second precision), then echoes the
+/// argument. Useful for timing-based tests where you want indexing to be slow
+/// enough that other operations (like clear_queue) can interrupt between
+/// directory processing.
+#[allow(dead_code)]
+pub fn create_slow_mock_wrapper(workspace: &TempDir, delay_ms: u64, outputs: &[&str]) -> PathBuf {
+    let script = workspace.path().join("slow-mock-wrapper.sh");
+    let mut lines: Vec<String> = vec!["#!/bin/bash".to_string()];
+    if delay_ms > 0 {
+        let sleep_secs = (delay_ms as f64) / 1000.0;
+        lines.push(format!("python3 -c 'import time; time.sleep({})'", sleep_secs));
+    }
+    for output in outputs {
+        lines.push(format!("echo \"{}\"", output));
+    }
+    std::fs::write(&script, lines.join("\n")).unwrap();
+    let mut perms = std::fs::metadata(&script).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&script, perms).unwrap();
+    script
+}
+
 pub fn create_mock_indexer_check(workspace: &TempDir) -> PathBuf {
     let script = workspace.path().join("mock-check.sh");
     std::fs::write(&script, "#!/bin/bash\nexit 0\n").unwrap();
