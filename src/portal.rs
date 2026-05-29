@@ -14,23 +14,15 @@ use std::{
     borrow::Cow,
     path::Path,
     mem::take,
-    sync::{Arc,Mutex},
+    sync::Arc,
 };
 use std::time::SystemTime;
 use rusqlite;
+use std::cmp::Ordering;
 use tokio::{
-    sync::mpsc::{
-        UnboundedReceiver as UReceiver,
-        UnboundedSender as USender,
-        unbounded_channel,
-    },
     sync::Mutex as AsyncMtx,
-    time,
-    time::sleep,
-    time::Duration,
-
-};
-use log::{info,trace,error,debug,warn,LevelFilter};
+    time::{sleep, Duration, Instant},
+};use log::{info,trace,error,debug,warn,LevelFilter};
 use env_logger::Builder;
 use ctrlc;
 use ignore::{gitignore,Match};
@@ -41,24 +33,6 @@ struct Shtate {
     idx_running: bool,
     respect_gitignore: bool,
     current_searchignore: String,
-}
-
-#[derive(Debug)]
-enum Msg {
-    Start,
-    Dirs(Vec<String>),
-    Ignore,
-    ClearQueue,
-}
-
-struct IdxManager {
-    shtate: Arc<AsyncMtx<Shtate>>,
-    cmd: String,
-    check: String,
-    exts: Vec<&'static str>,
-    con: Arc<Mutex<rusqlite::Connection>>,
-    ignore: gitignore::Gitignore,
-    igtxt: String,
 }
 
 fn build_cumulative_gitignore(start_dir: &Path) -> gitignore::Gitignore {
@@ -84,93 +58,129 @@ fn build_cumulative_gitignore(start_dir: &Path) -> gitignore::Gitignore {
     builder.build().unwrap_or(gitignore::Gitignore::new("").0)
 }
 
-async fn index_loop(mut mgr: IdxManager, mut chan: UReceiver<Msg>, enabled: bool) {
-    let mut done_map = HashMap::<String,bool>::new();
-    let mut timeout = time::Instant::now().checked_add(time::Duration::from_secs(60)).unwrap();
-    let mut online = mgr.indexer_online().await;
-    info!("indexer {}", if online {"online"} else {"offline"});
-    loop {
-        let msg = chan.recv().await.unwrap();
-        if !enabled { continue; }
-        let uptodate = timeout.cmp(&time::Instant::now()) == core::cmp::Ordering::Greater;
-        if !uptodate {
-            timeout = timeout.checked_add(time::Duration::from_secs(60)).unwrap();
-            online = mgr.indexer_online().await;
-            if !online { warn!("indexer offline"); }
-        }
-        if !online {
-            continue;
-        }
-        trace!("Processing Msg: {:?}", msg);
-        match msg {
-            Msg::Start => {
-                debug!("Starting index round");
-                mgr.shtate.lock().await.idx_running = true;
-                while {let state = mgr.shtate.lock().await; state.idx_running} {
-                    if let Some(dir) = done_map.iter().find(|v|!v.1) {
-                        if mgr.update_dir(dir.0).await != DirResult::Fail {
-                            done_map.entry(dir.0.to_string()).and_modify(|v| *v = true);
-                        } else {
-                            error!("Indexing batch failed");
-                            done_map.clear();
-                            break;
-                        }
-                    } else {
-                        debug!("Indexing batch finished");
-                        done_map.clear();
-                        break;
-                    }
-                }
-                mgr.shtate.lock().await.idx_running = false;
-            },
-            Msg::Dirs(dirs) => {
-                trace!("Got dirs");
-                dirs.into_iter().for_each(|dir|{done_map.entry(dir).or_default();});
-            },
-            Msg::Ignore => {
-                mgr.update_ignore().await;
-            },
-            Msg::ClearQueue => {
-                done_map.clear();
-                info!("Cleared indexing queue");
-            },
-        }
-    }
-}
-
-fn shquote(s: &str) -> String {
-    if s.contains("\"") {
-        return format!("'{}'", s);
-    }
-    return format!("\"{}\"", s);
-}
-
-#[derive(PartialEq)]
-enum Entry {
-    None,
-    Old,
-    Done,
-}
-
-#[derive(PartialEq)]
-enum DirResult {
-    Fail,
-    Success,
+#[derive(Debug)]
+enum Msg {
+    Start(Vec<String>),
     Ignore,
+    ClearQueue,
 }
 
-impl IdxManager {
+/// Shared state behind an Arc<Mutex<>>, so clones are just handles to the same data.
+struct IndexerInner {
+    shtate: Arc<AsyncMtx<Shtate>>,
+    con: Arc<std::sync::Mutex<rusqlite::Connection>>,
+    done_map: AsyncMtx<HashMap<String,bool>>,
+    cmd: String,
+    check: String,
+    exts: Vec<&'static str>,
+    ignore: gitignore::Gitignore,
+    igtxt: String,
+}
 
-    fn new(shtate: Arc<AsyncMtx<Shtate>>,
-           config: &mut Config,
-           con: Arc<Mutex<rusqlite::Connection>>) -> Self {
-        match con.lock() {
-           Ok(c) => { 
-            c.execute("create table if not exists descriptions
-                      (fname text, dir text, description text, mtime real);", ()).unwrap();
-            c.pragma_update(None, "journal_mode", "WAL").unwrap();
-           },
-           Err(e) => eprintln!("{}", e),
+/// Thin handle wrapper — like FItem(Box<FItemb>) pattern.
+/// Cloning Indexer clones the Arc handle; all clones point to the same underlying state.
+#[derive(Clone)]
+struct Indexer(Arc<tokio::sync::Mutex<IndexerInner>>);
+
+impl std::ops::Deref for Indexer {
+    type Target = tokio::sync::Mutex<IndexerInner>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[interface(name = "org.freedesktop.impl.portal.SearchIndexer")]
+impl Indexer {
+    async fn clear_queue(&self) {
+        debug!("Got clear queue message");
+        let inner = self.lock().await;
+        inner.shtate.lock().await.idx_running = false;
+        inner.done_map.lock().await.clear();
+        info!("Cleared indexing queue");
+    }
+    async fn update(&self, dirs: Vec<String>) {
+        {
+            let inner = self.lock().await;
+            inner.done_map.lock().await.clear();
+            for dir in dirs { inner.done_map.lock().await.entry(dir).or_default(); }
+        }
+        // Only spawn a new loop if one isn't already running.
+        // If idx_running is true, the current task will pick up the new dirs.
+        if !self.lock().await.shtate.lock().await.idx_running {
+            let this = self.clone();
+            tokio::spawn(async move {
+                this.index_loop().await;
+            });
+        }
+    }
+    async fn configure(&mut self, respect_gitignore: bool, search_ignore: String) {
+        trace!("Got gitignore configure request: {}", search_ignore);
+        {
+            let inner = self.lock().await;
+            let mut state = inner.shtate.lock().await;
+            state.respect_gitignore = respect_gitignore;
+            state.current_searchignore = search_ignore;
+        }
+        self.update_ignore().await;
+    }
+
+}
+
+impl Indexer {
+
+    async fn index_loop(self: &Self) {
+        // Start with a 1-minute timeout so we check indexer online status right away.
+        let mut timeout = Instant::now().checked_add(Duration::from_secs(60)).unwrap();
+        if !self.lock().await.shtate.lock().await.idx_running {
+            warn!("index_loop: idx_running is false, nothing to index");
+            return;
+        }
+        loop {
+            // Check indexer online status periodically.
+            let uptodate = timeout.cmp(&Instant::now()) == Ordering::Greater;
+            if !uptodate {
+                timeout = timeout.checked_add(Duration::from_secs(60)).unwrap();
+                let online = self.indexer_online().await;
+                if !online { warn!("indexer offline"); }
+            }
+            if !self.lock().await.shtate.lock().await.idx_running {
+                debug!("index_loop: idx_running cleared, exiting");
+                break;
+            }
+            // Pick the next unprocessed dir.
+            let inner = self.lock().await;
+            let to_process: Vec<String> = inner.done_map.lock().await.iter()
+                .filter(|(_, done)| !*done)
+                .map(|(dir, _)| dir.clone())
+                .collect();
+            drop(inner);
+            if to_process.is_empty() {
+                debug!("Indexing batch finished");
+                self.lock().await.shtate.lock().await.idx_running = false;
+                break;
+            }
+            for dir in &to_process {
+                let result = self.update_dir(dir).await;
+                if result == DirResult::Fail {
+                    error!("Indexing batch failed");
+                    self.lock().await.done_map.lock().await.clear();
+                    self.lock().await.shtate.lock().await.idx_running = false;
+                    break;
+                }
+                // Mark this dir as done.
+                self.lock().await.done_map.lock().await.entry(dir.clone()).and_modify(|v| *v = true);
+            }
+        }
+    }
+
+    fn new(shtate: Arc<AsyncMtx<Shtate>>, config: &mut Config, con: Arc<std::sync::Mutex<rusqlite::Connection>>) -> Self {
+        { let c = con.lock().unwrap();
+            match c.execute("create table if not exists descriptions
+                          (fname text, dir text, description text, mtime real);", ()) {
+             Ok(_) => {},
+             Err(e) => eprintln!("{}", e),
+            };
+            let _ = c.pragma_update(None, "journal_mode", "WAL");
         }
         let con2 = con.clone();
         ctrlc::set_handler(move || {
@@ -180,44 +190,51 @@ impl IdxManager {
             eprintln!("Portal closing");
             std::process::exit(0);
         }).expect("Error setting Ctrl-C handler");
-        Self {
+        Self(Arc::new(tokio::sync::Mutex::new(IndexerInner {
             shtate,
+            con,
+            done_map: AsyncMtx::new(HashMap::new()),
             cmd: take(&mut config.indexer_cmd),
             check: take(&mut config.indexer_check),
             exts: Box::new(take(&mut config.indexer_exts)).leak().split(',').collect(),
-            con,
             ignore: gitignore::Gitignore::new("").0,
             igtxt: String::new(),
-        }
+        })))
     }
 
-    async fn update_ignore(self: &mut Self) {
-        let txt = self.shtate.lock().await.current_searchignore.clone();
-        if txt == self.igtxt {
+    async fn update_ignore(self: &Self) {
+        let inner = self.lock().await;
+        let txt = inner.shtate.lock().await.current_searchignore.clone();
+        if txt == inner.igtxt {
             return
         }
+        drop(inner);
         let mut builder = gitignore::GitignoreBuilder::new("");
         txt.lines().for_each(|line|{builder.add_line(None, line).unwrap();});
-        self.ignore = match builder.build() {
+        let ignore = match builder.build() {
             Ok(gi) => gi,
             Err(e) => {
                 warn!("Bad gitignore: {}: {}", e, txt);
                 gitignore::Gitignore::new("").0
             },
         };
-        self.igtxt = txt;
+        let mut inner = self.lock().await;
+        inner.igtxt = txt;
+        inner.ignore = ignore;
     }
 
-    async fn indexer_online(self: &Self) -> bool {
-        match tokio::process::Command::new("sh").arg("-c").arg(&self.check).output().await {
+    async fn indexer_online(&self) -> bool {
+        let inner = self.lock().await;
+        match tokio::process::Command::new("sh").arg("-c").arg(&inner.check).output().await {
             Ok(out) => out.status.success(),
             Err(_) => false,
         }
     }
 
-    fn already_done(self: &Self, dir: &String, fname: &str, mtime: f32) -> Entry {
-        let con = self.con.lock().unwrap();
-        let mut query = con.prepare("select mtime from descriptions where dir = ?1 and fname = ?2").unwrap();
+    async fn already_done(self: &Self, dir: &String, fname: &str, mtime: f32) -> Entry {
+        let guard = self.lock().await;
+        let c = guard.con.lock().unwrap();
+        let mut query = c.prepare("select mtime from descriptions where dir = ?1 and fname = ?2").unwrap();
         let ret = match query.query([dir.as_str(), fname.as_ref()]).unwrap().next() {
             Ok(q) => match q {
                 Some(r) => {
@@ -237,9 +254,10 @@ impl IdxManager {
         ret
     }
 
-    fn save(self: &Self, dir: &String, fname: &str, desc: &str, mtime: f32, stat: Entry) {
-        let con = self.con.lock().unwrap();
-        let mut query = con.prepare(match stat {
+    async fn save(self: &Self, dir: &String, fname: &str, desc: &str, mtime: f32, stat: Entry) {
+        let guard = self.lock().await;
+        let c = guard.con.lock().unwrap();
+        let mut query = c.prepare(match stat {
             Entry::None => "insert into descriptions (dir, fname, description, mtime) values (?1, ?2, ?3, ?4)",
             Entry::Old => "update descriptions set description = ?3, mtime = ?4 where dir = ?1 and fname = ?2",
             Entry::Done => unreachable!(),
@@ -258,11 +276,13 @@ impl IdxManager {
         };
         let mtime = metadata.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32();
         let fname = path.file_name().unwrap().to_string_lossy();
-        let stat = self.already_done(dir, &fname, mtime);
+        let stat = self.already_done(dir, &fname, mtime).await;
         if stat == Entry::Done {
             return true;
         }
-        let cmd = format!("{} {}", self.cmd, shquote(path.to_string_lossy().as_ref()));
+        let inner = self.lock().await;
+        let cmd = format!("{} {}", inner.cmd, shquote(path.to_string_lossy().as_ref()));
+        drop(inner);
         match tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await {
             Ok(out) => {
                 if !out.status.success() || out.stdout.len() == 0 {
@@ -271,7 +291,7 @@ impl IdxManager {
                 } else {
                     let description = unsafe { std::str::from_utf8_unchecked(&out.stdout) };
                     trace!("{:?} DESC:{}", path, description.trim());
-                    self.save(dir, &fname, &description, mtime, stat);
+                    self.save(dir, &fname, &description, mtime, stat).await;
                     return true;
                 }
             },
@@ -281,11 +301,13 @@ impl IdxManager {
     }
 
     async fn update_dir(self: &Self, dir: &String) -> DirResult {
-        let local_ignore = if self.shtate.lock().await.respect_gitignore {
+        let inner = self.lock().await;
+        let local_ignore = if inner.shtate.lock().await.respect_gitignore {
             build_cumulative_gitignore(Path::new(dir))
         } else {
             gitignore::Gitignore::empty()
         };
+        drop(inner);
         if let Match::Ignore(_) = local_ignore.matched(dir, true) {
             return DirResult::Ignore;
         }
@@ -293,15 +315,15 @@ impl IdxManager {
         match std::fs::read_dir(dir) {
             Ok(read_dir) => {
                 for dir_entry in read_dir {
-                    if !self.shtate.lock().await.idx_running {
+                    if !self.lock().await.shtate.lock().await.idx_running {
                         break;
                     }
                     if let Ok(de) = dir_entry {
                         let path = de.path();
                         match path.extension() {
                             Some(ext) => {
-                                if self.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
-                                    if let Match::Ignore(_) = self.ignore.matched(&path, path.is_dir()) {
+                                if self.lock().await.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
+                                    if let Match::Ignore(_) = self.lock().await.ignore.matched(&path, path.is_dir()) {
                                         continue;
                                     }
                                     if let Match::Ignore(_) = local_ignore.matched(&path, false) {
@@ -336,51 +358,6 @@ impl IdxManager {
 
 }
 
-#[allow(dead_code)]
-struct Indexer {
-    tx: USender<Msg>,
-    shtate: Arc<AsyncMtx<Shtate>>,
-    con: Arc<Mutex<rusqlite::Connection>>,
-}
-
-#[interface(name = "org.freedesktop.impl.portal.SearchIndexer")]
-impl Indexer {
-    async fn clear_queue(&self) {
-        debug!("Got clear queue message");
-        self.shtate.lock().await.idx_running = false;
-        if let Err(e) = self.tx.send(Msg::ClearQueue) {
-            error!("Failed to send clear queue: {}", e);
-        }
-    }
-    async fn update(&self, dirs: Vec<String>) {
-        self.tx.send(Msg::Dirs(dirs)).unwrap(); 
-        let st = self.shtate.lock().await;
-        if !st.idx_running {
-            self.tx.send(Msg::Start).unwrap();
-        }
-    }
-    async fn configure(&mut self, respect_gitignore: bool, search_ignore: String) {
-        trace!("Got gitignore configure request: {}", search_ignore);
-        {
-            let mut state = self.shtate.lock().await;
-            state.respect_gitignore = respect_gitignore;
-            state.current_searchignore = search_ignore;
-        }
-        if let Err(e) = self.tx.send(Msg::Ignore) {
-            error!("Configure request error: {}", e);
-        }
-    }
-
-}
-impl Indexer {
-    fn new(tx: USender<Msg>, shtate: Arc<AsyncMtx<Shtate>>, con: Arc<Mutex<rusqlite::Connection>>) -> Self {
-        Self {
-            tx,
-            shtate,
-            con,
-        }
-    }
-}
 
 struct FilePicker {
     prev_path: AsyncMtx<String>,
@@ -391,9 +368,31 @@ struct FilePicker {
     cmd: String,
     home: String,
     shtate: Arc<AsyncMtx<Shtate>>,
-    db: Arc<Mutex<rusqlite::Connection>>,
+    db: Arc<std::sync::Mutex<rusqlite::Connection>>,
     use_prev: bool,
 }
+
+fn shquote(s: &str) -> String {
+    if s.contains("\"") {
+        return format!("'{}'", s);
+    }
+    return format!("\"{}\"", s);
+}
+
+#[derive(PartialEq)]
+enum Entry {
+    None,
+    Old,
+    Done,
+}
+
+#[derive(PartialEq)]
+enum DirResult {
+    Fail,
+    Success,
+    Ignore,
+}
+
 enum Section {
     FileChooser,
     Indexer,
@@ -620,7 +619,7 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
 
 impl FilePicker {
 
-    fn new(conf: &mut Config, shtate: Arc<AsyncMtx<Shtate>>, db: Arc<Mutex<rusqlite::Connection>>) -> Self {
+    fn new(conf: &mut Config, shtate: Arc<AsyncMtx<Shtate>>, db: Arc<std::sync::Mutex<rusqlite::Connection>>) -> Self {
         Self {
             prev_path: AsyncMtx::new(conf.home.clone()),
             prev_path_set_at: AsyncMtx::new(SystemTime::now()),
@@ -764,15 +763,12 @@ impl FilePicker {
 async fn main() -> Result<(), Box<dyn Error>> {
     let mut config = Config::new();
     eprintln!("Running {:#?}", config);
-    let idxfile = Path::new(&config.db_path);
-    let sht = Arc::new(AsyncMtx::new(Shtate::default()));
-    let (tx, rx) = unbounded_channel::<Msg>();
+    let idxfile = Path::new(&config.db_path).to_owned();
     std::fs::create_dir_all(idxfile.parent().unwrap()).unwrap();
-    let db = Arc::new(Mutex::new(rusqlite::Connection::open(idxfile).unwrap()));
+    let db = Arc::new(std::sync::Mutex::new(rusqlite::Connection::open(&idxfile).unwrap()));
+    let sht = Arc::new(AsyncMtx::new(Shtate::default()));
     let picker = FilePicker::new(&mut config, sht.clone(), db.clone());
-    let indexer = Indexer::new(tx, sht.clone(), db.clone());
-    let manager = IdxManager::new(sht.clone(), &mut config, db);
-    tokio::spawn(index_loop(manager, rx, config.indexer_enabled));
+    let indexer = Indexer::new(sht.clone(), &mut config, db);
     let service_name = config.dbus_service.clone();
     let object_path = config.dbus_object_path.clone();
     eprintln!("D-Bus: {} @ {}", service_name, object_path);
