@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Indexer client for the embedding server.
 
-Uploads an image and writes the embedding to stdout as raw binary:
+Uploads an image or sends a text query and writes the embedding to stdout
+as raw binary:
     2 bytes: u16 LE — number of floats (e.g. 512)
     2 bytes: u16 LE — bit width of each float (e.g. 32)
     N bytes: the embedding vector data
@@ -9,9 +10,14 @@ Uploads an image and writes the embedding to stdout as raw binary:
 On success, exits 0. On failure, prints to stderr and exits 1.
 
 Usage:
+    # Image indexing
     python3 embed_indexer.py http://127.0.0.1:6285 /path/to/image.jpg
+
+    # Text search query
+    python3 embed_indexer.py http://127.0.0.1:6285 "query:a cat on a wall"
 """
 
+import json
 import os
 import struct
 import sys
@@ -19,23 +25,41 @@ import urllib.request
 import urllib.error
 
 
-def main():
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <server_url> <image_path>", file=sys.stderr)
+def write_output(raw: bytes) -> None:
+    """Validate response and write header + vector to stdout."""
+    if len(raw) == 0:
+        print("Error: empty response from server", file=sys.stderr)
+        sys.exit(1)
+    if len(raw) % 4 != 0:
+        print(
+            f"Error: response length {len(raw)} is not a multiple of 4 bytes "
+            f"(expected f32 vector)",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    base_url = sys.argv[1].rstrip("/")
-    image_path = sys.argv[2]
+    dim = len(raw) // 4
+    bit_width = 32
 
+    # When stdout is a TTY, print a human-readable summary instead of binary.
+    if sys.stdout.isatty():
+        values = struct.unpack(f"<{dim}f", raw)
+        preview = ", ".join(f"{v:.5f}" for v in values[:8])
+        print(f"len:{dim} floatsize:{bit_width} [{preview}, ...]")
+    else:
+        sys.stdout.buffer.write(struct.pack("<HH", dim, bit_width))
+        sys.stdout.buffer.write(raw)
+
+
+def fetch_image_embedding(base_url: str, image_path: str) -> bytes:
+    """POST image to /embed/image and return raw response body."""
     if not os.path.isfile(image_path):
         print(f"Error: file not found: {image_path}", file=sys.stderr)
         sys.exit(1)
 
-    # Read image data
     with open(image_path, "rb") as f:
         image_data = f.read()
 
-    # Build multipart form data
     boundary = "----EmbedBoundary"
     filename = os.path.basename(image_path)
 
@@ -57,7 +81,7 @@ def main():
 
     try:
         with urllib.request.urlopen(req) as resp:
-            raw = resp.read()
+            return resp.read()
     except urllib.error.HTTPError as e:
         err_body = e.read().decode("utf-8", errors="replace")
         print(f"Error {e.code}: {err_body}", file=sys.stderr)
@@ -66,27 +90,54 @@ def main():
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # The server returns raw embedding bytes. We prepend a header:
-    #   u16 LE: number of floats
-    #   u16 LE: bit width of each float (32 for f32)
-    # The dim is inferred from the byte count, assuming f32 (4 bytes each).
-    # If the response length is not divisible by 4, it's not a valid vector.
-    if len(raw) == 0:
-        print("Error: empty response from server", file=sys.stderr)
+
+def fetch_text_embedding(base_url: str, text: str) -> bytes:
+    """POST text to /embed/text and return raw response body."""
+    if not text:
+        print("Error: empty query text", file=sys.stderr)
         sys.exit(1)
-    if len(raw) % 4 != 0:
+
+    url = f"{base_url}/embed/text"
+    payload = json.dumps({"text": text}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        print(f"Error {e.code}: {err_body}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+QUERY_PREFIX = "query:"
+
+
+def main():
+    if len(sys.argv) != 3:
         print(
-            f"Error: response length {len(raw)} is not a multiple of 4 bytes (expected f32 vector)",
+            f"Usage: {sys.argv[0]} <server_url> <image_path | query:text>",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    dim = len(raw) // 4
-    bit_width = 32
+    base_url = sys.argv[1].rstrip("/")
+    arg = sys.argv[2]
 
-    # Write header + raw vector to stdout
-    sys.stdout.buffer.write(struct.pack("<HH", dim, bit_width))
-    sys.stdout.buffer.write(raw)
+    if arg.startswith(QUERY_PREFIX):
+        text = arg[len(QUERY_PREFIX):]
+        raw = fetch_text_embedding(base_url, text)
+    else:
+        raw = fetch_image_embedding(base_url, arg)
+
+    write_output(raw)
 
 
 if __name__ == "__main__":
