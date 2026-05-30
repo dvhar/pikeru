@@ -280,6 +280,7 @@ impl Config {
   Backspace    Go up one directory
   Enter        Open/enter selected item
   Space        Toggle image preview
+  r            Rename selected file(s)
   q            Exit",
                 "\nFile picker config file is ~/.config/pikeru.conf.\nThe portal config file which includes the semantic search indexer and postprocessor, is by default ~/.config/xdg-desktop-portal-pikeru/config.",
                 extra_thumbs);
@@ -2015,6 +2016,7 @@ impl Application for FilePicker {
                     Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "2" => Some(Message::Sort(2)),
                     Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "3" => Some(Message::Sort(3)),
                     Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "4" => Some(Message::Sort(4)),
+                    Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "r" => Some(Message::RunCmd(1)),
                     Keyboard(KeyPressed{ key: Key::Character(ref c), .. }) if c == "q" => Some(Message::Cancel),
                     _ => None,
                 }
