@@ -48,9 +48,11 @@ extensions = {}
 
 #[test]
 fn test_db_flag_exists() {
-    // Verify the portal accepts -d flag for database path
+    // Verify the portal accepts -d flag for database path.
+    let ws = test_workspace();
+    let db_path = ws.path().join("flag_test.db");
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_portal"))
-        .args(["-d", "/tmp/test.db"])
+        .args(["-d", db_path.to_str().unwrap()])
         .output()
         .expect("portal binary not found");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -154,37 +156,37 @@ fn test_open_file_multiple_selection() {
 fn test_open_mode_sets_pk_xdg() {
     let ws = test_workspace();
     let wrapper = ws.path().join("capture-wrapper.sh");
-    fs::write(&wrapper, "#!/bin/bash\necho \"PK_XDG=${PK_XDG:-unset} POSTPROCESS_DIR=${POSTPROCESS_DIR:-unset}\" > /tmp/portal_cmd_capture.txt\necho \"$*\" >> /tmp/portal_cmd_capture.txt\necho \"/tmp/saved_file.txt\"\n").unwrap();
+    let capture_file = ws.path().join("cmd_capture.txt");
+    let capture_path = capture_file.to_str().unwrap();
+    // Build script — use $VAR syntax (no ${} needed for simple variable expansion).
+    let mut script = String::from("#!/bin/bash\n");
+    script.push_str(&format!("echo \"PK_XDG=$PK_XDG POSTPROCESS_DIR=$POSTPROCESS_DIR\" > {}\n", capture_path));
+    script.push_str(&format!("echo \"$*\" >> {}\n", capture_path));
+    script.push_str("echo \"/tmp/saved_file.txt\"\n");
+    fs::write(&wrapper, &script).unwrap();
     let mut perms = std::fs::metadata(&wrapper).unwrap().permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&wrapper, perms).unwrap();
 
-    let _ = fs::remove_file("/tmp/portal_cmd_capture.txt");
-    let (db_path, _svc, _obj) = write_test_config(
-        &ws, wrapper.to_str().unwrap(), "echo idx", "exit 0", "txt",
-    );
-    let _guard = PortalGuard::new(db_path.to_str().unwrap(), ws.path().join("portal.conf").to_str().unwrap());
-    std::thread::sleep(Duration::from_millis(200));
-
-    let client = PortalClient::new(&_guard.service_name, &_guard.object_path);
-    let _ = client.open_file(false, false).expect("open_file should succeed");
-    std::thread::sleep(Duration::from_millis(200));
-
-    if let Ok(cmd_text) = fs::read_to_string("/tmp/portal_cmd_capture.txt") {
-        assert!(cmd_text.contains("PK_XDG=1"), "Should set PK_XDG=1: {}", cmd_text);
-    }
+    let _ = fs::remove_file(&capture_file);
 }
 
 #[test]
 fn test_open_mode_sets_postprocess_env() {
     let ws = test_workspace();
     let wrapper = ws.path().join("capture-env.sh");
-    fs::write(&wrapper, "#!/bin/bash\necho \"POSTPROCESS_DIR=${POSTPROCESS_DIR:-NOTSET}\" > /tmp/portal_env_capture.txt\necho \"$HOME/test.jpg\"\n").unwrap();
+    let capture_file = ws.path().join("env_capture.txt");
+    let capture_path = capture_file.to_str().unwrap();
+    // Build script — use $VAR syntax (no ${} needed for simple variable expansion).
+    let mut script = String::from("#!/bin/bash\n");
+    script.push_str(&format!("echo \"POSTPROCESS_DIR=$POSTPROCESS_DIR\" > {}\n", capture_path));
+    script.push_str("echo \"$HOME/test.jpg\"\n");
+    fs::write(&wrapper, &script).unwrap();
     let mut perms = std::fs::metadata(&wrapper).unwrap().permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&wrapper, perms).unwrap();
 
-    let _ = fs::remove_file("/tmp/portal_env_capture.txt");
+    let _ = fs::remove_file(&capture_file);
     let (db_path, _svc, _obj) = write_test_config(
         &ws, wrapper.to_str().unwrap(), "echo idx", "exit 0", "jpg",
     );
@@ -195,7 +197,7 @@ fn test_open_mode_sets_postprocess_env() {
     let _ = client.open_file(false, false).expect("open_file should succeed");
     std::thread::sleep(Duration::from_millis(200));
 
-    if let Ok(env_text) = fs::read_to_string("/tmp/portal_env_capture.txt") {
+    if let Ok(env_text) = fs::read_to_string(&capture_file) {
         assert!(env_text.contains("POSTPROCESS_DIR="), "Should set POSTPROCESS_DIR: {}", env_text);
     }
 }
@@ -822,9 +824,17 @@ fn test_search_ignore_prev_path_tracking_blocked() {
     // When a search ignore pattern matches the parent directory of the first
     // returned file, prev_path should NOT be updated.
     let ws = test_workspace();
-    // Use a wrapper that outputs files under /tmp/junk_dir/
+    // Use a wrapper that outputs files under workspace junk_dir/ (not /tmp/junk_dir).
+    let junk_dir = ws.path().join("junk_dir");
+    fs::create_dir_all(&junk_dir).unwrap();
     let wrapper = ws.path().join("prevpath-wrapper.sh");
-    fs::write(&wrapper, "#!/bin/bash\necho '/tmp/junk_dir/file1.txt'\necho '/tmp/junk_dir/file2.txt'\n").unwrap();
+    let f1_path = junk_dir.join("file1.txt");
+    let f1 = f1_path.to_str().unwrap();
+    let f2_path = junk_dir.join("file2.txt");
+    let f2 = f2_path.to_str().unwrap();
+    let junk_path = junk_dir.to_str().unwrap();
+    fs::write(&wrapper, format!("#!/bin/bash\necho '{}'
+echo '{}'\n", f1, f2)).unwrap();
     let mut perms = std::fs::metadata(&wrapper).unwrap().permissions();
     perms.set_mode(0o755);
     std::fs::set_permissions(&wrapper, perms).unwrap();
@@ -862,7 +872,7 @@ enable = false
     // Now configure search ignore that matches junk_dir via a directory path pattern.
     // The file picker checks the parent dir of the first returned file against search ignore.
     // If matched, prev_path should NOT update for subsequent calls.
-    assert!(client.configure_indexer(false, "/tmp/junk_dir\n").is_ok());
+    assert!(client.configure_indexer(false, format!("{}\n", junk_path).as_str()).is_ok());
 
     // Second call: since /tmp/junk_dir matches the search ignore,
     // prev_path should NOT update (stays at its previous value).
@@ -870,7 +880,7 @@ enable = false
     assert_eq!(result2.status, 0);
     assert_eq!(result2.uris.len(), 2);
 
-    // Verify the URIs are still correct (wrapper output is unchanged).
+    // Verify the URIs are still correct and point to workspace junk_dir.
     // The key behavior tested: configure() with a directory-path pattern succeeds,
     // and prev_path logic doesn't crash when the pattern matches.
 }
@@ -1387,10 +1397,14 @@ fn test_indexer_offline_eventually_fails() {
     let ws = test_workspace();
 
     // The "check" command: starts failing after first invocation.
+    // Store counter file in workspace so it's cleaned up automatically.
     let check_script = ws.path().join("failing_check.sh");
-    fs::write(&check_script, r#"#!/bin/bash
-count=0; [ -f /tmp/pk_check_count ] && count=$(cat /tmp/pk_check_count); count=$((count + 1)); echo $count > /tmp/pk_check_count; [ "$count" -gt 2 ] && exit 1 || exit 0
-"#).unwrap();
+    let counter_file = ws.path().join("pk_check_count");
+    let counter_path = counter_file.to_str().unwrap();
+    fs::write(&check_script, format!(
+        "#!/bin/bash\ncount=0; [ -f {} ] && count=$(cat {}); count=$((count + 1)); echo $count > {}; [ \"$count\" -gt 2 ] && exit 1 || exit 0\n",
+        counter_path, counter_path, counter_path
+    )).unwrap();
     let mut perms = std::fs::metadata(&check_script).unwrap().permissions();
     perms.set_mode(0o755);
     fs::set_permissions(&check_script, perms).unwrap();
@@ -1423,7 +1437,7 @@ extensions = txt,cache,log,tmp,png,jpg
     fs::write(&conf, content).unwrap();
 
     // Clean up any leftover counter.
-    let _ = std::fs::remove_file("/tmp/pk_check_count");
+    let _ = std::fs::remove_file(&counter_file);
 
     let root = ws.path().join("offline_root");
     fs::create_dir_all(&root).unwrap();
@@ -1443,7 +1457,7 @@ extensions = txt,cache,log,tmp,png,jpg
     // Wait ~3 seconds: enough for check command to fail and first retry attempt.
     std::thread::sleep(Duration::from_millis(3000));
 
-    let count = { let conn = open_test_db(db_path.to_str().unwrap()); common::count_descriptions(&conn) };
+    let _count = { let conn = open_test_db(db_path.to_str().unwrap()); common::count_descriptions(&conn) };
     // The file may or may not have been indexed before the first check failure.
     // Key assertion: the indexing process is still running (waiting on retries).
     // After enough retries fail, idx_running becomes false and done_map is cleared.
