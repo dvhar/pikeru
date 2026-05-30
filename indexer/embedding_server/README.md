@@ -12,6 +12,19 @@ outputs raw embedding vectors — enabling semantic search in pikeru.
   queries into the same 512-dim space.
 - Both models are loaded once at startup and reused for every request.
 
+### CLI options
+
+```
+Usage: embedding-server [OPTIONS]
+  --port PORT       Port to listen on (default: 6285)
+  --cache-dir DIR   Directory to store downloaded models
+                   (default: $FASTEMBED_CACHE_DIR or .fastembed_cache)
+```
+
+Models are downloaded from HuggingFace on first run and cached in `--cache-dir`
+(or `$FASTEMBED_CACHE_DIR` / `$HF_HOME` if set). Subsequent starts use the cached
+models without network access.
+
 ### HTTP endpoints
 
 | Method | Endpoint       | Body                     | Response                            |
@@ -23,16 +36,29 @@ outputs raw embedding vectors — enabling semantic search in pikeru.
 ### CLI client — embed_indexer.py
 
 ```bash
+# Image indexing
 python3 embed_indexer.py http://127.0.0.1:6285 /path/to/image.jpg
+
+# Text search query
+python3 embed_indexer.py http://127.0.0.1:6285 "query:a cat sitting on a wall"
 ```
 
-Prints raw f32 bytes (little-endian, 512 × 4 = 2048 bytes) to stdout for the
-portal's indexing pipeline. Mirrors the `img_indexer.py` interface exactly.
+Writes a 4-byte header (u16 dim + u16 float bit width, little-endian) followed by
+the raw embedding vector bytes to stdout. On TTY, prints a human-readable preview
+instead. Exits 1 with message to stderr on failure.
 
-### Test client - test_client.python3
+### Test client — test_client.py
 
-Take 2 flags, only one is needed both both can be used.
--t <text>: hits the /embed/text endpoint with the given text arguemnt
--f <filepath>: hits the /embed/image endpoint with the given image data
-Each will print the first few floats of the embedding vector.
-If both are used, it will print the dot product of their response vectors.
+```
+python3 test_client.py -t "some text query"
+python3 test_client.py -f /path/to/image.jpg
+python3 test_client.py -t "text1" -T "text2"
+python3 test_client.py -t "text" -f /path/to/image.jpg
+```
+
+- `-t <text>`: hits /embed/text with the given text
+- `-T <text>`: second text query for comparison
+- `-f <filepath>`: hits /embed/image with the given image data
+
+With one flag, prints the first 8 floats of the embedding. With two flags, prints
+the dot product of their response vectors.

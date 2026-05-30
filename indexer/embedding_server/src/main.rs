@@ -1,4 +1,4 @@
-//! Embedding server for pikeru semantic search - async TCP with fastembed CLIP.
+//! Embedding server for pikeru semantic search — async TCP with fastembed CLIP.
 //! Serves 512-dim CLIP embeddings for images and text.
 //! Image uploads use multipart/form-data; text queries use JSON POST.
 
@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::Context;
-use fastembed::{ImageEmbedding, InitOptions, TextEmbedding};
+use fastembed::{get_cache_dir, ImageEmbedding, ImageInitOptions, InitOptions, TextEmbedding};
 use image::ImageFormat;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -377,38 +377,68 @@ async fn handle_text_request(state: Arc<AppState>, body: &[u8]) -> Vec<u8> {
 
 // ── Server ──────────────────────────────────────────────────────────────────
 
+/// Parse CLI arguments: --port PORT and --cache-dir DIR.
+fn parse_cli_args(args: &[String]) -> anyhow::Result<(String, PathBuf)> {
+    let mut host = HOST.to_string();
+    let mut cache_dir: PathBuf = get_cache_dir().into();
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--port" => {
+                let port = args.get(i + 1)
+                    .and_then(|p| p.parse::<u16>().ok())
+                    .context("--port requires a numeric value")?;
+                host = format!("127.0.0.1:{}", port);
+                i += 2;
+            }
+            "--cache-dir" => {
+                cache_dir = args
+                    .get(i + 1)
+                    .context("--cache-dir requires a path argument")?
+                    .clone()
+                    .into();
+                i += 2;
+            }
+            _ => {
+                eprintln!("Unknown argument: {}", args[i]);
+                eprintln!("Usage: embedding-server [OPTIONS]");
+                eprintln!("  --port PORT       Port to listen on (default: 6285)");
+                eprintln!("  --cache-dir DIR   Directory to store downloaded models");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    Ok((host, cache_dir))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() > 1 && (args[1] == "--help" || args[1] == "-h") {
-        eprintln!("Usage: embedding-server [--port PORT]");
-        eprintln!("  Starts the HTTP embedding server (default port 6285).");
+        eprintln!("Usage: embedding-server [OPTIONS]");
+        eprintln!("Options:");
+        eprintln!("  --port PORT       Port to listen on (default: 6285)");
+        eprintln!("  --cache-dir DIR   Directory to store downloaded models");
+        eprintln!("                   (default: $FASTEMBED_CACHE_DIR or .fastembed_cache)");
         return Ok(());
     }
 
-    let host = match args.get(1..=2) {
-        Some(args) if args[0] == "--port" => {
-            let port = args.get(1).and_then(|p| p.parse::<u16>().ok()).unwrap_or(6285);
-            format!("127.0.0.1:{}", port)
-        }
-        Some(_args) => {
-            eprintln!("Usage: embedding-server [--port PORT]");
-            std::process::exit(1);
-        }
-        _ => HOST.to_string(),
-    };
+    let (host, cache_dir) = parse_cli_args(&args)?;
 
     println!("Loading CLIP models...");
     let state: Arc<AppState> = Arc::new(AppState {
         image_encoder: StdMutex::new(
-            ImageEmbedding::try_new(Default::default())
+            ImageEmbedding::try_new(ImageInitOptions::default().with_cache_dir(cache_dir.clone()))
                 .context("failed to load CLIP vision model")?,
         ),
         text_encoder: StdMutex::new(
             TextEmbedding::try_new(InitOptions::new(
                 fastembed::EmbeddingModel::ClipVitB32,
-            ))
+            )
+            .with_cache_dir(cache_dir))
             .context("failed to load CLIP text model")?,
         ),
     });
