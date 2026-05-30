@@ -22,8 +22,9 @@ use std::cmp::Ordering;
 use tokio::{
     sync::Mutex as AsyncMtx,
     time::{sleep, Duration, Instant},
-};use log::{info,trace,error,debug,warn,LevelFilter};
-use env_logger::Builder;
+};extern crate chrono;
+mod logger;
+use crate::logger::{LevelFilter, Builder};
 use ctrlc;
 use ignore::{gitignore,Match};
 
@@ -602,12 +603,7 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
             "trace" => LevelFilter::Trace,
             _ => { eprintln!("Unknown log level:{}. Defaulting to 'info'", log_level); LevelFilter::Info },
         };
-        Builder::new()
-            .filter_level(ll)
-            .filter_module("zbus", LevelFilter::Off)
-            .filter_module("zbus_proxy", LevelFilter::Off)
-            .filter_module("smol_net", LevelFilter::Off)
-            .init();
+        Builder::new().filter_level(ll).init();
         eprintln!("Log level: {}", ll);
         if !Path::new(&fp_cmd).is_file() {
             eprintln!("No filepicker executable found: {}", fp_cmd);

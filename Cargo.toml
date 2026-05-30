@@ -32,8 +32,6 @@ fuzzy-matcher = "0.3.7"
 zbus = { version = "4.2.2", features = ["tokio"] }
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 ignore = "0.4.22"
-log = "0.4.21"
-env_logger = "0.11.3"
 ctrlc = { version = "3.4.4", features = ["termination"] }
 iced_gif = "0.5"
 resvg = "0.42.0"
