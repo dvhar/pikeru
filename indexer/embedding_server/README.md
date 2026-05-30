@@ -17,11 +17,8 @@ outputs raw embedding vectors — enabling semantic search in pikeru.
 | Method | Endpoint       | Body                     | Response                            |
 |--------|----------------|--------------------------|-------------------------------------|
 | GET    | `/health`      | —                        | `{"status": "ok"}`                  |
-| POST   | `/embed/image` | `{"path_b64": "..."}`    | `{"dim": 512, "embedding": [...]}` |
-| POST   | `/embed/text`  | `{"text": "query"}`      | `{"dim": 512, "embedding": [...]}` |
-
-The server accepts images either as a file path (`path`) or base64-encoded bytes
-(`path_b64`). The Python `embed_indexer.py` script sends base64.
+| POST   | `/embed/image` | multipart/form-data with image binary and filename | binary response (512-len f32 array)
+| POST   | `/embed/text`  | `{"text": "query"}`      | binary response (512-len f32 array)
 
 ### CLI client — embed_indexer.py
 
@@ -32,32 +29,10 @@ python3 embed_indexer.py http://127.0.0.1:6285 /path/to/image.jpg
 Prints raw f32 bytes (little-endian, 512 × 4 = 2048 bytes) to stdout for the
 portal's indexing pipeline. Mirrors the `img_indexer.py` interface exactly.
 
-### How to install it
+### Test client - test_client.python3
 
-```bash
-sudo ./install.sh
-```
-
-This builds the Rust project, installs the binary to `/opt/embedding_server`, and
-creates a systemd service called `embedding-server`. The first run downloads CLIP
-models from HuggingFace (~250MB total).
-
-### How to use it with pikeru
-
-Update your portal config (`~/.config/xdg-desktop-portal-pikeru/config`):
-
-```ini
-[indexer]
-enable = true
-
-cmd = python3 /opt/embedding_server/embed_indexer.py http://127.0.0.1:6285
-check = curl -f http://127.0.0.1:6285/health
-
-extensions = png,jpg,jpeg,gif,webp,tiff,bmp
-```
-
-### Requirements
-
-- Rust toolchain (rustc + cargo)
-- Python 3 (for `embed_indexer.py`)
-- Internet access on first run (downloads CLIP models from HuggingFace Hub)
+Take 2 flags, only one is needed both both can be used.
+-t <text>: hits the /embed/text endpoint with the given text arguemnt
+-f <filepath>: hits the /embed/image endpoint with the given image data
+Each will print the first few floats of the embedding vector.
+If both are used, it will print the dot product of their response vectors.

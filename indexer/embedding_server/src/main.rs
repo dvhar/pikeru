@@ -1,197 +1,460 @@
-//! Embedding server for pikeru semantic search.
-//!
-//! Similar to the caption_server, but serves raw CLIP embeddings instead of text captions.
-//! Images are encoded with a vision model; user queries are encoded with the matching
-//! text model — both into the same shared vector space.
-//!
-//! Long-running HTTP server with /health, /embed/image, /embed/text endpoints.
-//! The Python embed_indexer.py script is the CLI client that invokes this server.
+//! Embedding server for pikeru semantic search - async TCP with fastembed CLIP.
+//! Serves 512-dim CLIP embeddings for images and text.
+//! Image uploads use multipart/form-data; text queries use JSON POST.
 
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex as StdMutex};
 
-use anyhow::{Context, Result};
-use axum::{
-    extract::State,
-    http::StatusCode,
-    routing::{get, post},
-    Json, Router,
-};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-use fastembed::{InitOptions, ImageEmbedding, TextEmbedding};
-use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use anyhow::Context;
+use fastembed::{ImageEmbedding, InitOptions, TextEmbedding};
+use image::ImageFormat;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+
+const HOST: &str = "127.0.0.1:6285";
 
 // ── Shared state ────────────────────────────────────────────────────────────
 
 struct AppState {
-    image_encoder: ImageEmbedding,
-    text_encoder: TextEmbedding,
+    image_encoder: StdMutex<ImageEmbedding>,
+    text_encoder: StdMutex<TextEmbedding>,
 }
 
-#[derive(Deserialize)]
-struct EmbedImageRequest {
-    /// Filesystem path to an image (for direct HTTP calls).
-    path: Option<String>,
-    /// Base64-encoded image bytes + explicit extension.
-    #[serde(default)]
-    path_b64: Option<String>,
-    /// Image file extension — required when using path_b64, ignored for path.
-    ext: Option<String>,
+// ── Response helpers ────────────────────────────────────────────────────────
+
+/// Serialize f32 slice to little-endian bytes.
+fn embed_to_bytes(embedding: &[f32]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(embedding.len() * 4);
+    for &v in embedding {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+    buf
 }
 
-/// Valid image extensions that fastembed/ort can decode.
+/// Minimal HTTP response builder. Always closes connection after response.
+fn http_response(status: u16, status_text: &str, content_type: &str, body: &[u8]) -> Vec<u8> {
+    let mut resp = Vec::new();
+    resp.extend_from_slice(format!("HTTP/1.1 {} {}\r\n", status, status_text).as_bytes());
+    resp.extend_from_slice(b"Content-Length: ");
+    resp.extend_from_slice(body.len().to_string().as_bytes());
+    resp.extend_from_slice(b"\r\n");
+    resp.extend_from_slice(b"Content-Type: ");
+    resp.extend_from_slice(content_type.as_bytes());
+    resp.extend_from_slice(b"\r\n");
+    resp.extend_from_slice(b"Connection: close\r\n");
+    resp.extend_from_slice(b"\r\n");
+    resp.extend_from_slice(body);
+    resp
+}
+
+fn json_error(msg: &str) -> Vec<u8> {
+    let body = serde_json::json!({"error": msg}).to_string();
+    http_response(400, "Bad Request", "application/json", body.as_bytes())
+}
+
+// ── Byte-level helpers ──────────────────────────────────────────────────────
+
+/// Find a byte pattern in a byte slice.
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Find the byte offset of the header/body separator (\r\n\r\n) in raw bytes.
+fn find_header_end(data: &[u8]) -> Option<usize> {
+    const SEP: &[u8] = b"\r\n\r\n";
+    for i in 0..=data.len().saturating_sub(SEP.len()) {
+        if data[i..i + SEP.len()] == *SEP {
+            return Some(i);
+        }
+    }
+    None
+}
+
+// ── Multipart parser ────────────────────────────────────────────────────────
+
+/// Parse multipart/form-data to extract image data and filename.
+/// Uses byte-level splitting to handle binary image data that may not be valid UTF-8.
+fn parse_multipart(body: &[u8], boundary: &str) -> anyhow::Result<(String, Vec<u8>)> {
+    let full_boundary = format!("--{}", boundary);
+    let sep_bytes = full_boundary.as_bytes();
+
+    // Find all boundary positions
+    let mut split_points = Vec::new();
+    let mut search_start = 0;
+    while let Some(pos) = body[search_start..].windows(sep_bytes.len()).position(|w| w == sep_bytes)
+    {
+        split_points.push(search_start + pos);
+        search_start = search_start + pos + sep_bytes.len();
+    }
+
+    if split_points.is_empty() {
+        anyhow::bail!("No boundary found in multipart data");
+    }
+
+    let mut filename = String::new();
+    let mut image_data: Option<Vec<u8>> = None;
+
+    for i in 0..split_points.len() {
+        let part_start = split_points[i] + sep_bytes.len();
+        let part_end = if i + 1 < split_points.len() {
+            split_points[i + 1]
+        } else {
+            body.len()
+        };
+
+        if part_start >= part_end {
+            continue;
+        }
+
+        let mut part = &body[part_start..part_end];
+
+        // Strip trailing -- (closing boundary)
+        if part.ends_with(b"--") {
+            part = &part[..part.len() - 2];
+        }
+        // Trim leading/trailing \r\n
+        part = part.strip_prefix(b"\r\n").unwrap_or(part);
+        part = if part.ends_with(b"\r\n") {
+            &part[..part.len() - 2]
+        } else {
+            part
+        };
+
+        if part.is_empty() {
+            continue;
+        }
+
+        // Find \r\n\r\n (header/body separator) using byte search
+        if let Some(header_end) = find_bytes(part, b"\r\n\r\n") {
+            let header_part = &part[..header_end];
+
+            // Check for filename= in the headers (byte-level search)
+            if let Some(fnpos) = find_bytes(header_part, b"filename=") {
+                let after = &header_part[fnpos + 9..];
+                // Skip opening quote if present
+                let after = if after.first() == Some(&b'"') {
+                    &after[1..]
+                } else {
+                    after
+                };
+                let end_pos = after.iter().position(|&b| b == b'"' || b == b'\r' || b == b'\n');
+                let end_pos = end_pos.unwrap_or(after.len());
+                filename = String::from_utf8_lossy(&after[..end_pos]).to_string();
+            }
+
+            // Image data is everything after \r\n\r\n
+            let data = part[header_end + 4..].to_vec();
+            image_data = Some(data);
+        }
+    }
+
+    if filename.is_empty() {
+        anyhow::bail!("No filename found in multipart data");
+    }
+    let image_data =
+        image_data.ok_or_else(|| anyhow::anyhow!("No image data found in multipart body"))?;
+
+    Ok((filename, image_data))
+}
+
+// ── HTTP request parser ─────────────────────────────────────────────────────
+
+/// Parse a simple HTTP request, returning (method, path, body, content_type, content_length).
+/// Only the header portion is parsed as UTF-8; the body is kept as raw bytes.
+fn parse_request(raw: &[u8]) -> anyhow::Result<(String, String, Vec<u8>, String, usize)> {
+    let header_end = find_header_end(raw).context("No header separator found")?;
+    let headers_end = header_end + 4;
+
+    let header_text = std::str::from_utf8(&raw[..header_end])?;
+    let mut lines = header_text.lines();
+
+    let request_line = lines.next().context("Empty request")?;
+    let parts: Vec<&str> = request_line.split_whitespace().collect();
+    if parts.len() < 2 {
+        anyhow::bail!("Malformed request line: {}", request_line);
+    }
+    let method = parts[0].to_string();
+    let path = parts[1].to_string();
+
+    let mut content_type = String::new();
+    let mut content_length = 0usize;
+    for line in lines {
+        if let Some(colon) = line.find(':') {
+            let key = line[..colon].trim().to_lowercase();
+            let val = line[colon + 1..].trim();
+            match key.as_str() {
+                "content-type" => content_type = val.to_string(),
+                "content-length" => content_length = val.parse().unwrap_or(0),
+                _ => {}
+            }
+        }
+    }
+
+    let body = raw[headers_end..].to_vec();
+    Ok((method, path, body, content_type, content_length))
+}
+
+/// Read HTTP request from a stream: first the headers, then the body (based on Content-Length).
+async fn read_request(socket: &mut tokio::net::TcpStream) -> anyhow::Result<Vec<u8>> {
+    let mut raw = Vec::new();
+    loop {
+        let mut chunk = vec![0u8; 8192];
+        let n = socket.read(&mut chunk).await?;
+        if n == 0 {
+            break; // EOF
+        }
+        raw.extend_from_slice(&chunk[..n]);
+
+        if let Some(header_end) = find_header_end(&raw) {
+            let header_bytes = &raw[..header_end];
+            if let Ok(text) = std::str::from_utf8(header_bytes) {
+                let mut content_length = 0usize;
+                for line in text.lines().skip(1) {
+                    if let Some(colon) = line.find(':') {
+                        let key = line[..colon].trim().to_lowercase();
+                        let val = line[colon + 1..].trim();
+                        if key == "content-length" {
+                            content_length = val.parse().unwrap_or(0);
+                        }
+                    }
+                }
+                let body_start = header_end + 4;
+                let already_read = raw.len().saturating_sub(body_start);
+                let remaining = content_length.saturating_sub(already_read);
+                if remaining > 0 {
+                    let mut body_buf = vec![0u8; remaining];
+                    socket.read_exact(&mut body_buf).await?;
+                    raw.extend_from_slice(&body_buf);
+                }
+                break;
+            }
+        }
+    }
+    Ok(raw)
+}
+
+// ── Image embedding ─────────────────────────────────────────────────────────
+
 const VALID_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "tif"];
 
-#[derive(Deserialize)]
-struct EmbedTextRequest {
-    text: String,
+fn valid_ext(ext: &str) -> bool {
+    VALID_EXTS.contains(&ext.to_lowercase().as_str())
 }
 
-#[derive(Serialize)]
-struct EmbedResponse {
-    dim: usize,
-    #[serde(with = "serde_f32_array")]
-    embedding: Vec<f32>,
+/// Detect image format from bytes.
+fn detect_image_format(bytes: &[u8]) -> Option<ImageFormat> {
+    image::guess_format(bytes).ok()
 }
 
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-}
+async fn handle_image_request(
+    state: Arc<AppState>,
+    body: &[u8],
+    content_type: &str,
+) -> Vec<u8> {
+    // Extract boundary from Content-Type
+    let boundary = content_type
+        .split("boundary=")
+        .nth(1)
+        .unwrap_or("----WebKitFormBoundary")
+        .trim();
 
-mod serde_f32_array {
-    use serde::{self, Serializer};
-
-    pub fn serialize<S>(vals: &[f32], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        use serde::ser::SerializeSeq;
-        let mut seq = serializer.serialize_seq(Some(vals.len()))?;
-        for v in vals {
-            seq.serialize_element(v)?;
-        }
-        seq.end()
-    }
-}
-
-// ── Handlers ────────────────────────────────────────────────────────────────
-
-async fn health(_state: State<Arc<Mutex<AppState>>>) -> Json<HealthResponse> {
-    Json(HealthResponse { status: "ok" })
-}
-
-async fn embed_image(
-    state: State<Arc<Mutex<AppState>>>,
-    Json(req): Json<EmbedImageRequest>,
-) -> Result<Json<EmbedResponse>, (StatusCode, String)> {
-    let mut guard = state.0.lock().await;
-
-    let file_path: String = match (&req.path, &req.path_b64) {
-        (Some(p), _) => p.clone(),
-        (None, Some(b64)) => {
-            // Caller must provide an explicit extension for the temp file.
-            let ext = req.ext.as_deref().ok_or_else(|| {
-                (StatusCode::BAD_REQUEST, "path_b64 requires 'ext' field".into())
-            })?;
-            if !VALID_EXTS.contains(&ext.to_lowercase().as_str()) {
-                return Err((StatusCode::BAD_REQUEST,
-                    format!("unsupported extension '{}'", ext)));
-            }
-            let bytes = STANDARD.decode(b64).map_err(|e| {
-                (StatusCode::BAD_REQUEST, format!("bad base64: {e}"))
-            })?;
-            let p = format!("/tmp/pikeru_emb_{}.{}", std::process::id(), ext);
-            if std::fs::write(&p, &bytes).is_err() {
-                return Err((StatusCode::INTERNAL_SERVER_ERROR,
-                    "cannot write temp image".into()));
-            }
-            p
-        }
-        _ => return Err((StatusCode::BAD_REQUEST,
-            "missing 'path' or 'path_b64' field".into())),
+    let (filename, image_bytes) = match parse_multipart(body, boundary) {
+        Ok(data) => data,
+        Err(e) => return json_error(&format!("parse multipart: {}", e)),
     };
 
-    eprintln!("Embedding: {}", file_path);
-    let embeddings = guard.image_encoder.embed(&[&file_path], None)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
-            format!("embedding failed: {e}")))?;
-    if embeddings.is_empty() {
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, "empty result".into()));
+    if image_bytes.is_empty() {
+        return json_error("empty image data");
     }
 
-    let emb = &embeddings[0];
-    Ok(Json(EmbedResponse { dim: emb.len(), embedding: emb.clone() }))
+    // Validate extension
+    let ext = filename
+        .rsplit('.')
+        .next()
+        .map(|s| s.to_lowercase());
+    if let Some(ref ext) = ext {
+        if !valid_ext(ext) {
+            return json_error(&format!("unsupported extension '{}'", ext));
+        }
+    }
+
+    // Run embedding in a blocking task (CPU-intensive, needs &mut encoder)
+    let fn_name = filename;
+    let img_bytes = image_bytes;
+
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<f32>> {
+        let mut encoder = state.image_encoder.lock().map_err(|e| anyhow::anyhow!("mutex poison: {}", e))?;
+        let tmp_path = create_tmp_image_path(&img_bytes, &fn_name)?;
+        let embeddings = encoder.embed(&[tmp_path.as_path()], None)?;
+        let emb = embeddings
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("empty embedding result"))?;
+        let _ = std::fs::remove_file(&tmp_path);
+        Ok(emb)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(embedding)) => {
+            let bytes = embed_to_bytes(&embedding);
+            http_response(200, "OK", "application/octet-stream", &bytes)
+        }
+        Ok(Err(e)) => json_error(&format!("embedding failed: {}", e)),
+        Err(e) => json_error(&format!("task join error: {}", e)),
+    }
 }
 
-async fn embed_text(
-    state: State<Arc<Mutex<AppState>>>,
-    Json(req): Json<EmbedTextRequest>,
-) -> Result<Json<EmbedResponse>, (StatusCode, String)> {
-    let mut guard = state.0.lock().await;
-    let embeddings = guard.text_encoder.embed(&[&req.text], None)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR,
-            format!("embedding failed: {e}")))?;
-    if embeddings.is_empty() {
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, "embedding failed".into()));
+/// Create a temp file path for an image, returning the path and writing data to it.
+fn create_tmp_image_path(image_bytes: &[u8], filename: &str) -> anyhow::Result<PathBuf> {
+    let pid = std::process::id();
+    let ext = filename
+        .rsplit('.')
+        .next()
+        .map(|s| s.to_lowercase())
+        .filter(|s| valid_ext(s));
+
+    let tmp_path = if let Some(ref ext) = ext {
+        PathBuf::from(format!("/tmp/pikeru_emb_{pid}.{ext}"))
+    } else {
+        match detect_image_format(image_bytes) {
+            Some(ImageFormat::Png) => PathBuf::from(format!("/tmp/pikeru_emb_{pid}.png")),
+            Some(ImageFormat::Jpeg) => PathBuf::from(format!("/tmp/pikeru_emb_{pid}.jpg")),
+            Some(ImageFormat::WebP) => PathBuf::from(format!("/tmp/pikeru_emb_{pid}.webp")),
+            Some(ImageFormat::Gif) => PathBuf::from(format!("/tmp/pikeru_emb_{pid}.gif")),
+            Some(ImageFormat::Tiff) => PathBuf::from(format!("/tmp/pikeru_emb_{pid}.tif")),
+            _ => PathBuf::from(format!("/tmp/pikeru_emb_{pid}.png")),
+        }
+    };
+
+    std::fs::write(&tmp_path, image_bytes)
+        .with_context(|| format!("failed to write temp file {}", tmp_path.display()))?;
+    Ok(tmp_path)
+}
+
+// ── Text embedding ──────────────────────────────────────────────────────────
+
+async fn handle_text_request(state: Arc<AppState>, body: &[u8]) -> Vec<u8> {
+    #[derive(serde::Deserialize)]
+    struct TextRequest {
+        text: String,
     }
 
-    let emb = &embeddings[0];
-    Ok(Json(EmbedResponse { dim: emb.len(), embedding: emb.clone() }))
+    let text = match serde_json::from_slice::<TextRequest>(body) {
+        Ok(req) => req.text,
+        Err(e) => return json_error(&format!("bad JSON: {}", e)),
+    };
+
+    if text.is_empty() {
+        return json_error("text field is empty");
+    }
+
+    // Run embedding in a blocking task (CPU-intensive, needs &mut encoder)
+    let text_owned = text.clone();
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<f32>> {
+        let mut encoder = state.text_encoder.lock().map_err(|e| anyhow::anyhow!("mutex poison: {}", e))?;
+        let embeddings = encoder.embed(&[&text_owned], None)?;
+        let emb = embeddings
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("empty embedding result"))?;
+        Ok(emb)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(embedding)) => {
+            let bytes = embed_to_bytes(&embedding);
+            http_response(200, "OK", "application/octet-stream", &bytes)
+        }
+        Ok(Err(e)) => json_error(&format!("embedding failed: {}", e)),
+        Err(e) => json_error(&format!("task join error: {}", e)),
+    }
 }
 
 // ── Server ──────────────────────────────────────────────────────────────────
 
-async fn run_server(addr: SocketAddr) -> Result<()> {
-    let state = Arc::new(Mutex::new(AppState {
-        image_encoder: ImageEmbedding::try_new(Default::default())
-            .context("failed to load CLIP vision model")?,
-        text_encoder: TextEmbedding::try_new(InitOptions::new(
-            fastembed::EmbeddingModel::ClipVitB32,
-        ))
-        .context("failed to load CLIP text model")?,
-    }));
-
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/embed/image", post(embed_image))
-        .route("/embed/text", post(embed_text))
-        .with_state(state);
-
-    eprintln!("embedding-server listening on {}", addr);
-    axum::serve(tokio::net::TcpListener::bind(addr).await?, app).await?;
-    Ok(())
-}
-
-// ── Entry point ─────────────────────────────────────────────────────────────
-
-fn print_usage() {
-    eprintln!("Usage: embedding-server --serve [--port PORT]");
-    eprintln!("  Starts the HTTP embedding server (default port 6285).");
-    eprintln!();
-    eprintln!("Use embed_indexer.py as the CLI client to encode image files.");
-}
-
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
-    match args.get(1).map(|s| s.as_str()) {
-        Some("--serve") => {
-            let port = args.iter().position(|a| a == "--port")
-                .and_then(|i| args.get(i + 1).and_then(|p| p.parse::<u16>().ok()))
-                .unwrap_or(6285);
-            let addr: SocketAddr = format!("127.0.0.1:{}", port).parse()?;
-            run_server(addr).await
+    if args.len() > 1 && (args[1] == "--help" || args[1] == "-h") {
+        eprintln!("Usage: embedding-server [--port PORT]");
+        eprintln!("  Starts the HTTP embedding server (default port 6285).");
+        return Ok(());
+    }
+
+    let host = match args.get(1..=2) {
+        Some(args) if args[0] == "--port" => {
+            let port = args.get(1).and_then(|p| p.parse::<u16>().ok()).unwrap_or(6285);
+            format!("127.0.0.1:{}", port)
         }
-        Some("--help") | Some("-h") => {
-            print_usage();
-            Ok(())
-        }
-        _ => {
-            print_usage();
+        Some(_args) => {
+            eprintln!("Usage: embedding-server [--port PORT]");
             std::process::exit(1);
         }
+        _ => HOST.to_string(),
+    };
+
+    println!("Loading CLIP models...");
+    let state: Arc<AppState> = Arc::new(AppState {
+        image_encoder: StdMutex::new(
+            ImageEmbedding::try_new(Default::default())
+                .context("failed to load CLIP vision model")?,
+        ),
+        text_encoder: StdMutex::new(
+            TextEmbedding::try_new(InitOptions::new(
+                fastembed::EmbeddingModel::ClipVitB32,
+            ))
+            .context("failed to load CLIP text model")?,
+        ),
+    });
+    println!("Models loaded.");
+
+    let listener = TcpListener::bind(&host).await.context("failed to bind TCP socket")?;
+    println!("Embedding server listening on {host}");
+
+    loop {
+        let (mut socket, _addr) = listener.accept().await?;
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            let raw = match read_request(&mut socket).await {
+                Ok(data) => data,
+                Err(e) => {
+                    eprintln!("Read error: {e}");
+                    return;
+                }
+            };
+
+            let response = match parse_request(&raw) {
+                Ok((method, path, body, content_type, _)) => {
+                    match (method.as_str(), path.as_str()) {
+                        ("GET", "/health") => {
+                            let json = serde_json::json!({"status": "ok"}).to_string();
+                            http_response(200, "OK", "application/json", json.as_bytes())
+                        }
+                        ("POST", "/embed/image") => {
+                            handle_image_request(Arc::clone(&state), &body, &content_type).await
+                        }
+                        ("POST", "/embed/text") => handle_text_request(Arc::clone(&state), &body).await,
+                        _ => {
+                            let body = serde_json::json!({"error": "not found"}).to_string();
+                            http_response(404, "Not Found", "application/json", body.as_bytes())
+                        }
+                    }
+                }
+                Err(e) => {
+                    let body = serde_json::json!({"error": e.to_string()}).to_string();
+                    http_response(400, "Bad Request", "application/json", body.as_bytes())
+                }
+            };
+
+            if let Err(e) = socket.write_all(&response).await {
+                eprintln!("Write error: {e}");
+            }
+        });
     }
 }

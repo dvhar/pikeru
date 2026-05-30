@@ -1,71 +1,92 @@
 #!/usr/bin/env python3
-# Embedding indexer for pikeru semantic search.
-# Invoked by xdg-desktop-portal-pikeru during indexing to generate CLIP embeddings
-# for image files. Outputs raw f32 bytes (little-endian) to stdout — the portal
-# reads these as a BLOB and stores them in SQLite.
-#
-# Usage:
-#   python3 embed_indexer.py http://127.0.0.1:6285 /path/to/image.jpg
-#
-# The server URL must point to the embedding-server HTTP daemon's /embed/image endpoint.
+"""Indexer client for the embedding server.
 
-import base64
-import json
+Uploads an image and writes the embedding to stdout as raw binary:
+    2 bytes: u16 LE — number of floats (e.g. 512)
+    2 bytes: u16 LE — bit width of each float (e.g. 32)
+    N bytes: the embedding vector data
+
+On success, exits 0. On failure, prints to stderr and exits 1.
+
+Usage:
+    python3 embed_indexer.py http://127.0.0.1:6285 /path/to/image.jpg
+"""
+
+import os
 import struct
 import sys
-from urllib import request, error
+import urllib.request
+import urllib.error
 
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: embed_indexer.py <server_url> <file_path>", file=sys.stderr)
-        quit(1)
+    if len(sys.argv) != 3:
+        print(f"Usage: {sys.argv[0]} <server_url> <image_path>", file=sys.stderr)
+        sys.exit(1)
 
-    url = sys.argv[1] + "/embed/image"
-    file_path = sys.argv[2]
+    base_url = sys.argv[1].rstrip("/")
+    image_path = sys.argv[2]
 
-    # Read the image file
-    try:
-        with open(file_path, "rb") as f:
-            img_bytes = f.read()
-    except Exception as e:
-        print(f"Error reading file: {e}", file=sys.stderr)
-        quit(1)
+    if not os.path.isfile(image_path):
+        print(f"Error: file not found: {image_path}", file=sys.stderr)
+        sys.exit(1)
 
-    # Send to embedding server — pass raw bytes as base64 so the server
-    # doesn't need to read from disk (avoids path/permission issues).
-    ext = file_path.rsplit('.', 1)[-1].lower() if '.' in file_path else "png"
-    b64 = base64.b64encode(img_bytes).decode("utf-8")
-    data = {"path_b64": b64, "ext": ext}
+    # Read image data
+    with open(image_path, "rb") as f:
+        image_data = f.read()
 
-    headers = {"accept": "application/json", "Content-Type": "application/json"}
-    req = request.Request(
+    # Build multipart form data
+    boundary = "----EmbedBoundary"
+    filename = os.path.basename(image_path)
+
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        f"Content-Type: application/octet-stream\r\n"
+        f"\r\n"
+    ).encode("utf-8")
+    body += image_data
+    body += f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    url = f"{base_url}/embed/image"
+    req = urllib.request.Request(
         url,
-        data=json.dumps(data).encode("utf-8"),
-        headers=headers,
-        method="POST",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
     )
 
     try:
-        with request.urlopen(req) as response:
-            resp_text = response.read().decode("utf-8")
-            result = json.loads(resp_text)
-
-            if "embedding" not in result:
-                print(f"Unexpected response: {resp_text}", file=sys.stderr)
-                quit(1)
-
-            emb = result["embedding"]  # list of f32 values from JSON
-
-            # Pack as raw little-endian f32 bytes for the portal to store as BLOB
-            sys.stdout.buffer.write(struct.pack(f"{len(emb)}f", *emb))
-
-    except error.HTTPError as e:
-        print(f"HTTP error {e.code}: {e.read().decode()}", file=sys.stderr)
-        quit(1)
+        with urllib.request.urlopen(req) as resp:
+            raw = resp.read()
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")
+        print(f"Error {e.code}: {err_body}", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
-        quit(1)
+        sys.exit(1)
+
+    # The server returns raw embedding bytes. We prepend a header:
+    #   u16 LE: number of floats
+    #   u16 LE: bit width of each float (32 for f32)
+    # The dim is inferred from the byte count, assuming f32 (4 bytes each).
+    # If the response length is not divisible by 4, it's not a valid vector.
+    if len(raw) == 0:
+        print("Error: empty response from server", file=sys.stderr)
+        sys.exit(1)
+    if len(raw) % 4 != 0:
+        print(
+            f"Error: response length {len(raw)} is not a multiple of 4 bytes (expected f32 vector)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    dim = len(raw) // 4
+    bit_width = 32
+
+    # Write header + raw vector to stdout
+    sys.stdout.buffer.write(struct.pack("<HH", dim, bit_width))
+    sys.stdout.buffer.write(raw)
 
 
 if __name__ == "__main__":
