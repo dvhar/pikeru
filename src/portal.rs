@@ -63,7 +63,7 @@ fn build_cumulative_gitignore(start_dir: &Path) -> gitignore::Gitignore {
 struct IndexerInner {
     shtate: Arc<AsyncMtx<Shtate>>,
     con: Arc<std::sync::Mutex<rusqlite::Connection>>,
-    done_map: AsyncMtx<HashMap<String,bool>>,
+    done_map: HashMap<String,bool>,
     cmd: String,
     check: String,
     exts: Vec<&'static str>,
@@ -93,7 +93,7 @@ impl Indexer {
         let mut inner = self.write().await;
         if !inner.indexer_enabled { return; }
         inner.idx_running = false;
-        inner.done_map.lock().await.clear();
+        inner.done_map.clear();
         info!("Cleared indexing queue");
     }
     async fn update(&self, dirs: Vec<String>) {
@@ -106,8 +106,8 @@ impl Indexer {
         {
             let mut inner = self.write().await;
             inner.idx_running = true;
-            inner.done_map.lock().await.clear();
-            for dir in dirs { inner.done_map.lock().await.entry(dir).or_default(); }
+            inner.done_map.clear();
+            for dir in dirs { inner.done_map.entry(dir).or_default(); }
         }
         // Spawn a new loop only if one wasn't already running.
         if !already_running {
@@ -125,7 +125,6 @@ impl Indexer {
             let mut inner = self.write().await;
             inner.respect_gitignore = respect_gitignore;
             inner.shtate.lock().await.current_searchignore = search_ignore;
-            drop(inner);
         }
         // Rebuild the ignore matcher.
         self.update_ignore().await;
@@ -155,12 +154,10 @@ impl Indexer {
                 break;
             }
             // Pick the next unprocessed dir.
-            let inner = self.read().await;
-            let to_process: Vec<String> = inner.done_map.lock().await.iter()
+            let to_process: Vec<String> = self.read().await.done_map.iter()
                 .filter(|(_, done)| !*done)
                 .map(|(dir, _)| dir.clone())
                 .collect();
-            drop(inner);
             if to_process.is_empty() {
                 debug!("Indexing batch finished");
                 self.write().await.idx_running = false;
@@ -170,12 +167,12 @@ impl Indexer {
                 let result = self.update_dir(dir).await;
                 if result == DirResult::Fail {
                     error!("Indexing batch failed");
-                    self.write().await.done_map.lock().await.clear();
+                    self.write().await.done_map.clear();
                     self.write().await.idx_running = false;
                     break;
                 }
                 // Mark this dir as done.
-                self.write().await.done_map.lock().await.entry(dir.clone()).and_modify(|v| *v = true);
+                self.write().await.done_map.entry(dir.clone()).and_modify(|v| *v = true);
             }
         }
     }
@@ -200,7 +197,7 @@ impl Indexer {
         Self(Arc::new(tokio::sync::RwLock::new(IndexerInner {
             shtate,
             con,
-            done_map: AsyncMtx::new(HashMap::new()),
+            done_map: HashMap::new(),
             cmd: take(&mut config.indexer_cmd),
             check: take(&mut config.indexer_check),
             exts: Box::new(take(&mut config.indexer_exts)).leak().split(',').collect(),
@@ -234,8 +231,7 @@ impl Indexer {
     }
 
     async fn indexer_online(&self) -> bool {
-        let inner = self.read().await;
-        match tokio::process::Command::new("sh").arg("-c").arg(&inner.check).output().await {
+        match tokio::process::Command::new("sh").arg("-c").arg(&self.read().await.check).output().await {
             Ok(out) => out.status.success(),
             Err(_) => false,
         }
@@ -290,9 +286,7 @@ impl Indexer {
         if stat == Entry::Done {
             return true;
         }
-        let inner = self.read().await;
-        let cmd = format!("{} {}", inner.cmd, shquote(path.to_string_lossy().as_ref()));
-        drop(inner);
+        let cmd = format!("{} {}", self.read().await.cmd, shquote(path.to_string_lossy().as_ref()));
         match tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await {
             Ok(out) => {
                 if !out.status.success() || out.stdout.len() == 0 {
@@ -311,13 +305,11 @@ impl Indexer {
     }
 
     async fn update_dir(self: &Self, dir: &String) -> DirResult {
-        let inner = self.read().await;
-        let local_ignore = if inner.respect_gitignore {
+        let local_ignore = if self.read().await.respect_gitignore {
             build_cumulative_gitignore(Path::new(dir))
         } else {
             gitignore::Gitignore::empty()
         };
-        drop(inner);
         if let Match::Ignore(_) = local_ignore.matched(dir, true) {
             return DirResult::Ignore;
         }
@@ -370,8 +362,8 @@ impl Indexer {
 
 
 struct FilePicker {
-    prev_path: AsyncMtx<String>,
-    prev_path_set_at: AsyncMtx<SystemTime>,
+    prev_path: String,
+    prev_path_set_at: SystemTime,
     postproc_dir: String,
     postprocessor: String,
     def_save_dir: String,
@@ -631,8 +623,8 @@ impl FilePicker {
 
     fn new(conf: &mut Config, shtate: Arc<AsyncMtx<Shtate>>, db: Arc<std::sync::Mutex<rusqlite::Connection>>) -> Self {
         Self {
-            prev_path: AsyncMtx::new(conf.home.clone()),
-            prev_path_set_at: AsyncMtx::new(SystemTime::now()),
+            prev_path: conf.home.clone(),
+            prev_path_set_at: SystemTime::now(),
             postproc_dir: take(&mut conf.postproc_dir),
             postprocessor: take(&mut conf.postprocessor),
             def_save_dir: take(&mut conf.def_save_dir),
@@ -644,23 +636,21 @@ impl FilePicker {
         }
     }
 
-    async fn select_files(self: &Self, multi: bool, dir: bool, save: bool, path: &str) -> (u32, HashMap<String, OwnedValue>) {
+    async fn select_files(self: &mut Self, multi: bool, dir: bool, save: bool, path: &str) -> (u32, HashMap<String, OwnedValue>) {
         let dir = if dir   { 1 } else { 0 };
         let multi = if multi { 1 } else { 0 };
         let savenum = if save  { 1 } else { 0 };
         {
             const TIMEOUT: u64 = 60*60*24;
-            let mut prev_path_set_at = self.prev_path_set_at.lock().await;
-            if SystemTime::now().duration_since(*prev_path_set_at).unwrap_or_default().as_secs() > TIMEOUT {
-                *self.prev_path.lock().await = self.home.clone();
-                *prev_path_set_at = SystemTime::now();
+            if SystemTime::now().duration_since(self.prev_path_set_at).unwrap_or_default().as_secs() > TIMEOUT {
+                self.prev_path = self.home.clone();
+                self.prev_path_set_at = SystemTime::now();
             }
         }
         let cmd = if save {
             let final_path = if self.use_prev {
-                let prev_path_str = self.prev_path.lock().await.clone();
                 let file_name = Path::new(path).file_name().map_or_else(|| "".to_string(), |s| s.to_string_lossy().to_string());
-                Path::new(&prev_path_str).join(file_name).to_string_lossy().to_string()
+                Path::new(&self.prev_path).join(file_name).to_string_lossy().to_string()
             } else {
                 path.to_string()
             };
@@ -668,7 +658,7 @@ impl FilePicker {
         } else {
             format!("PK_XDG=1 POSTPROCESS_DIR=\"{}\" POSTPROCESSOR=\"{}\" {} {} {} {} {}",
                     self.postproc_dir, self.postprocessor, self.cmd, multi, dir, savenum,
-                    shquote(tilda(&self.home,&self.prev_path.lock().await).as_ref()))
+                    shquote(tilda(&self.home,&self.prev_path).as_ref()))
         };
         self.db.lock().unwrap().cache_flush().unwrap();
         debug!("CMD:{}", cmd);
@@ -702,8 +692,8 @@ impl FilePicker {
                         update_prevpath = match gi.matched(&par_dir, true) {Match::Ignore(_) => false, _ => true};
                     }
                     if update_prevpath {
-                        *self.prev_path.lock().await = par_dir;
-                        *self.prev_path_set_at.lock().await = SystemTime::now();
+                        self.prev_path = par_dir;
+                        self.prev_path_set_at = SystemTime::now();
                     }
                 }
             }
@@ -732,7 +722,7 @@ impl FilePicker {
 
 #[interface(name = "org.freedesktop.impl.portal.FileChooser")]
 impl FilePicker {
-    async fn open_file(&self, _ob: ObjectPath<'_>, _caller: &str, _parent: &str,
+    async fn open_file(&mut self, _ob: ObjectPath<'_>, _caller: &str, _parent: &str,
                  _title: &str, options: HashMap<&str, Value<'_>>) -> (u32, HashMap<String, OwnedValue>) {
         let dir = match options.get("directory").unwrap_or(&Value::Bool(false)) {
             &Value::Bool(b) => b,
@@ -745,7 +735,7 @@ impl FilePicker {
         self.select_files(multi, dir, false, "/").await
     }
 
-    async fn save_file(&self, _ob: ObjectPath<'_>, _caller: &str, _parent: &str,
+    async fn save_file(&mut self, _ob: ObjectPath<'_>, _caller: &str, _parent: &str,
                  _title: &str, options: HashMap<&str, Value<'_>>) -> (u32, HashMap<String, OwnedValue>) {
         let dir = match options.get("current_folder").unwrap_or(&Value::from(&self.def_save_dir)) {
             Value::Array(s) => {
