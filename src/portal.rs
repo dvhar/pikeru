@@ -59,7 +59,7 @@ fn build_cumulative_gitignore(start_dir: &Path) -> gitignore::Gitignore {
     builder.build().unwrap_or(gitignore::Gitignore::new("").0)
 }
 
-/// Shared state behind an Arc<Mutex<>>, so clones are just handles to the same data.
+/// Shared state behind an Arc<RwLock<>>, so clones are just handles to the same data.
 struct IndexerInner {
     shtate: Arc<AsyncMtx<Shtate>>,
     con: Arc<std::sync::Mutex<rusqlite::Connection>>,
@@ -77,10 +77,10 @@ struct IndexerInner {
 /// Thin handle wrapper — like FItem(Box<FItemb>) pattern.
 /// Cloning Indexer clones the Arc handle; all clones point to the same underlying state.
 #[derive(Clone)]
-struct Indexer(Arc<tokio::sync::Mutex<IndexerInner>>);
+struct Indexer(Arc<tokio::sync::RwLock<IndexerInner>>);
 
 impl std::ops::Deref for Indexer {
-    type Target = tokio::sync::Mutex<IndexerInner>;
+    type Target = tokio::sync::RwLock<IndexerInner>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -90,7 +90,7 @@ impl std::ops::Deref for Indexer {
 impl Indexer {
     async fn clear_queue(&self) {
         debug!("Got clear queue message");
-        let mut inner = self.lock().await;
+        let mut inner = self.write().await;
         if !inner.indexer_enabled { return; }
         inner.idx_running = false;
         inner.done_map.lock().await.clear();
@@ -98,13 +98,13 @@ impl Indexer {
     }
     async fn update(&self, dirs: Vec<String>) {
         // Gate on indexer_enabled — disabled indexers silently ignore update requests.
-        let enabled = self.lock().await.indexer_enabled;
+        let enabled = self.read().await.indexer_enabled;
         if !enabled { return; }
         // Check if a loop is already running before adding dirs.
-        let already_running = self.lock().await.idx_running;
+        let already_running = self.read().await.idx_running;
         // Populate done_map and set idx_running=true so index_loop proceeds.
         {
-            let mut inner = self.lock().await;
+            let mut inner = self.write().await;
             inner.idx_running = true;
             inner.done_map.lock().await.clear();
             for dir in dirs { inner.done_map.lock().await.entry(dir).or_default(); }
@@ -122,7 +122,7 @@ impl Indexer {
         // Update indexer-local state in a scoped block so the lock is released
         // before we call update_ignore() (which also needs to lock self).
         {
-            let mut inner = self.lock().await;
+            let mut inner = self.write().await;
             inner.respect_gitignore = respect_gitignore;
             inner.shtate.lock().await.current_searchignore = search_ignore;
             drop(inner);
@@ -138,7 +138,7 @@ impl Indexer {
     async fn index_loop(self: &Self) {
         // Start with a 1-minute timeout so we check indexer online status right away.
         let mut timeout = Instant::now().checked_add(Duration::from_secs(60)).unwrap();
-        if !self.lock().await.idx_running {
+        if !self.read().await.idx_running {
             warn!("index_loop: idx_running is false, nothing to index");
             return;
         }
@@ -150,12 +150,12 @@ impl Indexer {
                 let online = self.indexer_online().await;
                 if !online { warn!("indexer offline"); }
             }
-            if !self.lock().await.idx_running {
+            if !self.read().await.idx_running {
                 debug!("index_loop: idx_running cleared, exiting");
                 break;
             }
             // Pick the next unprocessed dir.
-            let inner = self.lock().await;
+            let inner = self.read().await;
             let to_process: Vec<String> = inner.done_map.lock().await.iter()
                 .filter(|(_, done)| !*done)
                 .map(|(dir, _)| dir.clone())
@@ -163,19 +163,19 @@ impl Indexer {
             drop(inner);
             if to_process.is_empty() {
                 debug!("Indexing batch finished");
-                self.lock().await.idx_running = false;
+                self.write().await.idx_running = false;
                 break;
             }
             for dir in &to_process {
                 let result = self.update_dir(dir).await;
                 if result == DirResult::Fail {
                     error!("Indexing batch failed");
-                    self.lock().await.done_map.lock().await.clear();
-                    self.lock().await.idx_running = false;
+                    self.write().await.done_map.lock().await.clear();
+                    self.write().await.idx_running = false;
                     break;
                 }
                 // Mark this dir as done.
-                self.lock().await.done_map.lock().await.entry(dir.clone()).and_modify(|v| *v = true);
+                self.write().await.done_map.lock().await.entry(dir.clone()).and_modify(|v| *v = true);
             }
         }
     }
@@ -197,7 +197,7 @@ impl Indexer {
             eprintln!("Portal closing");
             std::process::exit(0);
         }).expect("Error setting Ctrl-C handler");
-        Self(Arc::new(tokio::sync::Mutex::new(IndexerInner {
+        Self(Arc::new(tokio::sync::RwLock::new(IndexerInner {
             shtate,
             con,
             done_map: AsyncMtx::new(HashMap::new()),
@@ -213,7 +213,7 @@ impl Indexer {
     }
 
     async fn update_ignore(self: &Self) {
-        let inner = self.lock().await;
+        let inner = self.read().await;
         let txt = inner.shtate.lock().await.current_searchignore.clone();
         if txt == inner.igtxt {
             return
@@ -228,13 +228,13 @@ impl Indexer {
                 gitignore::Gitignore::new("").0
             },
         };
-        let mut inner = self.lock().await;
+        let mut inner = self.write().await;
         inner.igtxt = txt;
         inner.ignore = ignore;
     }
 
     async fn indexer_online(&self) -> bool {
-        let inner = self.lock().await;
+        let inner = self.read().await;
         match tokio::process::Command::new("sh").arg("-c").arg(&inner.check).output().await {
             Ok(out) => out.status.success(),
             Err(_) => false,
@@ -242,7 +242,7 @@ impl Indexer {
     }
 
     async fn already_done(self: &Self, dir: &String, fname: &str, mtime: f32) -> Entry {
-        let guard = self.lock().await;
+        let guard = self.read().await;
         let c = guard.con.lock().unwrap();
         let mut query = c.prepare("select mtime from descriptions where dir = ?1 and fname = ?2").unwrap();
         let ret = match query.query([dir.as_str(), fname.as_ref()]).unwrap().next() {
@@ -265,7 +265,7 @@ impl Indexer {
     }
 
     async fn save(self: &Self, dir: &String, fname: &str, desc: &str, mtime: f32, stat: Entry) {
-        let guard = self.lock().await;
+        let guard = self.write().await;
         let c = guard.con.lock().unwrap();
         let mut query = c.prepare(match stat {
             Entry::None => "insert into descriptions (dir, fname, description, mtime) values (?1, ?2, ?3, ?4)",
@@ -290,7 +290,7 @@ impl Indexer {
         if stat == Entry::Done {
             return true;
         }
-        let inner = self.lock().await;
+        let inner = self.read().await;
         let cmd = format!("{} {}", inner.cmd, shquote(path.to_string_lossy().as_ref()));
         drop(inner);
         match tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await {
@@ -311,7 +311,7 @@ impl Indexer {
     }
 
     async fn update_dir(self: &Self, dir: &String) -> DirResult {
-        let inner = self.lock().await;
+        let inner = self.read().await;
         let local_ignore = if inner.respect_gitignore {
             build_cumulative_gitignore(Path::new(dir))
         } else {
@@ -325,15 +325,15 @@ impl Indexer {
         match std::fs::read_dir(dir) {
             Ok(read_dir) => {
                 for dir_entry in read_dir {
-                    if !self.lock().await.idx_running {
+                    if !self.read().await.idx_running {
                         break;
                     }
                     if let Ok(de) = dir_entry {
                         let path = de.path();
                         match path.extension() {
                             Some(ext) => {
-                                if self.lock().await.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
-                                    if let Match::Ignore(_) = self.lock().await.ignore.matched(&path, path.is_dir()) {
+                                if self.read().await.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
+                                    if let Match::Ignore(_) = self.read().await.ignore.matched(&path, path.is_dir()) {
                                         continue;
                                     }
                                     if let Match::Ignore(_) = local_ignore.matched(&path, false) {
