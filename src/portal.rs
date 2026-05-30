@@ -99,18 +99,21 @@ impl Indexer {
     async fn update(&self, dirs: Vec<String>) {
         // Gate on indexer_enabled — disabled indexers silently ignore update requests.
         let enabled = self.read().await.indexer_enabled;
-        if !enabled { return; }
-        // Check if a loop is already running before adding dirs.
-        let already_running = self.read().await.idx_running;
-        // Populate done_map and set idx_running=true so index_loop proceeds.
+        if !enabled || dirs.is_empty() { return; }
+        // Check + set idx_running atomically so we never spawn duplicate loops.
+        let should_spawn;
         {
             let mut inner = self.write().await;
+            should_spawn = !inner.idx_running;
             inner.idx_running = true;
-            inner.done_map.clear();
+            if should_spawn {
+                // Fresh loop — start with a clean done_map populated by the new dirs.
+                inner.done_map.clear();
+            }
             for dir in dirs { inner.done_map.entry(dir).or_default(); }
         }
         // Spawn a new loop only if one wasn't already running.
-        if !already_running {
+        if should_spawn {
             let this = self.clone();
             tokio::spawn(async move {
                 this.index_loop().await;
@@ -153,26 +156,27 @@ impl Indexer {
                 debug!("index_loop: idx_running cleared, exiting");
                 break;
             }
-            // Pick the next unprocessed dir.
-            let to_process: Vec<String> = self.read().await.done_map.iter()
-                .filter(|(_, done)| !*done)
-                .map(|(dir, _)| dir.clone())
-                .collect();
-            if to_process.is_empty() {
-                debug!("Indexing batch finished");
-                self.write().await.idx_running = false;
-                break;
-            }
-            for dir in &to_process {
-                let result = self.update_dir(dir).await;
+            // Pick the single next unprocessed dir, process it, mark it done, then loop back.
+            let maybe_dir: Option<String> = self.read().await.done_map.iter()
+                .find(|(_, done)| !**done)
+                .map(|(dir, _)| dir.clone());
+            if let Some(dir) = maybe_dir {
+                let result = self.update_dir(&dir).await;
                 if result == DirResult::Fail {
                     error!("Indexing batch failed");
-                    self.write().await.done_map.clear();
-                    self.write().await.idx_running = false;
+                    let mut inner = self.write().await;
+                    inner.done_map.clear();
+                    inner.idx_running = false;
                     break;
                 }
                 // Mark this dir as done.
-                self.write().await.done_map.entry(dir.clone()).and_modify(|v| *v = true);
+                self.write().await.done_map.entry(dir).and_modify(|v| *v = true);
+            } else {
+                debug!("Indexing batch finished");
+                let mut inner = self.write().await;
+                inner.done_map.clear();
+                inner.idx_running = false;
+                break;
             }
         }
     }
