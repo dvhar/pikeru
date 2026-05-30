@@ -67,7 +67,7 @@ struct IndexerInner {
     cmd: String,
     check: String,
     exts: Vec<&'static str>,
-    ignore: gitignore::Gitignore,
+    search_ignore: gitignore::Gitignore,
     igtxt: String,
     idx_running: bool,
     indexer_enabled: bool,
@@ -205,7 +205,7 @@ impl Indexer {
             cmd: take(&mut config.indexer_cmd),
             check: take(&mut config.indexer_check),
             exts: Box::new(take(&mut config.indexer_exts)).leak().split(',').collect(),
-            ignore: gitignore::Gitignore::new("").0,
+            search_ignore: gitignore::Gitignore::new("").0,
             igtxt: String::new(),
             idx_running: false,
             indexer_enabled: config.indexer_enabled,
@@ -231,7 +231,7 @@ impl Indexer {
         };
         let mut inner = self.write().await;
         inner.igtxt = txt;
-        inner.ignore = ignore;
+        inner.search_ignore = ignore;
     }
 
     async fn indexer_online(&self) -> bool {
@@ -329,7 +329,7 @@ impl Indexer {
                         match path.extension() {
                             Some(ext) => {
                                 if self.read().await.exts.contains(&ext.to_ascii_lowercase().to_string_lossy().as_ref()) {
-                                    if let Match::Ignore(_) = self.read().await.ignore.matched(&path, path.is_dir()) {
+                                    if let Match::Ignore(_) = self.read().await.search_ignore.matched(&path, path.is_dir()) {
                                         continue;
                                     }
                                     if let Match::Ignore(_) = local_ignore.matched(&path, false) {
