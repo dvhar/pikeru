@@ -62,6 +62,19 @@ def call_clear_queue(service, path):
         print("ERROR:%s" % str(e))
 
 
+def call_text_embed(service, path, text):
+    bus = dbus.SessionBus()
+    obj = bus.get_object(service, path)
+    proxy = dbus.Interface(obj, "org.freedesktop.impl.portal.SearchIndexer")
+    try:
+        embedding = proxy.TextEmbed(text)
+        # embedding is a dbus.Array of bytes — output hex for easy consumption
+        hex_str = ''.join('{:02x}'.format(b) for b in embedding)
+        print("EMBED:{}".format(hex_str))
+    except Exception as e:
+        print("ERROR:%s" % str(e))
+
+
 def _ping(service):
     bus = dbus.SessionBus()
     try:
@@ -87,5 +100,7 @@ if __name__ == "__main__":
         call_update(service, path, dirs)
     elif method == "clear_queue":
         call_clear_queue(service, path)
+    elif method == "text_embed":
+        call_text_embed(service, path, sys.argv[4])
     else:
         print("ERROR:unknown %s" % method, file=sys.stderr); sys.exit(1)

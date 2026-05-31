@@ -68,25 +68,94 @@ pub fn create_mock_indexer(workspace: &TempDir, description: &str) -> PathBuf {
 /// Creates a mock vector indexer that outputs binary data in the same format
 /// as vector_indexer.py: 4-byte header (u16 LE dim, u16 LE bit_width) followed
 /// by raw f32 vector data. The portal validates this header before storing.
+///
+/// The mock also records whether PK_INDEX_EMBEDDING is set (the portal sets it
+/// when indexer mode is vector) to a capture file so tests can assert it.
 #[allow(dead_code)]
 pub fn create_mock_vector_indexer(workspace: &TempDir, num_floats: usize) -> PathBuf {
+    let capture_file = workspace.path().join("vector_env_capture.txt");
+    let capture_path = capture_file.to_str().unwrap();
+
     // Write the Python helper as a separate file to avoid shell quoting issues
     // with format strings like '<HH{}f' that bash would interpret as redirection.
     let py_script = workspace.path().join("mock-vector-indexer.py");
-    // Build the Python script carefully to avoid Rust format string conflicts
-    // with the '<Nf' struct.pack format specifier.
-    let pack_fmt = format!("<{}f", num_floats);
-    let py_content = format!(
-        "import struct, sys\n\ndim = {n}\nbit_width = 32\nsys.stdout.buffer.write(struct.pack('HH', dim, bit_width))\n\nvals = [0.1] * {n}\ndata = struct.pack('{fmt}', *vals)\nsys.stdout.buffer.write(data)\n",
-        n = num_floats,
-        fmt = pack_fmt
-    );
-    std::fs::write(&py_script, py_content).unwrap();
+
+    // Build the Python script using string concatenation to avoid Rust format
+    // string conflicts with Python's struct.pack format specifiers.
+    let py_lines: Vec<String> = vec![
+        "import struct, sys, os".into(),
+        format!("with open('{}', 'a') as f:", capture_path),
+        "    f.write('PK_INDEX_EMBEDDING=' + os.environ.get('PK_INDEX_EMBEDDING', '<unset>') + '\\n')".into(),
+        format!("dim = {}", num_floats),
+        "bit_width = 32".into(),
+        "sys.stdout.buffer.write(struct.pack('HH', dim, bit_width))".into(),
+        format!("vals = [0.1] * {}", num_floats),
+        format!("data = struct.pack('<{}f', *vals)", num_floats),
+        "sys.stdout.buffer.write(data)".into(),
+    ];
+    std::fs::write(&py_script, py_lines.join("\n")).unwrap();
 
     let wrapper = workspace.path().join("mock-vector-indexer.sh");
     std::fs::write(&wrapper, format!(
         "#!/bin/bash\npython3 '{}'\nexit 0\n",
         py_script.display()
+    )).unwrap();
+    let mut perms = std::fs::metadata(&wrapper).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&wrapper, perms).unwrap();
+    wrapper
+}
+
+/// Creates a mock text indexer that outputs a plain description string.
+/// Records whether PK_INDEX_EMBEDDING was set to a capture file so tests
+/// can assert it was NOT present during text indexing.
+#[allow(dead_code)]
+pub fn create_mock_text_indexer(workspace: &TempDir, description: &str) -> PathBuf {
+    let capture_file = workspace.path().join("text_env_capture.txt");
+    let capture_path = capture_file.to_str().unwrap();
+
+    let wrapper = workspace.path().join("mock-text-indexer.sh");
+    // Record env var status and output description.
+    let env_log = format!("echo PK_INDEX_EMBEDDING=$PK_INDEX_EMBEDDING >> '{}'", capture_path);
+    let script = format!(
+        "#!/bin/bash\n{}\necho '{}'",
+        env_log, description
+    );
+    std::fs::write(&wrapper, script).unwrap();
+    let mut perms = std::fs::metadata(&wrapper).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&wrapper, perms).unwrap();
+    wrapper
+}
+
+/// Creates a mock query indexer that receives the text as a command-line
+/// argument (just like a filepath during indexing), records whether
+/// PK_QUERY_EMBEDDING was set, and outputs a valid binary embedding.
+/// Used for testing the TextEmbed D-Bus method.
+#[allow(dead_code)]
+pub fn create_mock_query_indexer(workspace: &TempDir, num_floats: usize) -> PathBuf {
+    let capture_file = workspace.path().join("query_env_capture.txt");
+    let capture_path = capture_file.to_str().unwrap();
+
+    let py_script = workspace.path().join("mock-query-indexer.py");
+    let py_lines: Vec<String> = vec![
+        "import struct, sys, os".into(),
+        format!("with open('{}', 'w') as f:", capture_path),
+        "    f.write('PK_QUERY_EMBEDDING=' + os.environ.get('PK_QUERY_EMBEDDING', '<unset>') + '\\n')".into(),
+        "# Text is passed as a command-line argument (like a filepath)".into(),
+        "_text = sys.argv[1] if len(sys.argv) > 1 else ''".into(),
+        format!("dim = {}", num_floats),
+        "bit_width = 32".into(),
+        "sys.stdout.buffer.write(struct.pack('HH', dim, bit_width))".into(),
+        format!("vals = [0.5] * {}", num_floats),
+        format!("data = struct.pack('<{}f', *vals)", num_floats),
+        "sys.stdout.buffer.write(data)".into(),
+    ];
+    std::fs::write(&py_script, py_lines.join("\n")).unwrap();
+
+    let wrapper = workspace.path().join("mock-query-indexer.sh");
+    std::fs::write(&wrapper, format!(
+        "#!/bin/bash\npython3 '{}' '$1'\n", py_script.display()
     )).unwrap();
     let mut perms = std::fs::metadata(&wrapper).unwrap().permissions();
     perms.set_mode(0o755);
@@ -347,6 +416,30 @@ impl PortalClient {
     pub fn clear_index_queue(&self) -> Result<(), String> {
         self._wait_for_portal()?;
         self._dbus_method("clear_queue", &[&self.service_name, &self.object_path])
+    }
+
+    /// Call the TextEmbed method on the SearchIndexer interface.
+    /// Returns the raw binary embedding as Vec<u8>, or an error string.
+    pub fn text_embed(&self, text: &str) -> Result<Vec<u8>, String> {
+        self._wait_for_portal()?;
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/dbus_call.py").to_string_lossy().into_owned();
+        let output = Command::new("python3")
+            .args([&script, "text_embed", &self.service_name, &self.object_path, text])
+            .output()
+            .map_err(|e| format!("python3 failed: {}", e))?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !stdout.starts_with("EMBED:") {
+            return Err(format!("text_embed unexpected output: {}", stdout));
+        }
+        let hex_str = &stdout[6..];
+        let bytes: Vec<u8> = (0..hex_str.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex_str[i..i+2], 16))
+            .collect::<Result<Vec<u8>, _>>()
+            .map_err(|e| format!("failed to parse hex embedding: {}", e))?;
+        Ok(bytes)
     }
 
     fn _wait_for_portal(&self) -> Result<(), String> {

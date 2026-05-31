@@ -134,6 +134,45 @@ impl Indexer {
         self.update_ignore().await;
     }
 
+    /// Embed a text string using the configured indexer.
+    /// Spawns the indexer command with PK_QUERY_EMBEDDING=1, passes the text
+    /// as a command-line argument, captures binary stdout, validates the embedding format, and
+    /// returns the raw bytes to the caller.
+    async fn text_embed(&self, text: &str) -> Result<Vec<u8>, zbus::fdo::Error> {
+        let cmd = self.read().await.cmd.clone();
+        if cmd.is_empty() {
+            return Err(zbus::fdo::Error::Failed("indexer cmd not configured".into()));
+        }
+        let shell_cmd = format!("PK_QUERY_EMBEDDING=1 {} {}", cmd, shquote(text));
+        let output = match tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(&shell_cmd)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await
+        {
+            Ok(out) => out,
+            Err(e) => return Err(zbus::fdo::Error::Failed(format!("spawn failed: {}", e))),
+        };
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(zbus::fdo::Error::Failed(format!(
+                "indexer exited with error: {}",
+                stderr.trim()
+            )));
+        }
+        if output.stdout.is_empty() {
+            return Err(zbus::fdo::Error::Failed("indexer returned empty output".into()));
+        }
+        // Validate the binary embedding format.
+        if let Err(e) = Self::validate_embedding(&output.stdout, "query") {
+            return Err(zbus::fdo::Error::Failed(format!("embedding validation failed: {}", e)));
+        }
+        trace!("text_embed returned {} bytes", output.stdout.len());
+        Ok(output.stdout)
+    }
+
 }
 
 impl Indexer {
@@ -372,7 +411,7 @@ impl Indexer {
                 if stat == Entry::Done {
                     return true;
                 }
-                let cmd = format!("{} {}", self.read().await.cmd, shquote(path.to_string_lossy().as_ref()));
+                let cmd = format!("PK_INDEX_EMBEDDING=1 {} {}", self.read().await.cmd, shquote(path.to_string_lossy().as_ref()));
                 match tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await {
                     Ok(out) => {
                         if !out.status.success() || out.stdout.len() == 0 {
@@ -586,7 +625,12 @@ check = curl http://127.0.0.1:7860/sdapi/v1/interrogate
 # comma-separated list of file types that 'cmd' can process.
 extensions = png,jpg,jpeg,gif,webp,tiff,bmp
 
-# Indexing mode: "text" for fuzzy text search or "vector" for vector embedding search
+# Indexing mode:
+#   "text"  — cmd outputs plain text descriptions (stored in descriptions table)
+#   "vector" — cmd outputs raw binary embeddings (stored in vectors table)
+# When using img_indexer.py, vector mode is enabled by setting the
+# PK_INDEX_EMBEDDING environment variable to the embedding server base URL:
+#   cmd = env PK_INDEX_EMBEDDING=1 python /usr/share/xdg-desktop-portal-pikeru/img_indexer.py http://127.0.0.1:6285
 mode = text
 "#;
         fs::write(target_path, content.trim_start()).expect("Unable to create config file");

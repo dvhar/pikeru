@@ -1580,6 +1580,20 @@ mode = vector
     // Verify the descriptions table is empty (vector mode does NOT write there).
     let desc_count = common::count_descriptions(&conn);
     assert_eq!(desc_count, 0, "Descriptions table should be empty in vector mode");
+
+    // Verify PK_INDEX_EMBEDDING=1 was set for each indexed file.
+    let env_capture = ws.path().join("vector_env_capture.txt");
+    assert!(env_capture.exists(), "Vector env capture file should exist");
+    let env_text = fs::read_to_string(&env_capture).unwrap();
+    let lines: Vec<&str> = env_text.lines().collect();
+    assert_eq!(lines.len(), 2, "Should have 2 env capture entries (one per file)");
+    for line in &lines {
+        assert_eq!(
+            *line, "PK_INDEX_EMBEDDING=1",
+            "PK_INDEX_EMBEDDING should be set to 1 for vector indexing, got: {}",
+            line
+        );
+    }
 }
 
 #[test]
@@ -1694,4 +1708,140 @@ mode = vector
     let vectors = common::query_vectors(&conn);
     assert_eq!(vectors.len(), 1);
     assert_eq!(vectors[0].1.len(), 16, "Embedding should be 16 bytes (header + 3 f32s) after re-index");
+}
+
+#[test]
+fn test_text_mode_no_pk_index_embedding() {
+    // When indexer mode is "text" (the default), the portal should NOT set
+    // PK_INDEX_EMBEDDING, so img_indexer.py runs in its default captioning mode.
+    let ws = test_workspace();
+    let fp_cmd = create_mock_wrapper(&ws, &[]);
+    let txt_idx = common::create_mock_text_indexer(&ws, "this is a description");
+
+    let conf = ws.path().join("portal.conf");
+    let content = format!(
+        r#"log_level = trace
+
+[filepicker]
+cmd = {}
+default_save_dir = /tmp/psave
+
+[indexer]
+enable = true
+cmd = {}
+check = exit 0
+extensions = txt
+mode = text
+"#,
+        fp_cmd.to_str().unwrap(),
+        txt_idx.to_str().unwrap()
+    );
+    fs::write(&conf, content).unwrap();
+
+    let db_path = ws.path().join("index.db");
+
+    // Create indexable files.
+    let root = ws.path().join("txt_root");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("doc1.txt"), "content one").unwrap();
+    fs::write(root.join("doc2.txt"), "content two").unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+
+    // Queue the directory for indexing.
+    assert!(client.update_index(&[root.to_str().unwrap()]).is_ok());
+    std::thread::sleep(Duration::from_millis(1200));
+
+    // The descriptions table should have 2 entries.
+    let conn = open_test_db(db_path.to_str().unwrap());
+    let desc_count = common::count_descriptions(&conn);
+    assert_eq!(desc_count, 2, "Two files should have text descriptions stored");
+
+    // Verify the descriptions are correct.
+    let descriptions = common::query_descriptions(&conn);
+    assert_eq!(descriptions.len(), 2);
+    for (name, desc) in &descriptions {
+        assert_eq!(desc.trim(), "this is a description", "Description for {} should match", name);
+    }
+
+    // Verify PK_INDEX_EMBEDDING was NOT set.
+    let env_capture = ws.path().join("text_env_capture.txt");
+    assert!(env_capture.exists(), "Text env capture file should exist");
+    let env_text = fs::read_to_string(&env_capture).unwrap();
+    let lines: Vec<&str> = env_text.lines().collect();
+    assert_eq!(lines.len(), 2, "Should have 2 env capture entries (one per file)");
+    for line in &lines {
+        assert_eq!(
+            *line, "PK_INDEX_EMBEDDING=",
+            "PK_INDEX_EMBEDDING should NOT be set for text indexing, got: {}",
+            line
+        );
+    }
+}
+
+#[test]
+fn test_text_embed_returns_valid_embedding() {
+    // The TextEmbed D-Bus method should spawn the indexer with PK_QUERY_EMBEDDING=1,
+    // pipe the text via stdin, capture the binary stdout, validate the embedding,
+    // and return it to the caller.
+    let ws = test_workspace();
+    let fp_cmd = create_mock_wrapper(&ws, &[]);
+
+    // Create a mock query indexer: a Python script that reads text from stdin,
+    // checks PK_QUERY_EMBEDDING is set, and outputs a valid 4-dim embedding.
+    let query_idx = common::create_mock_query_indexer(&ws, 4);
+
+    let conf = ws.path().join("portal.conf");
+    let content = format!(
+        r#"log_level = trace
+
+[filepicker]
+cmd = {}
+default_save_dir = /tmp/psave
+
+[indexer]
+enable = true
+cmd = {}
+check = exit 0
+extensions = txt
+mode = vector
+"#,
+        fp_cmd.to_str().unwrap(),
+        query_idx.to_str().unwrap()
+    );
+    fs::write(&conf, content).unwrap();
+
+    let db_path = ws.path().join("index.db");
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+
+    // Call TextEmbed with a test query string.
+    let result = client.text_embed("hello world");
+    assert!(result.is_ok(), "text_embed should succeed: {:?}", result.err());
+
+    let embedding = result.unwrap();
+    // The mock produces a 4-byte header + 4 f32s = 20 bytes.
+    assert_eq!(embedding.len(), 20, "Expected 20 bytes (4 header + 4*4 f32s)");
+
+    // Validate the header: dim=4, bit_width=32.
+    let dim = u16::from_le_bytes([embedding[0], embedding[1]]);
+    let bit_width = u16::from_le_bytes([embedding[2], embedding[3]]);
+    assert_eq!(dim, 4, "Header dim should be 4");
+    assert_eq!(bit_width, 32, "Header bit_width should be 32");
+
+    // Verify the PK_QUERY_EMBEDDING env var was actually set.
+    let env_capture = ws.path().join("query_env_capture.txt");
+    assert!(env_capture.exists(), "Query env capture file should exist");
+    let env_text = fs::read_to_string(&env_capture).unwrap();
+    assert!(
+        env_text.contains("PK_QUERY_EMBEDDING=1"),
+        "PK_QUERY_EMBEDDING should be set to 1, got: {}",
+        env_text
+    );
 }
