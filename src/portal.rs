@@ -305,7 +305,44 @@ impl Indexer {
         query.execute((dir, fname, desc, mtime)).unwrap();
     }
 
+    /// Validate that the binary payload matches the vector_indexer.py output format:
+    /// 2 bytes: u16 LE — number of floats (dim)
+    /// 2 bytes: u16 LE — bit width of each float (must be 32)
+    /// N bytes: dim * (bit_width / 8) raw vector data
+    fn validate_embedding(embedding: &[u8], fname: &str) -> Result<(), String> {
+        if embedding.len() < 4 {
+            return Err(format!(
+                "embedding for {} is {} bytes (minimum 4-byte header required)",
+                fname, embedding.len()
+            ));
+        }
+        let dim = u16::from_le_bytes([embedding[0], embedding[1]]);
+        let bit_width = u16::from_le_bytes([embedding[2], embedding[3]]);
+        if bit_width != 32 {
+            return Err(format!(
+                "embedding for {} has bit_width {} (expected 32)",
+                fname, bit_width
+            ));
+        }
+        let expected_len = 4 + (dim as usize) * 4;
+        if embedding.len() != expected_len {
+            return Err(format!(
+                "embedding for {} is {} bytes but header claims {} dims (expected {} bytes)",
+                fname, embedding.len(), dim, expected_len
+            ));
+        }
+        trace!(
+            "embedding for {} valid: dim={}, bit_width={}, total_bytes={}",
+            fname, dim, bit_width, embedding.len()
+        );
+        Ok(())
+    }
+
     async fn save_vector(self: &Self, dir: &String, fname: &str, embedding: &[u8], mtime: f32, stat: Entry) {
+        if let Err(e) = Self::validate_embedding(embedding, fname) {
+            error!("Vector validation failed: {}", e);
+            return;
+        }
         let guard = self.write().await;
         let c = guard.con.lock().unwrap();
         let mut query = c.prepare(match stat {
@@ -328,7 +365,8 @@ impl Indexer {
         let mtime = metadata.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32();
         let fname = path.file_name().unwrap().to_string_lossy();
 
-        match self.read().await.indexer_mode {
+        let mode = self.read().await.indexer_mode.clone();
+        match mode {
             IndexerMode::Vector => {
                 let stat = self.already_done_vector(dir, &fname, mtime).await;
                 if stat == Entry::Done {

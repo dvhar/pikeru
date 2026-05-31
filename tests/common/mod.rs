@@ -65,6 +65,35 @@ pub fn create_mock_indexer(workspace: &TempDir, description: &str) -> PathBuf {
     script
 }
 
+/// Creates a mock vector indexer that outputs binary data in the same format
+/// as vector_indexer.py: 4-byte header (u16 LE dim, u16 LE bit_width) followed
+/// by raw f32 vector data. The portal validates this header before storing.
+#[allow(dead_code)]
+pub fn create_mock_vector_indexer(workspace: &TempDir, num_floats: usize) -> PathBuf {
+    // Write the Python helper as a separate file to avoid shell quoting issues
+    // with format strings like '<HH{}f' that bash would interpret as redirection.
+    let py_script = workspace.path().join("mock-vector-indexer.py");
+    // Build the Python script carefully to avoid Rust format string conflicts
+    // with the '<Nf' struct.pack format specifier.
+    let pack_fmt = format!("<{}f", num_floats);
+    let py_content = format!(
+        "import struct, sys\n\ndim = {n}\nbit_width = 32\nsys.stdout.buffer.write(struct.pack('HH', dim, bit_width))\n\nvals = [0.1] * {n}\ndata = struct.pack('{fmt}', *vals)\nsys.stdout.buffer.write(data)\n",
+        n = num_floats,
+        fmt = pack_fmt
+    );
+    std::fs::write(&py_script, py_content).unwrap();
+
+    let wrapper = workspace.path().join("mock-vector-indexer.sh");
+    std::fs::write(&wrapper, format!(
+        "#!/bin/bash\npython3 '{}'\nexit 0\n",
+        py_script.display()
+    )).unwrap();
+    let mut perms = std::fs::metadata(&wrapper).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&wrapper, perms).unwrap();
+    wrapper
+}
+
 #[allow(dead_code)]
 /// Creates a mock wrapper that sleeps for approximately `delay_ms` milliseconds
 /// per invocation (using Python for sub-second precision), then echoes the
@@ -119,6 +148,15 @@ pub fn open_test_db(db_path: &str) -> Connection {
         )",
         [],
     ).unwrap();
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS vectors (
+            fname      TEXT,
+            dir        TEXT,
+            embedding  BLOB,
+            mtime      REAL
+        )",
+        [],
+    ).unwrap();
     conn.pragma_update(None, "journal_mode", "WAL").unwrap();
     conn
 }
@@ -135,6 +173,19 @@ pub fn query_descriptions(conn: &Connection) -> Vec<(String, String)> {
 pub fn count_descriptions(conn: &Connection) -> usize {
     let mut stmt = conn.prepare("SELECT COUNT(*) FROM descriptions").unwrap();
     stmt.query_row([], |row| row.get::<_, usize>(0)).unwrap()
+}
+
+pub fn count_vectors(conn: &Connection) -> usize {
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM vectors").unwrap();
+    stmt.query_row([], |row| row.get::<_, usize>(0)).unwrap()
+}
+
+pub fn query_vectors(conn: &Connection) -> Vec<(String, Vec<u8>)> {
+    let mut stmt = conn.prepare(
+        "SELECT fname, embedding FROM vectors ORDER BY fname"
+    ).unwrap();
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    rows.filter_map(|r| r.ok()).collect()
 }
 
 #[allow(dead_code)]

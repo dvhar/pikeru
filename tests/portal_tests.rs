@@ -1508,3 +1508,190 @@ extensions = txt,cache,log,tmp,png,jpg
     let count = common::count_descriptions(&conn);
     assert_eq!(count, 0, "No files should be indexed when indexer is disabled after configure");
 }
+
+// ---------------------------------------------------------------------------
+// Vector indexing tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_vector_mode_indexes_into_vectors_table() {
+    let ws = test_workspace();
+    let fp_cmd = create_mock_wrapper(&ws, &[]);
+
+    // Mock vector indexer: outputs 4 raw f32 bytes to stdout.
+    let vec_idx = common::create_mock_vector_indexer(&ws, 4);
+
+    let conf = ws.path().join("portal.conf");
+    let content = format!(
+        r#"log_level = trace
+
+[filepicker]
+cmd = {}
+default_save_dir = /tmp/psave
+
+[indexer]
+enable = true
+cmd = {}
+check = exit 0
+extensions = txt
+mode = vector
+"#,
+        fp_cmd.to_str().unwrap(),
+        vec_idx.to_str().unwrap()
+    );
+    fs::write(&conf, content).unwrap();
+
+    let db_path = ws.path().join("index.db");
+
+    // Create indexable files.
+    let root = ws.path().join("vec_root");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("img1.txt"), "fake image").unwrap();
+    fs::write(root.join("img2.txt"), "another fake").unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+
+    // Queue the directory for indexing.
+    assert!(client.update_index(&[root.to_str().unwrap()]).is_ok());
+
+    // Wait for indexing to complete.
+    std::thread::sleep(Duration::from_millis(1200));
+
+    // The vectors table should have 2 entries.
+    let conn = open_test_db(db_path.to_str().unwrap());
+    let vec_count = common::count_vectors(&conn);
+    assert_eq!(vec_count, 2, "Two files should have vector embeddings stored");
+
+    // Verify the embeddings are valid: 4-byte header + 4*4 bytes data = 20 bytes each.
+    let vectors = common::query_vectors(&conn);
+    assert_eq!(vectors.len(), 2);
+    for (name, embedding) in &vectors {
+        assert_eq!(embedding.len(), 20, "Embedding for {} should be 20 bytes (4-byte header + 4 f32s)", name);
+        // Verify the header parses correctly.
+        let dim = u16::from_le_bytes([embedding[0], embedding[1]]);
+        let bit_width = u16::from_le_bytes([embedding[2], embedding[3]]);
+        assert_eq!(dim, 4, "Header dim for {} should be 4", name);
+        assert_eq!(bit_width, 32, "Header bit_width for {} should be 32", name);
+    }
+
+    // Verify the descriptions table is empty (vector mode does NOT write there).
+    let desc_count = common::count_descriptions(&conn);
+    assert_eq!(desc_count, 0, "Descriptions table should be empty in vector mode");
+}
+
+#[test]
+fn test_vector_mode_skips_unchanged_files() {
+    let ws = test_workspace();
+    let fp_cmd = create_mock_wrapper(&ws, &[]);
+    let vec_idx = common::create_mock_vector_indexer(&ws, 2);
+
+    let conf = ws.path().join("portal.conf");
+    let content = format!(
+        r#"log_level = trace
+
+[filepicker]
+cmd = {}
+default_save_dir = /tmp/psave
+
+[indexer]
+enable = true
+cmd = {}
+check = exit 0
+extensions = txt
+mode = vector
+"#,
+        fp_cmd.to_str().unwrap(),
+        vec_idx.to_str().unwrap()
+    );
+    fs::write(&conf, content).unwrap();
+
+    let db_path = ws.path().join("index.db");
+
+    let root = ws.path().join("vec_dedup_root");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("stable.txt"), "unchanged").unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+
+    // First index.
+    assert!(client.update_index(&[root.to_str().unwrap()]).is_ok());
+    std::thread::sleep(Duration::from_millis(800));
+
+    let conn = open_test_db(db_path.to_str().unwrap());
+    assert_eq!(common::count_vectors(&conn), 1, "First index should create 1 vector entry");
+    drop(conn);
+
+    // Re-index the same directory without modifying the file — should skip.
+    assert!(client.update_index(&[root.to_str().unwrap()]).is_ok());
+    std::thread::sleep(Duration::from_millis(800));
+
+    let conn = open_test_db(db_path.to_str().unwrap());
+    assert_eq!(common::count_vectors(&conn), 1, "Re-index should not duplicate unchanged file");
+}
+
+#[test]
+fn test_vector_mode_reindexes_modified_files() {
+    let ws = test_workspace();
+    let fp_cmd = create_mock_wrapper(&ws, &[]);
+    let vec_idx = common::create_mock_vector_indexer(&ws, 3);
+
+    let conf = ws.path().join("portal.conf");
+    let content = format!(
+        r#"log_level = trace
+
+[filepicker]
+cmd = {}
+default_save_dir = /tmp/psave
+
+[indexer]
+enable = true
+cmd = {}
+check = exit 0
+extensions = txt
+mode = vector
+"#,
+        fp_cmd.to_str().unwrap(),
+        vec_idx.to_str().unwrap()
+    );
+    fs::write(&conf, content).unwrap();
+
+    let db_path = ws.path().join("index.db");
+
+    let root = ws.path().join("vec_modify_root");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("doc.txt"), "original").unwrap();
+
+    let guard = PortalGuard::new(db_path.to_str().unwrap(), conf.to_str().unwrap());
+    std::thread::sleep(Duration::from_millis(200));
+
+    let client = PortalClient::new(&guard.service_name, &guard.object_path);
+
+    // First index.
+    assert!(client.update_index(&[root.to_str().unwrap()]).is_ok());
+    std::thread::sleep(Duration::from_millis(800));
+
+    let conn = open_test_db(db_path.to_str().unwrap());
+    assert_eq!(common::count_vectors(&conn), 1);
+    drop(conn);
+
+    // Modify the file (changes mtime) — re-index should update.
+    std::thread::sleep(Duration::from_millis(100));
+    fs::write(root.join("doc.txt"), "modified content").unwrap();
+
+    assert!(client.update_index(&[root.to_str().unwrap()]).is_ok());
+    std::thread::sleep(Duration::from_millis(800));
+
+    let conn = open_test_db(db_path.to_str().unwrap());
+    assert_eq!(common::count_vectors(&conn), 1, "Should still have exactly 1 entry (updated, not duplicated)");
+
+    // The embedding should be 4-byte header + 3 f32s = 16 bytes (as produced by the mock).
+    let vectors = common::query_vectors(&conn);
+    assert_eq!(vectors.len(), 1);
+    assert_eq!(vectors[0].1.len(), 16, "Embedding should be 16 bytes (header + 3 f32s) after re-index");
+}
