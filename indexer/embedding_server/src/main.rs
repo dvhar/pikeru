@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use anyhow::Context;
 use fastembed::{get_cache_dir, ImageEmbedding, ImageInitOptions, InitOptions, TextEmbedding};
-use image::ImageFormat;
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -244,11 +244,6 @@ fn valid_ext(ext: &str) -> bool {
     VALID_EXTS.contains(&ext.to_lowercase().as_str())
 }
 
-/// Detect image format from bytes.
-fn detect_image_format(bytes: &[u8]) -> Option<ImageFormat> {
-    image::guess_format(bytes).ok()
-}
-
 async fn handle_image_request(
     state: Arc<AppState>,
     body: &[u8],
@@ -282,18 +277,15 @@ async fn handle_image_request(
     }
 
     // Run embedding in a blocking task (CPU-intensive, needs &mut encoder)
-    let fn_name = filename;
     let img_bytes = image_bytes;
 
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<f32>> {
         let mut encoder = state.image_encoder.lock().map_err(|e| anyhow::anyhow!("mutex poison: {}", e))?;
-        let tmp_path = create_tmp_image_path(&img_bytes, &fn_name)?;
-        let embeddings = encoder.embed(&[tmp_path.as_path()], None)?;
+        let embeddings = encoder.embed_bytes(&[&img_bytes], None)?;
         let emb = embeddings
             .into_iter()
             .next()
             .ok_or_else(|| anyhow::anyhow!("empty embedding result"))?;
-        let _ = std::fs::remove_file(&tmp_path);
         Ok(emb)
     })
     .await;
@@ -308,32 +300,7 @@ async fn handle_image_request(
     }
 }
 
-/// Create a temp file path for an image, returning the path and writing data to it.
-fn create_tmp_image_path(image_bytes: &[u8], filename: &str) -> anyhow::Result<PathBuf> {
-    let pid = std::process::id();
-    let ext = filename
-        .rsplit('.')
-        .next()
-        .map(|s| s.to_lowercase())
-        .filter(|s| valid_ext(s));
 
-    let tmp_path = if let Some(ref ext) = ext {
-        PathBuf::from(format!("/tmp/pikeru_emb_{pid}.{ext}"))
-    } else {
-        match detect_image_format(image_bytes) {
-            Some(ImageFormat::Png) => PathBuf::from(format!("/tmp/pikeru_emb_{pid}.png")),
-            Some(ImageFormat::Jpeg) => PathBuf::from(format!("/tmp/pikeru_emb_{pid}.jpg")),
-            Some(ImageFormat::WebP) => PathBuf::from(format!("/tmp/pikeru_emb_{pid}.webp")),
-            Some(ImageFormat::Gif) => PathBuf::from(format!("/tmp/pikeru_emb_{pid}.gif")),
-            Some(ImageFormat::Tiff) => PathBuf::from(format!("/tmp/pikeru_emb_{pid}.tif")),
-            _ => PathBuf::from(format!("/tmp/pikeru_emb_{pid}.png")),
-        }
-    };
-
-    std::fs::write(&tmp_path, image_bytes)
-        .with_context(|| format!("failed to write temp file {}", tmp_path.display()))?;
-    Ok(tmp_path)
-}
 
 // ── Text embedding ──────────────────────────────────────────────────────────
 

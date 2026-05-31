@@ -11,10 +11,10 @@ On success, exits 0. On failure, prints to stderr and exits 1.
 
 Usage:
     # Image indexing
-    python3 embed_indexer.py http://127.0.0.1:6285 /path/to/image.jpg
+    python3 vector_indexer.py http://127.0.0.1:6285 /path/to/image.jpg
 
     # Text search query
-    python3 embed_indexer.py http://127.0.0.1:6285 "query:a cat on a wall"
+    python3 vector_indexer.py http://127.0.0.1:6285 "query:a cat on a wall"
 """
 
 import json
