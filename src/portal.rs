@@ -71,6 +71,7 @@ struct IndexerInner {
     igtxt: String,
     idx_running: bool,
     indexer_enabled: bool,
+    indexer_mode: IndexerMode,
     respect_gitignore: bool,
 }
 
@@ -188,6 +189,11 @@ impl Indexer {
              Ok(_) => {},
              Err(e) => eprintln!("{}", e),
             };
+            match c.execute("create table if not exists vectors
+                          (fname text, dir text, embedding blob, mtime real);", ()) {
+             Ok(_) => {},
+             Err(e) => eprintln!("{}", e),
+            };
             let _ = c.pragma_update(None, "journal_mode", "WAL");
         }
         let con2 = con.clone();
@@ -209,6 +215,7 @@ impl Indexer {
             igtxt: String::new(),
             idx_running: false,
             indexer_enabled: config.indexer_enabled,
+            indexer_mode: config.indexer_mode.clone(),
             respect_gitignore: true,
         })))
     }
@@ -241,7 +248,7 @@ impl Indexer {
         }
     }
 
-    async fn already_done(self: &Self, dir: &String, fname: &str, mtime: f32) -> Entry {
+    async fn already_done_description(self: &Self, dir: &String, fname: &str, mtime: f32) -> Entry {
         let guard = self.read().await;
         let c = guard.con.lock().unwrap();
         let mut query = c.prepare("select mtime from descriptions where dir = ?1 and fname = ?2").unwrap();
@@ -264,7 +271,30 @@ impl Indexer {
         ret
     }
 
-    async fn save(self: &Self, dir: &String, fname: &str, desc: &str, mtime: f32, stat: Entry) {
+    async fn already_done_vector(self: &Self, dir: &String, fname: &str, mtime: f32) -> Entry {
+        let guard = self.read().await;
+        let c = guard.con.lock().unwrap();
+        let mut query = c.prepare("select mtime from vectors where dir = ?1 and fname = ?2").unwrap();
+        let ret = match query.query([dir.as_str(), fname.as_ref()]).unwrap().next() {
+            Ok(q) => match q {
+                Some(r) => {
+                    let prev_time: f32 = r.get(0).unwrap();
+                    match prev_time == mtime {
+                        true => Entry::Done,
+                        false => Entry::Old,
+                    }
+                },
+                None => Entry::None,
+            },
+            Err(e) => {
+                error!("sqlite error: {}", e);
+                Entry::Done
+            }
+        };
+        ret
+    }
+
+    async fn save_description(self: &Self, dir: &String, fname: &str, desc: &str, mtime: f32, stat: Entry) {
         let guard = self.write().await;
         let c = guard.con.lock().unwrap();
         let mut query = c.prepare(match stat {
@@ -273,6 +303,17 @@ impl Indexer {
             Entry::Done => unreachable!(),
         }).unwrap();
         query.execute((dir, fname, desc, mtime)).unwrap();
+    }
+
+    async fn save_vector(self: &Self, dir: &String, fname: &str, embedding: &[u8], mtime: f32, stat: Entry) {
+        let guard = self.write().await;
+        let c = guard.con.lock().unwrap();
+        let mut query = c.prepare(match stat {
+            Entry::None => "insert into vectors (dir, fname, embedding, mtime) values (?1, ?2, ?3, ?4)",
+            Entry::Old => "update vectors set embedding = ?3, mtime = ?4 where dir = ?1 and fname = ?2",
+            Entry::Done => unreachable!(),
+        }).unwrap();
+        query.execute((dir, fname, embedding, mtime)).unwrap();
     }
 
     /// returns online status if file exists, otherwise true to keep going
@@ -286,26 +327,53 @@ impl Indexer {
         };
         let mtime = metadata.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f32();
         let fname = path.file_name().unwrap().to_string_lossy();
-        let stat = self.already_done(dir, &fname, mtime).await;
-        if stat == Entry::Done {
-            return true;
-        }
-        let cmd = format!("{} {}", self.read().await.cmd, shquote(path.to_string_lossy().as_ref()));
-        match tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await {
-            Ok(out) => {
-                if !out.status.success() || out.stdout.len() == 0 {
-                    error!("CMD FAILED {}: {}", cmd, unsafe { std::str::from_utf8_unchecked(&out.stderr) });
-                    return self.indexer_online().await;
-                } else {
-                    let description = unsafe { std::str::from_utf8_unchecked(&out.stdout) };
-                    trace!("{:?} DESC:{}", path, description.trim());
-                    self.save(dir, &fname, &description, mtime, stat).await;
+
+        match self.read().await.indexer_mode {
+            IndexerMode::Vector => {
+                let stat = self.already_done_vector(dir, &fname, mtime).await;
+                if stat == Entry::Done {
                     return true;
                 }
-            },
-            Err(e) => {error!("Process error: {}", e)},
-        };
-        return self.indexer_online().await;
+                let cmd = format!("{} {}", self.read().await.cmd, shquote(path.to_string_lossy().as_ref()));
+                match tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await {
+                    Ok(out) => {
+                        if !out.status.success() || out.stdout.len() == 0 {
+                            error!("CMD FAILED {}: {}", cmd, unsafe { std::str::from_utf8_unchecked(&out.stderr) });
+                            return self.indexer_online().await;
+                        } else {
+                            let embedding = out.stdout.clone();
+                            trace!("{:?} VECTOR ({} bytes)", path, embedding.len());
+                            self.save_vector(dir, &fname, &embedding, mtime, stat).await;
+                            return true;
+                        }
+                    },
+                    Err(e) => {error!("Process error: {}", e)},
+                };
+                return self.indexer_online().await;
+            }
+            IndexerMode::Text => {
+                let stat = self.already_done_description(dir, &fname, mtime).await;
+                if stat == Entry::Done {
+                    return true;
+                }
+                let cmd = format!("{} {}", self.read().await.cmd, shquote(path.to_string_lossy().as_ref()));
+                match tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await {
+                    Ok(out) => {
+                        if !out.status.success() || out.stdout.len() == 0 {
+                            error!("CMD FAILED {}: {}", cmd, unsafe { std::str::from_utf8_unchecked(&out.stderr) });
+                            return self.indexer_online().await;
+                        } else {
+                            let description = unsafe { std::str::from_utf8_unchecked(&out.stdout) };
+                            trace!("{:?} DESC:{}", path, description.trim());
+                            self.save_description(dir, &fname, &description, mtime, stat).await;
+                            return true;
+                        }
+                    },
+                    Err(e) => {error!("Process error: {}", e)},
+                };
+                return self.indexer_online().await;
+            }
+        }
     }
 
     async fn update_dir(self: &Self, dir: &String) -> DirResult {
@@ -404,6 +472,13 @@ enum Section {
     Indexer,
     Global,
 }
+
+#[derive(Clone, PartialEq, Debug)]
+enum IndexerMode {
+    Text,
+    Vector,
+}
+
 fn tilda<'a>(home: &String, dir: &'a str) -> Cow<'a,str> {
     if dir.trim_start().starts_with('~') {
         let expanded = dir.replacen("~", &home, 1);
@@ -426,6 +501,7 @@ struct Config {
     indexer_check: String,
     indexer_exts: String,
     indexer_enabled: bool,
+    indexer_mode: IndexerMode,
     use_prev_path_for_save: bool,
 }
 
@@ -471,6 +547,9 @@ check = curl http://127.0.0.1:7860/sdapi/v1/interrogate
 
 # comma-separated list of file types that 'cmd' can process.
 extensions = png,jpg,jpeg,gif,webp,tiff,bmp
+
+# Indexing mode: "text" for fuzzy text search or "vector" for vector embedding search
+mode = text
 "#;
         fs::write(target_path, content.trim_start()).expect("Unable to create config file");
     }
@@ -533,6 +612,7 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
         let mut indexer_check = "".to_string();
         let mut indexer_exts = "".to_string();
         let mut indexer_enabled = false;
+        let mut indexer_mode = IndexerMode::Text;
         let mut use_prev_path_for_save = false;
         let mut log_level = "info".to_string();
         let mut dbus_service = String::from("org.freedesktop.impl.portal.desktop.pikeru");
@@ -564,6 +644,13 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
                                 "check" => indexer_check = v.to_string(),
                                 "extensions" => indexer_exts = v.to_string(),
                                 "enable" => indexer_enabled = v.parse().unwrap_or(false),
+                                "mode" => {
+                                    match v {
+                                        "text" => indexer_mode = IndexerMode::Text,
+                                        "vector" => indexer_mode = IndexerMode::Vector,
+                                        _ => eprintln!("Unknown indexer mode '{}', defaulting to 'text'", v),
+                                    }
+                                },
                                 _ => eprintln!("Unknown indexer config value:{}", line),
                             }
                         },
@@ -614,6 +701,7 @@ extensions = png,jpg,jpeg,gif,webp,tiff,bmp
             indexer_check: tilda(&home, &indexer_check).to_string(),
             indexer_exts,
             indexer_enabled,
+            indexer_mode,
             home,
             db_path: db_path_override.unwrap_or(default_db),
             dbus_service,
