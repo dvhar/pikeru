@@ -11,7 +11,7 @@ On success, exits 0. On failure, prints to stderr and exits 1.
 
 Usage:
     # Image indexing
-    python3 vector_indexer.py http://127.0.0.1:6285 /path/to/image.jpg
+    python3 vector_indexer.py http://127.0.0.1:6285 "index:/path/to/image.jpg"
 
     # Text search query
     python3 vector_indexer.py http://127.0.0.1:6285 "query:a cat on a wall"
@@ -118,12 +118,13 @@ def fetch_text_embedding(base_url: str, text: str) -> bytes:
 
 
 QUERY_PREFIX = "query:"
+INDEX_PREFIX = "index:"
 
 
 def main():
     if len(sys.argv) != 3:
         print(
-            f"Usage: {sys.argv[0]} <server_url> <image_path | query:text>",
+            f"Usage: {sys.argv[0]} <server_url> <index:path | query:text>",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -134,8 +135,15 @@ def main():
     if arg.startswith(QUERY_PREFIX):
         text = arg[len(QUERY_PREFIX):]
         raw = fetch_text_embedding(base_url, text)
+    elif arg.startswith(INDEX_PREFIX):
+        image_path = arg[len(INDEX_PREFIX):]
+        raw = fetch_image_embedding(base_url, image_path)
     else:
-        raw = fetch_image_embedding(base_url, arg)
+        print(
+            f"Error: argument must start with '{QUERY_PREFIX}' or '{INDEX_PREFIX}'",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     write_output(raw)
 
