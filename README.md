@@ -68,4 +68,4 @@ sudo pacman -S scdoc xdg-desktop-portal ffmpeg clang
 To enable pdf and epub thumbnails, make sure `pdftoppm` and `epub-thumbnailer` are installed.
 
 ## License
-MIT License
+GPLv3
