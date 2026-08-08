@@ -2924,7 +2924,8 @@ impl FItem {
 
                     // 2. Thumbnail-generating image types
                     if matches!(ext, "svg" | "png" | "jpg" | "jpeg" | "bmp" | "tiff" | "gif" | "webp") {
-                        self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Norm, thumbsize, icons.clone()).await;
+                        let imgtype = if ext == "svg" { ImgType::Svg } else { ImgType::Norm };
+                        self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), imgtype, thumbsize, icons.clone()).await;
                         if let Some(_) = self.thumb_handle {
                             if ext == "svg" { self.svg = true; }
                             if ext == "gif" { self.gif = true; }
