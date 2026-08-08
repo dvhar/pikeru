@@ -212,6 +212,7 @@ struct Config {
     delete_confirmation: DelConfirm,
     auto_icon_threshold: Option<usize>,
     command_confirmation: bool,
+    no_cache: bool,
 }
 
 impl Config {
@@ -246,6 +247,7 @@ impl Config {
         opts.optopt("a", "auto-icon-threshold", "Auto-switch to icon view when visible images >= N (implies list mode; 0=always)", "N");
         opts.optflag("h", "help", "Show usage information");
         opts.optflag("v", "version", "Show pikeru version");
+        opts.optflag("C", "no-cache", "Do not load or save thumbnails from the cache (rebuilds them every time)");
         let matches = match opts.parse(&args) {
             Ok(m) => m,
             Err(e) => die!("Bad args: {}", e),
@@ -468,6 +470,7 @@ impl Config {
             font_name,
             auto_icon_threshold,
             command_confirmation,
+            no_cache: matches.opt_present("no-cache"),
         }
     }
 
@@ -741,6 +744,8 @@ struct Icons {
     cando_epub: bool,
     // Icon theme name for dynamic lookups
     theme_name: Option<String>,
+    // Whether to skip the thumbnail cache entirely
+    no_cache: bool,
 }
 
 struct Bookmark {
@@ -1067,6 +1072,7 @@ impl Application for FilePicker {
         let new_dir_id = text_input::Id::unique();
         let rename_id = text_input::Id::unique();
         let icon_theme = conf.icon_theme.clone();
+        let no_cache = conf.no_cache;
         (
             Self {
                 conf,
@@ -1082,7 +1088,7 @@ impl Application for FilePicker {
                 searchbar: String::new(),
                 search_running: false,
                 recurse_state: RecState::Stop,
-                icons: Arc::new(Icons::new(ts, icon_theme)),
+                icons: Arc::new(Icons::new(ts, icon_theme, no_cache)),
                 clicktimer: ClickTimer{ idx:0, time: Instant::now() - Duration::from_secs(1), preclicked: None},
                 ctrl_pressed: false,
                 shift_pressed: false,
@@ -1225,7 +1231,7 @@ impl Application for FilePicker {
                 self.conf.icon_theme = theme.clone();
                 self.conf.need_update = true;
                 // Reload icons with the new theme
-                self.icons = Arc::new(Icons::new(self.conf.thumb_size, theme));
+                self.icons = Arc::new(Icons::new(self.conf.thumb_size, theme, self.conf.no_cache));
                 // Re-load current directory to refresh folder icons
                 return self.update(Message::LoadDir);
             }
@@ -2762,17 +2768,20 @@ impl FItem {
         } else {
             format!("{:x}{}.webp", hasher.finalize(), thumbsize)
         });
-        let cmtime = match cache_path.metadata() {
-            Ok(md) => md.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
-            Err(_) => 0,
-        };
-        if cache_path.is_file() && cmtime >= fmtime {
-            let mut file = File::open(cache_path).await.ok()?;
-            let mut buffer = Vec::new();
-            file.read_to_end(&mut buffer).await.unwrap_or(0);
-            let img = load_from_memory(buffer.as_ref()).ok()?;
-            let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-            return Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+        // Read from cache unless --no-cache is set
+        if !icons.no_cache {
+            let cmtime = match cache_path.metadata() {
+                Ok(md) => md.modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+                Err(_) => 0,
+            };
+            if cache_path.is_file() && cmtime >= fmtime {
+                let mut file = File::open(&cache_path).await.ok()?;
+                let mut buffer = Vec::new();
+                file.read_to_end(&mut buffer).await.unwrap_or(0);
+                let img = load_from_memory(buffer.as_ref()).ok()?;
+                let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
+                return Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+            }
         }
         if (imgtype == ImgType::Pdf && !icons.cando_pdf) || (imgtype == ImgType::Epub && !icons.cando_epub) {
             return Some(icons.doc.clone());
@@ -2843,9 +2852,12 @@ impl FItem {
                                 let mut pixels = vec![0; numpix as usize];
                                 let mut pixmap = tiny_skia::PixmapMut::from_bytes(&mut pixels, w, h)?;
                                 resvg::render(&tree, transforem, &mut pixmap);
-                                let encoder = webp::Encoder::from_rgba(pixels.as_ref(), w, h);
-                                let wp = encoder.encode_simple(false, 50.0).ok()?;
-                                std::fs::write(cache_path, &*wp).ok()?;
+                                // Write to cache unless --no-cache
+                                if !icons.no_cache {
+                                    let encoder = webp::Encoder::from_rgba(pixels.as_ref(), w, h);
+                                    let wp = encoder.encode_simple(false, 50.0).ok()?;
+                                    std::fs::write(&cache_path, &*wp).ok()?;
+                                }
                                 Some(Handle::from_pixels(w, h, pixels))
                             },
                             Err(e) => {
@@ -2859,9 +2871,12 @@ impl FItem {
                             Ok(img) => {
                                 let thumb = img.thumbnail(thumbsize, thumbsize);
                                 let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
-                                let encoder = webp::Encoder::from_rgba(rgba.as_ref(), w, h);
-                                let wp = encoder.encode_simple(false, 50.0).ok()?;
-                                std::fs::write(cache_path, &*wp).ok()?;
+                                // Write to cache unless --no-cache
+                                if !icons.no_cache {
+                                    let encoder = webp::Encoder::from_rgba(rgba.as_ref(), w, h);
+                                    let wp = encoder.encode_simple(false, 50.0).ok()?;
+                                    std::fs::write(&cache_path, &*wp).ok()?;
+                                }
                                 Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
                             },
                             Err(e) => {
@@ -2928,9 +2943,9 @@ impl FItem {
                             self.thumb_handle = Some(icons.error.clone());
                             self.ftype = FType::File;
                         }
-                    // 4. jxl and ico — image thumbnails
+                    // 4. jxl and ico — use video-rs (ffmpeg) for frame extraction
                     } else if matches!(ext, "jxl" | "ico") {
-                        self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Norm, thumbsize, icons.clone()).await;
+                        self.thumb_handle = self.prepare_cached_thumbnail(self.path.as_str(), ImgType::Vid, thumbsize, icons.clone()).await;
                         if let Some(_) = self.thumb_handle {
                             self.ftype = FType::Image;
                         } else {
@@ -3601,7 +3616,7 @@ async fn paste(path: String, dest: String, cut: bool) {
 }
 
 impl Icons {
-    fn new(thumbsize: f32, icon_theme: Option<String>) -> Self {
+    fn new(thumbsize: f32, icon_theme: Option<String>, no_cache: bool) -> Self {
         let home = std::env::var("HOME").unwrap();
         let tpath = Path::new(&home).join(".cache").join("pikeru").join("thumbnails");
         let cando_pdf = std::process::Command::new("which").arg("pdftoppm").output().map_or(false, |output| output.status.success());
@@ -3695,6 +3710,7 @@ impl Icons {
             cando_pdf,
             cando_epub,
             theme_name: icon_theme,
+            no_cache,
         }
     }
 
