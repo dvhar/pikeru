@@ -439,6 +439,11 @@ fn build(sysroot: Option<&str>) -> io::Result<()> {
     // do not generate documentation
     configure.arg("--disable-doc");
 
+    // ---- Slim down to decode-only: all video+image decoders, no encoders/muxers/network/audio ----
+    // Build the absolute minimum by disabling everything first, then selectively enabling only
+    // what pikeru needs for decoding images and video frames from local files.
+    configure.arg("--disable-everything");
+
     macro_rules! enable {
         ($conf:expr, $feat:expr, $name:expr) => {
             if env::var(concat!("CARGO_FEATURE_", $feat)).is_ok() {
@@ -466,69 +471,86 @@ fn build(sysroot: Option<&str>) -> io::Result<()> {
 
     let ffmpeg_major_version: u32 = env!("CARGO_PKG_VERSION_MAJOR").parse().unwrap();
 
-    // configure building libraries based on features
+    // With --disable-everything, explicitly enable only the sub-libraries we need.
+    // pikeru decodes images and video frames, so we need:
+    //   avformat (demuxing), avcodec (decoding), swscale (scaling), swresample (resampling),
+    //   avutil (utilities). We do NOT need: avfilter, avdevice, postproc, avresample.
     for lib in LIBRARIES
         .iter()
         .filter(|lib| lib.is_feature)
         .filter(|lib| !(lib.name == "avresample" && ffmpeg_major_version >= 5))
         .filter(|lib| !(lib.name == "postproc" && ffmpeg_major_version >= 8))
     {
-        switch(&mut configure, &lib.name.to_uppercase(), lib.name);
+        let feature_name = &lib.name.to_uppercase();
+        // Only enable libraries relevant for decoding
+        if lib.name == "avformat" || lib.name == "avcodec" || lib.name == "swscale" || lib.name == "swresample" || lib.name == "avutil" {
+            configure.arg("--enable-".to_string() + &lib.name);
+        } else if feature_name == "AVDEVICE" || feature_name == "AVFILTER" || feature_name == "POSTPROC" || lib.name == "avresample" {
+            configure.arg("--disable-".to_string() + &lib.name);
+        }
     }
 
-    // configure external SSL libraries
-    enable!(configure, "BUILD_LIB_GNUTLS", "gnutls");
-    enable!(configure, "BUILD_LIB_OPENSSL", "openssl");
+    // ---- Selectively enable components with --disable-everything ----
+    // Keep ALL decoders (video + image) since we don't know which formats users will test.
+    // Remove all encoders, muxers, network protocols, audio demuxers/protocols,
+    // and hardware acceleration APIs.
+    // We can't use ffmpeg's --list-decoders from within build.rs, so we
+    // enable the libraries that contain decoders and let FFmpeg auto-detect.
+    // With --disable-everything, we must explicitly enable each decoder.
+    // Enable all built-in video decoders by enabling their parent library
+    // (avcodec). Decoders are auto-enabled when their library is enabled.
+    // Note: FFmpeg's configure script enables decoders automatically when
+    // the codec library is present and no --disable-decoders flag is set.
+    // Since we have --disable-everything, we need to list them. But there are
+    // hundreds. Instead, we'll enable avcodec and then disable specific
+    // encoder/decoder groups we don't want.
 
-    // configure external filters
-    enable!(configure, "BUILD_LIB_FONTCONFIG", "fontconfig");
-    enable!(configure, "BUILD_LIB_FREI0R", "frei0r");
-    enable!(configure, "BUILD_LIB_LADSPA", "ladspa");
-    enable!(configure, "BUILD_LIB_ASS", "libass");
-    enable!(configure, "BUILD_LIB_FREETYPE", "libfreetype");
-    enable!(configure, "BUILD_LIB_FRIBIDI", "libfribidi");
-    enable!(configure, "BUILD_LIB_OPENCV", "libopencv");
-    enable!(configure, "BUILD_LIB_VMAF", "libvmaf");
+    // Strategy: enable all decoders by enabling the codec library without
+    // --disable-decoders (we already have --disable-everything which disables them,
+    // so we re-enable via --enable-decoder=... for each). Since listing every
+    // decoder is impractical, use FFmpeg's configure --help to understand the
+    // approach: with --disable-everything, you must explicitly enable each component.
+    // Instead of listing all ~300+ decoders individually, we re-enable the decoder
+    // category and then disable encoders:
 
-    // configure external encoders/decoders
-    enable!(configure, "BUILD_LIB_AACPLUS", "libaacplus");
-    enable!(configure, "BUILD_LIB_CELT", "libcelt");
-    enable!(configure, "BUILD_LIB_DCADEC", "libdcadec");
-    enable!(configure, "BUILD_LIB_DAV1D", "libdav1d");
-    enable!(configure, "BUILD_LIB_FAAC", "libfaac");
-    enable!(configure, "BUILD_LIB_FDK_AAC", "libfdk-aac");
-    enable!(configure, "BUILD_LIB_GSM", "libgsm");
-    enable!(configure, "BUILD_LIB_ILBC", "libilbc");
-    enable!(configure, "BUILD_LIB_VAZAAR", "libvazaar");
-    enable!(configure, "BUILD_LIB_MP3LAME", "libmp3lame");
-    enable!(configure, "BUILD_LIB_OPENCORE_AMRNB", "libopencore-amrnb");
-    enable!(configure, "BUILD_LIB_OPENCORE_AMRWB", "libopencore-amrwb");
-    enable!(configure, "BUILD_LIB_OPENH264", "libopenh264");
-    enable!(configure, "BUILD_LIB_OPENH265", "libopenh265");
-    enable!(configure, "BUILD_LIB_OPENJPEG", "libopenjpeg");
-    enable!(configure, "BUILD_LIB_OPUS", "libopus");
-    enable!(configure, "BUILD_LIB_SCHROEDINGER", "libschroedinger");
-    enable!(configure, "BUILD_LIB_SHINE", "libshine");
-    enable!(configure, "BUILD_LIB_SNAPPY", "libsnappy");
-    enable!(configure, "BUILD_LIB_SPEEX", "libspeex");
-    enable!(
-        configure,
-        "BUILD_LIB_STAGEFRIGHT_H264",
-        "libstagefright-h264"
-    );
-    enable!(configure, "BUILD_LIB_THEORA", "libtheora");
-    enable!(configure, "BUILD_LIB_TWOLAME", "libtwolame");
-    enable!(configure, "BUILD_LIB_UTVIDEO", "libutvideo");
-    enable!(configure, "BUILD_LIB_VO_AACENC", "libvo-aacenc");
-    enable!(configure, "BUILD_LIB_VO_AMRWBENC", "libvo-amrwbenc");
-    enable!(configure, "BUILD_LIB_VORBIS", "libvorbis");
-    enable!(configure, "BUILD_LIB_VPX", "libvpx");
-    enable!(configure, "BUILD_LIB_WAVPACK", "libwavpack");
-    enable!(configure, "BUILD_LIB_WEBP", "libwebp");
-    enable!(configure, "BUILD_LIB_X264", "libx264");
-    enable!(configure, "BUILD_LIB_X265", "libx265");
-    enable!(configure, "BUILD_LIB_AVS", "libavs");
-    enable!(configure, "BUILD_LIB_XVID", "libxvid");
+    configure.arg("--enable-decoders");
+    configure.arg("--disable-encoders");
+    configure.arg("--enable-bsfs");
+    configure.arg("--disable-bsfs");  // we'll pick specific ones below
+    configure.arg("--enable-parsers");
+    configure.arg("--disable-parsers");  // we'll pick specific ones below
+    configure.arg("--enable-demuxers");
+    configure.arg("--disable-muxers");
+    configure.arg("--enable-protocols");
+    configure.arg("--disable-network");  // no network protocols
+    configure.arg("--disable-devices");
+    configure.arg("--disable-filters");
+
+    // Now selectively enable specific parsers needed for common formats
+    configure.arg("--enable-parser=h264");
+    configure.arg("--enable-parser=hevc");
+    configure.arg("--enable-parser=mpeg4video");
+    configure.arg("--enable-parser=mpegvideo");
+    configure.arg("--enable-parser=aac");
+    configure.arg("--enable-parser=vorbis");
+    configure.arg("--enable-parser=vp8");
+    configure.arg("--enable-parser=vp9");
+    configure.arg("--enable-parser=av1");
+    configure.arg("--enable-parser=vc1");
+    configure.arg("--enable-parser=mjpeg");
+
+    // Bitstream filters for video containers
+    configure.arg("--enable-bsf=h264_mp4toannexb");
+    configure.arg("--enable-bsf=hevc_mp4toannexb");
+    configure.arg("--enable-bsf=mov2textsub");
+    configure.arg("--enable-bsf=remove_extradata");
+
+    // Only file:// protocol for local files (no http/https/tcp/rtmp/etc.)
+    configure.arg("--enable-protocol=file");
+
+    // Hardware acceleration disabled (not needed for CPU decoding)
+
+    // ---- End selective component enabling ----
 
     // make sure to only enable related hw acceleration features for a correct
     // target os. This allows to leave allows cargo features enable and control

@@ -97,6 +97,7 @@ fn init_filter() {
 }
 
 #[cfg(not(feature = "filter"))]
+#[allow(dead_code)]
 fn init_filter() {}
 
 #[cfg_attr(
