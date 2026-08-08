@@ -56,12 +56,12 @@ The filepicker and the portal that launches the filepicker each have their own c
 
 ### Ubuntu:
 ```
-sudo apt install build-essential scdoc pkg-config libavutil-dev libavformat-dev libavfilter-dev libavdevice-dev libclang-dev
+sudo apt install build-essential scdoc pkg-config libclang-dev
 ```
 
 ### Arch:
 ```
-sudo pacman -S scdoc xdg-desktop-portal ffmpeg clang
+sudo pacman -S scdoc xdg-desktop-portal clang
 ```
 
 #### Optional:
