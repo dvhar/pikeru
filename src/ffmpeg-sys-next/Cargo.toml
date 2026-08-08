@@ -11,7 +11,7 @@
 
 [package]
 name = "ffmpeg-sys-next"
-version = "8.1.0"
+version = "8.1.0-pikeru"
 authors = [
     "meh. <meh@schizofreni.co>",
     "Zhiming Wang <i@zhimingwang.org>",

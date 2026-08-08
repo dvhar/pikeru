@@ -1299,7 +1299,7 @@ dependencies = [
 
 [[package]]
 name = "ffmpeg-next"
-version = "8.1.0"
+version = "8.1.0-pikeru"
 dependencies = [
  "bitflags 2.11.1",
  "ffmpeg-sys-next",
@@ -1308,7 +1308,7 @@ dependencies = [
 
 [[package]]
 name = "ffmpeg-sys-next"
-version = "8.1.0"
+version = "8.1.0-pikeru"
 dependencies = [
  "bindgen",
  "cc",

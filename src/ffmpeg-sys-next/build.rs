@@ -491,177 +491,80 @@ fn build(sysroot: Option<&str>) -> io::Result<()> {
     }
 
     // ---- Selectively enable components with --disable-everything ----
-    // Keep ALL decoders (video + image) since we don't know which formats users will test.
-    // Remove all encoders, muxers, network protocols, audio demuxers/protocols,
-    // and hardware acceleration APIs.
-    // We can't use ffmpeg's --list-decoders from within build.rs, so we
-    // enable the libraries that contain decoders and let FFmpeg auto-detect.
-    // With --disable-everything, we must explicitly enable each decoder.
-    // Enable all built-in video decoders by enabling their parent library
-    // (avcodec). Decoders are auto-enabled when their library is enabled.
-    // Note: FFmpeg's configure script enables decoders automatically when
-    // the codec library is present and no --disable-decoders flag is set.
-    // Since we have --disable-everything, we need to list them. But there are
-    // hundreds. Instead, we'll enable avcodec and then disable specific
-    // encoder/decoder groups we don't want.
+    // Keep ALL video decoders (video + image), remove all audio/encoding/network/hwaccel.
+    // With --disable-everything, FFmpeg requires every component to be explicitly enabled.
+    // We enumerate the full list of 268 video decoders from `ffmpeg -codecs`.
 
-    // Strategy: enable all decoders by enabling the codec library without
-    // --disable-decoders (we already have --disable-everything which disables them,
-    // so we re-enable via --enable-decoder=... for each). Since listing every
-    // decoder is impractical, use FFmpeg's configure --help to understand the
-    // approach: with --disable-everything, you must explicitly enable each component.
-    // Instead of listing all ~300+ decoders individually, we re-enable the decoder
-    // category and then disable encoders:
-
-    configure.arg("--enable-decoders");
+    // Disable everything we don't want at the category level
+    configure.arg("--disable-decoders");  // re-enable video ones below explicitly
     configure.arg("--disable-encoders");
-    configure.arg("--enable-bsfs");
-    configure.arg("--disable-bsfs");  // we'll pick specific ones below
-    configure.arg("--enable-parsers");
-    configure.arg("--disable-parsers");  // we'll pick specific ones below
-    configure.arg("--enable-demuxers");
+    configure.arg("--disable-parsers");   // re-enable all parsers below
+    configure.arg("--disable-demuxers");  // re-enable all demuxers below
     configure.arg("--disable-muxers");
-    configure.arg("--enable-protocols");
-    configure.arg("--disable-network");  // no network protocols
+    configure.arg("--disable-protocols"); // re-enable only file below
     configure.arg("--disable-devices");
     configure.arg("--disable-filters");
+    configure.arg("--disable-hwaccels");
 
-    // Now selectively enable specific parsers needed for common formats
-    configure.arg("--enable-parser=h264");
-    configure.arg("--enable-parser=hevc");
-    configure.arg("--enable-parser=mpeg4video");
-    configure.arg("--enable-parser=mpegvideo");
-    configure.arg("--enable-parser=aac");
-    configure.arg("--enable-parser=vorbis");
-    configure.arg("--enable-parser=vp8");
-    configure.arg("--enable-parser=vp9");
-    configure.arg("--enable-parser=av1");
-    configure.arg("--enable-parser=vc1");
-    configure.arg("--enable-parser=mjpeg");
+    // Video decoders — actual FFmpeg decoder names from allcodecs.c
+    // (NOT codec IDs; --enable-decoder uses the .name field, not AV_CODEC_ID)
+    let video_decoders = [
+"aasc","agm","aic","alias_pix","amv","anm","ansi","apng","apv","arbc",
+"argo","asv1","asv2","aura","aura2","av1","av1_amf","av1_cuvid","av1_qsv",
+"avrn","avrp","avs","avui","bethsoftvid","bfi","bintext","bitpacked","bmp",
+"bmv_video","brender_pix","c93","cavs","cdgraphics","cdtoons","cdxl",
+"cfhd","cinepak","clearvideo","cljr","cllc","cpia","cri","cyuv","dds","dfa",
+"dirac","dnxhd","dpx","dsicinvideo","dvvideo","dxa","dxtory","dxv",
+"eacmv","eamad","eatgq","eatgv","eatqi","escape124","escape130","evrc",
+"exr","ffv1","ffvhuff","fic","fits","flashsv","flashsv2","flic","flv",
+"fmvc","fraps","frwu","g2m","gdv","gem","gif","h261","h263","h263i",
+"h263p","h264","h264_amf","h264_cuvid","h264_qsv","h264_v4l2m2m","hap",
+"hdr","hevc","hevc_amf","hevc_cuvid","hevc_qsv","hevc_v4l2m2m","hq_hqa",
+"hqx","huffyuv","hymt","idf","imm4","imm5","indeo2","indeo3","indeo4",
+"indeo5","ipu","jpeg2000","jpegls","jv","kgv1","kmvc","lagarith","lead",
+"libdav1d","libjxl","libjxl_anim","librsvg","loco","lscr","m101","mdec",
+"media100","metasound","mimic","mjpeg","mjpegb","mjpeg_cuvid","mjpeg_qsv",
+"mmvideo","mobiclip","motionpixels","mpeg1_cuvid","mpeg1_v4l2m2m",
+"mpeg1video","mpeg2_cuvid","mpeg2_qsv","mpeg2_v4l2m2m","mpeg2video","mpeg4",
+"mpeg4_cuvid","mpeg4_v4l2m2m","msa1","mscc","msrle","mss1","mss2","msvideo1",
+"mszh","mts2","mv30","mvc1","mvc2","mvdv","mvha","mwsc","mxpeg","notchlc",
+"nuv","on2avc","paf_video","pam","pbm","pcx","pdv","pfm","pgm","pgmyuv",
+"pgx","phm","photocd","pictor","pixlet","png","ppm","prores","prores_raw",
+"prosumer","psd","ptx","qdraw","qoi","qpeg","qtrle","r10k","r210","rasc",
+"rawvideo","rl2","rpza","rscc","rtv1","rv10","rv20","rv30","rv40","rv60",
+"sanm","scpr","screenpresso","sga","sgi","sgirle","sheervideo",
+"simbiosis_imx","smc","smvjpeg","snow","sp5x","speedhq","srgc","sunrast",
+"svq1","svq3","targa","targa_y216","tdsc","theora","thp","tiertexseqvideo",
+"tiff","tmv","truemotion1","truemotion2","truemotion2rt","tscc2","txd",
+"utvideo","v210","v210x","vb","vble","vbn","vc1","vc1_cuvid","vc1image",
+"vc1_qsv","vc1_v4l2m2m","vcr1","vmdvideo","vmix","vmnc","vnull","vp3",
+"vp4","vp5","vp6","vp6a","vp6f","vp7","vp8","vp8_cuvid","vp8_qsv",
+"vp8_v4l2m2m","vp9","vp9_amf","vp9_cuvid","vp9_qsv","vp9_v4l2m2m","vqc",
+"vvc","vvc_qsv","wbmp","wcmv","webp","wmv1","wmv2","wmv3","wmv3image",
+"wnv1","wrapped_avframe","xan_wc3","xan_wc4","xbin","xbm","xface","xpm",
+"xwd","y41p","ylc","yop","yuv4","zerocodec","zlib","zmbv",
+    ];
+    for dec in &video_decoders {
+        configure.arg(format!("--enable-decoder={}", dec));
+    }
 
-    // Bitstream filters for video containers
-    configure.arg("--enable-bsf=h264_mp4toannexb");
-    configure.arg("--enable-bsf=hevc_mp4toannexb");
-    configure.arg("--enable-bsf=mov2textsub");
-    configure.arg("--enable-bsf=remove_extradata");
+    // Enable all demuxers — needed to open video/image containers
+    configure.arg("--enable-demuxers");
+
+    // Enable all parsers — needed for codec-specific stream parsing
+    configure.arg("--enable-parsers");
+
+    // Enable all bitstream filters — needed for container/frame handling
+    configure.arg("--enable-bsfs");
 
     // Only file:// protocol for local files (no http/https/tcp/rtmp/etc.)
     configure.arg("--enable-protocol=file");
 
-    // Hardware acceleration disabled (not needed for CPU decoding)
-
     // ---- End selective component enabling ----
 
-    // make sure to only enable related hw acceleration features for a correct
-    // target os. This allows to leave allows cargo features enable and control
-    // ffmpeg compilation using target only
-    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
-
-    // Apple VideoToolbox (iOS and macOS)
-    if env::var("CARGO_FEATURE_BUILD_VIDEOTOOLBOX").is_ok()
-        && matches!(target_os.as_str(), "ios" | "macos")
-    {
-        configure.arg("--enable-videotoolbox");
-
-        if target != host && env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") {
-            configure.arg("--extra-cflags=-mios-version-min=11.0");
-        }
-
-        if target != host && env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
-            configure.arg("--extra-cflags=-mmacosx-version-min=10.11");
-        }
-    }
-
-    // Apple audio hw acceleration API (iOS and macOS)
-    if env::var("CARGO_FEATURE_BUILD_AUDIOTOOLBOX").is_ok()
-        && matches!(target_os.as_str(), "ios" | "macos")
-    {
-        configure.arg("--enable-audiotoolbox");
-        configure.arg("--extra-cflags=-mios-version-min=11.0");
-    }
-
-    // Linux video acceleration API (VAAPI)
-    if env::var("CARGO_FEATURE_BUILD_VAAPI").is_ok() && matches!(target_os.as_str(), "linux") {
-        configure.arg("--enable-vaapi");
-    }
-
-    if env::var("CARGO_FEATURE_BUILD_LIB_D3D11VA").is_ok()
-        && matches!(target_os.as_str(), "windows")
-    {
-        configure.arg("--enable-d3d11va");
-    }
-
-    // DirectX Video Acceleration 2 (Windows only)
-    if env::var("CARGO_FEATURE_BUILD_LIB_DXVA2").is_ok() && matches!(target_os.as_str(), "windows")
-    {
-        configure.arg("--enable-dxva2");
-    }
-
-    // NVIDIA NVENC/NVDEC acceleration (Linux and Windows)
-    if env::var("CARGO_FEATURE_BUILD_NVIDIA").is_ok()
-        && matches!(target_os.as_str(), "linux" | "windows")
-    {
-        configure.arg("--enable-libnpp");
-        configure.arg("--enable-cuda-nvcc");
-        configure.arg("--enable-cuvid");
-        configure.arg("--enable-nvenc");
-        configure.arg("--enable-cuda-llvm");
-
-        let cuda_path = env::var("CUDA_PATH").unwrap_or(if target_os == "linux" {
-            "/usr/local/cuda".to_string()
-        } else {
-            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA".to_string()
-        });
-        println!("cargo:rustc-link-arg=-L{cuda_path}/lib64");
-        println!("cargo:rustc-link-arg=-I{cuda_path}/include");
-
-        // Additional configuration may be needed for CUDA toolkit path
-        // This could be provided as an environment variable
-        if let Ok(cuda_path) = env::var("CUDA_PATH") {
-            configure.arg(format!("--cuda-path={cuda_path}"));
-        }
-    }
-
-    // Intel Quick Sync Video (Linux and Windows)
-    if env::var("CARGO_FEATURE_BUILD_LIB_LIBMFX").is_ok()
-        && matches!(target_os.as_str(), "linux" | "windows")
-    {
-        configure.arg("--enable-libmfx");
-    }
-
-    // Android MediaCodec (Android only)
-    if env::var("CARGO_FEATURE_BUILD_MEDIACODEC").is_ok() && target_os == "android" {
-        configure.arg("--enable-mediacodec");
-        configure.arg("--enable-jni");
-
-        // Add common MediaCodec decoders
-        configure.arg("--enable-decoder=h264_mediacodec");
-        configure.arg("--enable-decoder=hevc_mediacodec");
-        configure.arg("--enable-decoder=vp8_mediacodec");
-        configure.arg("--enable-decoder=vp9_mediacodec");
-        configure.arg("--enable-decoder=av1_mediacodec");
-    }
-
-    // AMD Advanced Media Framework (Linux and Windows)
-    if env::var("CARGO_FEATURE_BUILD_AMF").is_ok()
-        && matches!(target_os.as_str(), "linux" | "windows")
-        && matches!(
-            env::var("CARGO_FEATURE_TARGET_ARCH").as_deref(),
-            Ok("x86_64")
-        )
-    {
-        configure.arg("--enable-amf");
-    }
-
-    enable!(configure, "BUILD_VULKAN", "vulkan");
-
-    // other external libraries
-    enable!(configure, "BUILD_LIB_DRM", "libdrm");
-    enable!(configure, "BUILD_NVENC", "nvenc");
-
-    // configure external protocols
-    enable!(configure, "BUILD_LIB_SMBCLIENT", "libsmbclient");
-    enable!(configure, "BUILD_LIB_SSH", "libssh");
+    // Hardware acceleration completely disabled — we do CPU decoding only.
+    // No VAAPI, CUDA, videotoolbox, AMF, D3D11VA, DXVA2, MediaCodec, etc.
+    let _target_os = env::var("CARGO_CFG_TARGET_OS").unwrap(); // keep variable for other uses
 
     // configure misc build options
     enable!(configure, "BUILD_PIC", "pic");
