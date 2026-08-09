@@ -2,11 +2,11 @@
 
 pkgname=pikeru
 pkgver=1.17
-pkgrel=1
+pkgrel=2
 pkgdesc="A system file picker with proper thumbnails and search"
 arch=('x86_64')
 url="https://github.com/dvhar/pikeru"
-license=('MIT')
+license=('GPLv3')
 depends=('xdg-desktop-portal' 'poppler')
 makedepends=('cargo' 'clang' 'scdoc')
 optdepends=('epub-thumbnailer-git: epub thumbnail support')
