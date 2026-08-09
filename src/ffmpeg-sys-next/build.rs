@@ -289,6 +289,20 @@ fn build(sysroot: Option<&str>) -> io::Result<()> {
         Command::new(&configure_path)
     };
 
+    // Make pkg-config find system libraries (libdav1d, libaom, etc.)
+    let mut pkg_path = std::env::var("PKG_CONFIG_PATH").unwrap_or_default();
+    for extra in &["/usr/lib/pkgconfig", "/usr/lib64/pkgconfig"] {
+        if !pkg_path.contains(extra) {
+            if pkg_path.is_empty() {
+                pkg_path = extra.to_string();
+            } else {
+                pkg_path.push(':');
+                pkg_path.push_str(extra);
+            }
+        }
+    }
+    configure.env("PKG_CONFIG_PATH", &pkg_path);
+
     configure.current_dir(&source_dir);
     configure.arg(format!("--prefix={}", search().to_string_lossy()));
 
@@ -505,6 +519,10 @@ fn build(sysroot: Option<&str>) -> io::Result<()> {
     configure.arg("--disable-devices");
     configure.arg("--disable-filters");
     configure.arg("--disable-hwaccels");
+
+    // Enable external codec libraries needed for AV1 decoding (GPL).
+    // With --disable-everything, these must be explicitly enabled even if the decoder is.
+    configure.arg("--enable-libdav1d");
 
     // Video decoders — actual FFmpeg decoder names from allcodecs.c
     // (NOT codec IDs; --enable-decoder uses the .name field, not AV_CODEC_ID)
