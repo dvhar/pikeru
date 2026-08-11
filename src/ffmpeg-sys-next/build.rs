@@ -8,7 +8,7 @@ use std::fmt::Write as FmtWrite;
 use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, exit};
 use std::str;
 
 use bindgen::callbacks::{
@@ -145,6 +145,116 @@ fn output() -> PathBuf {
     PathBuf::from(env::var("OUT_DIR").unwrap())
 }
 
+/// Build libdav1d statically and install to a local directory.
+/// This is needed because --enable-libdav1d normally links against the system
+/// shared library, but we want everything static.
+fn build_static_dav1d(build_dir: &Path) {
+    let install_dir = build_dir.join("dav1d-install");
+    let src_dir = build_dir.join("dav1d-src");
+    let pc_dir = install_dir.join("lib/pkgconfig");
+    // The prebuilt static lib destination (separate from meson output)
+    let static_lib_dst = install_dir.join("lib/libdav1d.a");
+
+    // Skip if already built (check the installed version)
+    if static_lib_dst.exists() {
+        return;
+    }
+
+    println!("cargo:warning=Building static libdav1d for AV1 support...");
+
+    // Clone dav1d source (deep clone for speed)
+    if !src_dir.join("meson.build").exists() {
+        let _ = std::fs::remove_dir_all(&src_dir);
+        let status = Command::new("git")
+            .args([
+                "clone",
+                "--depth=1",
+                "https://code.videolan.org/videolan/dav1d.git",
+            ])
+            .arg(src_dir.to_str().unwrap())
+            .status()
+            .expect("Failed to clone dav1d");
+        if !status.success() {
+            exit(1);
+        }
+    }
+
+    // Setup meson build
+    let build_out = src_dir.join("build");
+    let _ = std::fs::remove_dir_all(&build_out);
+    let status = Command::new("meson")
+        .args([
+            "setup",
+            "build",
+            "--prefix",
+            install_dir.to_str().unwrap(),
+            "--buildtype=release",
+            "-Ddefault_library=static",
+        ])
+        .current_dir(&src_dir)
+        .status()
+        .expect("Failed to setup dav1d meson build");
+    if !status.success() {
+        exit(1);
+    }
+
+    // Compile
+    let status = Command::new("meson")
+        .args(["compile", "-C", "build"])
+        .current_dir(&src_dir)
+        .status()
+        .expect("Failed to compile dav1d");
+    if !status.success() {
+        exit(1);
+    }
+
+    // Install (copy files only, not metadata)
+    fs::create_dir_all(&pc_dir).ok();
+    for entry in build_out.read_dir().unwrap() {
+        let entry = entry.unwrap().path();
+        if entry.is_file() {
+            let filename = entry.file_name().unwrap();
+            if filename.to_string_lossy().ends_with(".a") || filename.to_string_lossy() == "meson-private" {
+                // skip .pc files from build dir, they get installed
+            }
+        }
+    }
+
+    // meson outputs the .a under src/ (the default libname)
+    let static_src = if build_out.join("libdav1d.a").exists() {
+        build_out.join("libdav1d.a")
+    } else {
+        build_out.join("src/libdav1d.a")
+    };
+    fs::copy(&static_src, &static_lib_dst).expect("Failed to copy libdav1d.a");
+
+    // Copy headers
+    let include_dir = install_dir.join("include/dav1d");
+    fs::create_dir_all(&include_dir).ok();
+    for entry in build_out.join("include/dav1d").read_dir().unwrap() {
+        let entry = entry.unwrap().path();
+        if entry.is_file() {
+            fs::copy(&entry, include_dir.join(entry.file_name().unwrap())).ok();
+        }
+    }
+
+    // Write .pc file for ffmpeg's pkg-config
+    let version = fs::read_to_string(src_dir.join("VERSION"))
+        .ok()
+        .map(|v| v.trim().to_string())
+        .unwrap_or_else(|| "1.0.0".to_string());
+    fs::write(
+        pc_dir.join("dav1d.pc"),
+        format!(
+            "prefix={}\nincludedir={{prefix}}/include\nlibdir={{prefix}}/lib\n\n\
+             Name: libdav1d\nDescription: AV1 decoding library\nVersion: {}\n\
+             Libs: -L{{libdir}} -ldav1d -pthread -ldl\nCflags: -I{{includedir}} -pthread",
+            install_dir.display(),
+            version,
+        ),
+    ).expect("Failed to write dav1d.pc");
+}
+
 fn source() -> PathBuf {
     output().join(format!("ffmpeg-{}", version()))
 }
@@ -248,6 +358,10 @@ fn find_sysroot() -> Option<String> {
 
 fn build(sysroot: Option<&str>) -> io::Result<()> {
     let source_dir = source();
+
+    // Build static libdav1d for AV1 support.
+    build_static_dav1d(&source_dir);
+
     if cfg!(target_os = "windows") {
         let path = env::var("PATH").unwrap_or_default();
         let mut paths = env::split_paths(&path).collect::<Vec<_>>();
@@ -288,6 +402,21 @@ fn build(sysroot: Option<&str>) -> io::Result<()> {
     } else {
         Command::new(&configure_path)
     };
+
+    // Make pkg-config find system libraries (libaom, etc.)
+    let pkg_path = std::env::var("PKG_CONFIG_PATH").unwrap_or_default();
+    let mut pkg_path = pkg_path.clone();
+    for extra in &["/usr/lib/pkgconfig", "/usr/lib64/pkgconfig"] {
+        if !pkg_path.contains(extra) {
+            if pkg_path.is_empty() {
+                pkg_path = extra.to_string();
+            } else {
+                pkg_path.push(':');
+                pkg_path.push_str(extra);
+            }
+        }
+    }
+    configure.env("PKG_CONFIG_PATH", &pkg_path);
 
     configure.current_dir(&source_dir);
     configure.arg(format!("--prefix={}", search().to_string_lossy()));
@@ -506,6 +635,10 @@ fn build(sysroot: Option<&str>) -> io::Result<()> {
     configure.arg("--disable-filters");
     configure.arg("--disable-hwaccels");
 
+    // Enable external codec libraries needed for AV1 decoding (GPL).
+    // With --disable-everything, these must be explicitly enabled even if the decoder is.
+    configure.arg("--enable-libdav1d");
+
     // Video decoders — actual FFmpeg decoder names from allcodecs.c
     // (NOT codec IDs; --enable-decoder uses the .name field, not AV_CODEC_ID)
     let video_decoders = [
@@ -612,6 +745,15 @@ fn build(sysroot: Option<&str>) -> io::Result<()> {
         .success()
     {
         return Err(io::Error::other("make install failed"));
+    }
+
+    // Copy static libdav1d into the ffmpeg dist/lib for linking
+    let dav1d_src = source_dir.join("dav1d-install/lib/libdav1d.a");
+    if dav1d_src.exists() {
+        let dist_lib = search().join("lib");
+        fs::create_dir_all(&dist_lib).ok();
+        fs::copy(&dav1d_src, dist_lib.join("libdav1d.a"))
+            .expect("Failed to copy libdav1d.a to dist/lib");
     }
 
     Ok(())
@@ -881,6 +1023,12 @@ fn link_to_libraries(statik: bool) {
     println!("cargo:rustc-link-arg=-Wl,--no-as-needed");
     if env::var("CARGO_FEATURE_BUILD_ZLIB").is_ok() && cfg!(target_os = "linux") {
         println!("cargo:rustc-link-lib=z");
+    }
+    // Link static libdav1d if it was built into the dist/lib directory
+    let dav1d_a = search().join("lib").join("libdav1d.a");
+    if dav1d_a.exists() {
+        println!("cargo:rustc-link-search=native={}", search().join("lib").to_string_lossy());
+        println!("cargo:rustc-link-lib=static=dav1d");
     }
 }
 

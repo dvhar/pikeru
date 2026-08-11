@@ -17,7 +17,10 @@ ffmpeg-next = { path = "../ffmpeg-next", default-features = false, features = [
 	"software-resampling",
 	"software-scaling",
 	"static",
-	"build"
+	"build",
+	"build-license-gpl",
+	"build-license-version3",
+	"build-lib-dav1d"
 ] }
 ndarray = { version = "0.16", optional = true }
 tracing = "0.1"
