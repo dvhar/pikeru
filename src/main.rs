@@ -6,6 +6,8 @@ use iced_gif;
 use iced_gif::widget::gif;
 use img::load_from_memory;
 use img;
+use img::metadata::Orientation;
+use std::io::Cursor;
 use webp;
 use num_cpus;
 use itertools::Itertools;
@@ -2674,15 +2676,11 @@ impl FItem {
                             Err(_) => return Preview::None,
                         };
                     } else {
-                        match load_from_memory(data.as_ref()) {
-                            Ok(img) => {
-                                let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
-                                Preview::Image(Handle::from_pixels(w, h, rgba.as_raw().clone()))
-                            },
-                            Err(e) => {
-                                eprintln!("Error decoding image {}:{}", self.path, e);
-                                Preview::None
-                            },
+                        if let Some(img) = Self::load_with_orientation(&data) {
+                            let (w,h,rgba) = (img.width(), img.height(), img.into_rgba8());
+                            Preview::Image(Handle::from_pixels(w, h, rgba.as_raw().clone()))
+                        } else {
+                            Preview::None
                         }
                     }
                 }
@@ -2748,6 +2746,40 @@ impl FItem {
         }))
     }
 
+    /// Load an image from memory and apply any EXIF orientation metadata.
+    /// Returns the correctly-oriented DynamicImage, or None on failure.
+    fn load_with_orientation(buffer: &[u8]) -> Option<img::DynamicImage> {
+        use img::ImageDecoder;
+        use img::ImageReader;
+        // Get format first
+        let format = img::guess_format(buffer).ok()?;
+        // Load image with ImageReader (this is the actual decode)
+        let mut img = ImageReader::new(Cursor::new(buffer))
+            .with_guessed_format()
+            .ok()?
+            .decode()
+            .ok()?;
+        // For JPEG and TIFF, check for EXIF orientation and apply it.
+        if matches!(format, img::ImageFormat::Jpeg) {
+            if let Ok(mut decoder) = img::codecs::jpeg::JpegDecoder::new(Cursor::new(buffer)) {
+                if let Ok(orientation) = ImageDecoder::orientation(&mut decoder) {
+                    if orientation != Orientation::NoTransforms {
+                        img.apply_orientation(orientation);
+                    }
+                }
+            }
+        } else if matches!(format, img::ImageFormat::Tiff) {
+            if let Ok(mut decoder) = img::codecs::tiff::TiffDecoder::new(Cursor::new(buffer)) {
+                if let Ok(orientation) = ImageDecoder::orientation(&mut decoder) {
+                    if orientation != Orientation::NoTransforms {
+                        img.apply_orientation(orientation);
+                    }
+                }
+            }
+        }
+        Some(img)
+    }
+
     async fn prepare_cached_thumbnail(
             self: &Self,
             path: &str,
@@ -2790,7 +2822,7 @@ impl FItem {
             let mut buffer = Vec::new();
             let mut file = File::open(self.path.as_str()).await.ok()?;
             file.read_to_end(&mut buffer).await.unwrap_or(0);
-            let img = load_from_memory(buffer.as_ref()).ok()?;
+            let img = Self::load_with_orientation(buffer.as_ref())?;
             let thumb = img.thumbnail(thumbsize, thumbsize);
             let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
             Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
@@ -2866,24 +2898,16 @@ impl FItem {
                             },
                         }
                     } else {
-                        let img = load_from_memory(buffer.as_ref());
-                        match img {
-                            Ok(img) => {
-                                let thumb = img.thumbnail(thumbsize, thumbsize);
-                                let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
-                                // Write to cache unless --no-cache
-                                if !icons.no_cache {
-                                    let encoder = webp::Encoder::from_rgba(rgba.as_ref(), w, h);
-                                    let wp = encoder.encode_simple(false, 50.0).ok()?;
-                                    std::fs::write(&cache_path, &*wp).ok()?;
-                                }
-                                Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
-                            },
-                            Err(e) => {
-                                eprintln!("Error decoding image {}: {}", self.path, e);
-                                None
-                            },
+                        let img = Self::load_with_orientation(buffer.as_ref())?;
+                        let thumb = img.thumbnail(thumbsize, thumbsize);
+                        let (w,h,rgba) = (thumb.width(), thumb.height(), thumb.into_rgba8());
+                        // Write to cache unless --no-cache
+                        if !icons.no_cache {
+                            let encoder = webp::Encoder::from_rgba(rgba.as_ref(), w, h);
+                            let wp = encoder.encode_simple(false, 50.0).ok()?;
+                            std::fs::write(&cache_path, &*wp).ok()?;
                         }
+                        Some(Handle::from_pixels(w, h, rgba.as_raw().clone()))
                     }
                 },
                 Err(e) => {
