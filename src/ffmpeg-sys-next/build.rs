@@ -148,7 +148,7 @@ fn output() -> PathBuf {
 /// Build libdav1d statically and install to a local directory.
 /// This is needed because --enable-libdav1d normally links against the system
 /// shared library, but we want everything static.
-fn build_static_dav1d(build_dir: &Path) {
+fn build_static_dav1d(build_dir: &Path) -> io::Result<()> {
     let install_dir = build_dir.join("dav1d-install");
     let src_dir = build_dir.join("dav1d-src");
     let pc_dir = install_dir.join("lib/pkgconfig");
@@ -157,25 +157,43 @@ fn build_static_dav1d(build_dir: &Path) {
 
     // Skip if already built (check the installed version)
     if static_lib_dst.exists() {
-        return;
+        return Ok(());
     }
 
-    println!("cargo:warning=Building static libdav1d for AV1 support...");
-
-    // Clone dav1d source (deep clone for speed)
+    // Try to download a prebuilt tarball from GitHub, fall back to git clone.
     if !src_dir.join("meson.build").exists() {
         let _ = std::fs::remove_dir_all(&src_dir);
-        let status = Command::new("git")
-            .args([
-                "clone",
-                "--depth=1",
-                "https://code.videolan.org/videolan/dav1d.git",
-            ])
-            .arg(src_dir.to_str().unwrap())
-            .status()
-            .expect("Failed to clone dav1d");
-        if !status.success() {
-            exit(1);
+        let tarball_url = "https://github.com/dvhar/dav1d/archive/refs/tags/1.5.4.tar.gz";
+        let tarball_path = build_dir.join("dav1d-1.5.4.tar.gz");
+        let dl_status = Command::new("curl")
+            .args(["--fail", "--location", "--output"])
+            .arg(&tarball_path)
+            .arg(tarball_url)
+            .status();
+
+        if let Ok(status) = dl_status {
+            if status.success() {
+                // Extract the tarball
+                let tar_status = Command::new("tar")
+                    .args(["-xzf", tarball_path.to_str().unwrap(), "-C", build_dir.to_str().unwrap()])
+                    .status()
+                    .expect("Failed to extract dav1d tarball");
+                if !tar_status.success() {
+                    exit(1);
+                }
+                // Rename the extracted directory (dav1d-1.5.4 -> dav1d-src)
+                let extracted = build_dir.join("dav1d-1.5.4");
+                if extracted.exists() {
+                    std::fs::rename(extracted, &src_dir).expect("Failed to rename extracted dav1d directory");
+                }
+            } else {
+                println!("cargo:warning=Failed to download tarball, falling back to git clone...");
+                let _ = std::fs::remove_file(&tarball_path);
+                do_git_clone_dav1d(&src_dir)?;
+            }
+        } else {
+            println!("cargo:warning=curl not available, falling back to git clone...");
+            do_git_clone_dav1d(&src_dir)?;
         }
     }
 
@@ -226,7 +244,7 @@ fn build_static_dav1d(build_dir: &Path) {
     } else {
         build_out.join("src/libdav1d.a")
     };
-    fs::copy(&static_src, &static_lib_dst).expect("Failed to copy libdav1d.a");
+    std::fs::rename(&static_src, &static_lib_dst).expect("Failed to move libdav1d.a");
 
     // Copy headers
     let include_dir = install_dir.join("include/dav1d");
@@ -253,6 +271,24 @@ fn build_static_dav1d(build_dir: &Path) {
             version,
         ),
     ).expect("Failed to write dav1d.pc");
+    Ok(())
+}
+
+/// Clone dav1d source via git. This is the fallback if downloading the tarball fails.
+fn do_git_clone_dav1d(src_dir: &Path) -> io::Result<()> {
+    println!("cargo:warning=Cloning dav1d from videolan repository...");
+    let status = Command::new("git")
+        .args([
+            "clone",
+            "--depth=1",
+            "https://code.videolan.org/videolan/dav1d.git",
+        ])
+        .arg(src_dir.to_str().unwrap())
+        .status()?;
+    if !status.success() {
+        return Err(io::Error::other("Failed to clone dav1d from videolan"));
+    }
+    Ok(())
 }
 
 fn source() -> PathBuf {
@@ -360,7 +396,7 @@ fn build(sysroot: Option<&str>) -> io::Result<()> {
     let source_dir = source();
 
     // Build static libdav1d for AV1 support.
-    build_static_dav1d(&source_dir);
+    build_static_dav1d(&source_dir)?;
 
     if cfg!(target_os = "windows") {
         let path = env::var("PATH").unwrap_or_default();
