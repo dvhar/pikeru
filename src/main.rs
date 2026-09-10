@@ -1184,14 +1184,27 @@ impl Application for FilePicker {
                     self.items.remove(i);
                     self.end_idx -= 1;
                     self.displayed.remove(dix);
-                    // If the deleted item was being previewed, switch to an adjacent one
-                    if was_previewed {
-                        if let Some((ii, pv)) = self.find_adjacent_preview(dix) {
-                            self.view_image = (ii, pv);
+                    // Select an adjacent item so sequential deletes work smoothly.
+                    // While previewing, jump to the next previewable item; otherwise
+                    // just move to the next item in the list.
+                    let adjacent = if was_previewed {
+                        self.find_adjacent_preview(dix)
+                    } else {
+                        self.find_adjacent_item(dix).map(|ii| (ii, Preview::None))
+                    };
+                    match adjacent {
+                        Some((ii, pv)) => {
+                            if was_previewed {
+                                self.view_image = (ii, pv);
+                            }
+                            // Clear any remaining selections before selecting the new one
+                            self.items.iter_mut().for_each(|m| m.sel = false);
                             self.click_item(ii, false, false, true);
-                        } else {
+                        },
+                        None => {
                             self.view_image = (0, Preview::None);
-                        }
+                            self.items.iter_mut().for_each(|m| m.sel = false);
+                        },
                     }
                     self.update_searcher_items(self.items.iter().map(|item|item.path.clone()).collect());
                 }
@@ -3184,6 +3197,21 @@ impl FilePicker {
             if let pv @ Preview::Image(_) | pv @ Preview::Svg(_) | pv @ Preview::Gif(_) = self.items[ii].preview() {
                 return Some((ii, pv));
             }
+        }
+        None
+    }
+
+    /// Find the adjacent item at a given display index after deletion.
+    /// After removal, displayed[deleted_dix] holds what was previously at deleted_dix+1.
+    fn find_adjacent_item(self: &Self, deleted_dix: usize) -> Option<usize> {
+        let len = self.displayed.len();
+        // Try the item that shifted into this position (next in list)
+        if deleted_dix < len {
+            return Some(self.dtoi(deleted_dix));
+        }
+        // Fall back to previous item
+        if deleted_dix > 0 {
+            return Some(self.dtoi(deleted_dix - 1));
         }
         None
     }
