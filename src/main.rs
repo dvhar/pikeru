@@ -1710,8 +1710,14 @@ impl Application for FilePicker {
                         self.last_loaded = prev_di + 1;
                     }
                     let j = doneitem.items_idx;
-                    doneitem.display_idx = self.items[j].display_idx;
-                    self.items[j] = doneitem;
+                    let slot_di = match self.items.get(j) {
+                        Some(slot) if slot.path.is_empty() => Some(slot.display_idx),
+                        _ => None,
+                    };
+                    if let Some(di) = slot_di {
+                        doneitem.display_idx = di;
+                        self.items[j] = doneitem;
+                    }
                 }
             },
             Message::Goto => {
