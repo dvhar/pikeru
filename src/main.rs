@@ -1174,37 +1174,60 @@ impl Application for FilePicker {
             },
             Message::InoDelete(file) => {
                 if let Some(i) = self.items.iter().position(|x|x.path == file) {
-                    let dix = self.itod(i);
                     let was_previewed = self.view_image.0 == i;
+                    // The item may not be in displayed (e.g. hidden, or
+                    // filtered out by the search); find its display position
+                    // if it is.
+                    let was_viewed = self.displayed.iter().any(|&di| di == i);
+                    let dix = if was_viewed { self.itod(i) } else { 0 };
+                    // Only items *after* the deleted one shift down; using >=
+                    // would underflow when deleting the first item. Display
+                    // positions only shift if the deleted item was on screen.
                     self.items.iter_mut().for_each(|m|{
-                        if m.items_idx >= i { m.items_idx-=1 };
-                        if m.display_idx >= dix { m.display_idx-=1 };
+                        if m.items_idx > i { m.items_idx-=1 };
+                        if was_viewed && m.display_idx > dix { m.display_idx-=1 };
                     });
-                    self.displayed.iter_mut().for_each(|m| if *m >= i { *m-=1 });
+                    self.displayed.iter_mut().for_each(|m| if *m > i { *m-=1 });
                     self.items.remove(i);
-                    self.end_idx -= 1;
-                    self.displayed.remove(dix);
-                    // Select an adjacent item so sequential deletes work smoothly.
-                    // While previewing, jump to the next previewable item; otherwise
-                    // just move to the next item in the list.
-                    let adjacent = if was_previewed {
-                        self.find_adjacent_preview(dix)
-                    } else {
-                        self.find_adjacent_item(dix).map(|ii| (ii, Preview::None))
-                    };
-                    match adjacent {
-                        Some((ii, pv)) => {
-                            if was_previewed {
-                                self.view_image = (ii, pv);
-                            }
-                            // Clear any remaining selections before selecting the new one
-                            self.items.iter_mut().for_each(|m| m.sel = false);
-                            self.click_item(ii, false, false, true);
-                        },
-                        None => {
-                            self.view_image = (0, Preview::None);
-                            self.items.iter_mut().for_each(|m| m.sel = false);
-                        },
+                    if i < self.end_idx {
+                        self.end_idx -= 1;
+                    }
+                    // Keep view_image pointing at the same item when a
+                    // preceding item is removed.
+                    if !was_previewed && self.view_image.0 > i {
+                        self.view_image.0 -= 1;
+                    }
+                    if was_viewed {
+                        self.displayed.remove(dix);
+                        // Select an adjacent item so sequential deletes work
+                        // smoothly. While previewing, jump to the next
+                        // previewable item; otherwise just move to the next
+                        // item in the list.
+                        let adjacent = if was_previewed {
+                            self.find_adjacent_preview(dix)
+                        } else {
+                            self.find_adjacent_item(dix).map(|ii| (ii, Preview::None))
+                        };
+                        match adjacent {
+                            Some((ii, pv)) => {
+                                if was_previewed {
+                                    self.view_image = (ii, pv);
+                                }
+                                // Clear any remaining selections before selecting the new one
+                                self.items.iter_mut().for_each(|m| m.sel = false);
+                                self.click_item(ii, false, false, true);
+                            },
+                            None => {
+                                if was_previewed {
+                                    self.view_image = (0, Preview::None);
+                                }
+                                self.items.iter_mut().for_each(|m| m.sel = false);
+                            },
+                        }
+                    } else if was_previewed {
+                        // The previewed item was removed while it was not on
+                        // screen (hidden/filtered); close the preview.
+                        self.view_image = (0, Preview::None);
                     }
                     self.update_searcher_items(self.items.iter().map(|item|item.path.clone()).collect());
                 }
@@ -1596,9 +1619,11 @@ impl Application for FilePicker {
                 let mut still_running = false;
                 if let SearchEvent::Results(res, nav_id, num_items, term) = *res {
                     if nav_id == self.nav_id && !self.searchbar.is_empty() {
-                        self.displayed = res[..1000.min(res.len())].into_iter().enumerate().map(|(di,ii)|{
-                            self.items[ii.0].display_idx = di;
-                            ii.0
+                        self.displayed = res[..1000.min(res.len())].into_iter().enumerate().filter_map(|(di,ii)|{
+                            self.items.get_mut(ii.0).map(|item|{
+                                item.display_idx = di;
+                                ii.0
+                            })
                         }).collect();
                         let _ = self.update(Message::LoadThumbs);
                         if term != self.searchbar || num_items != self.items.len() {
@@ -1860,7 +1885,16 @@ impl Application for FilePicker {
                 match self.view_image.1 {
                     Preview::None => {},
                     _ => {
+                        // The previewed item may no longer exist (e.g. deleted
+                        // externally); bail out instead of indexing out of bounds.
+                        if self.view_image.0 >= self.items.len() {
+                            self.view_image = (0, Preview::None);
+                            return Command::none();
+                        }
                         let mut didx = self.itod(self.view_image.0) as i64;
+                        if self.displayed.is_empty() {
+                            return Command::none();
+                        }
                         while (step<0 && didx>0) || (step>0 && didx<((self.displayed.len()-1) as i64)) {
                             didx = (didx as i64) + step;
                             if didx<0 || didx as usize>=self.displayed.len() {
@@ -1970,7 +2004,7 @@ impl Application for FilePicker {
                         let (ino_sender, ino_receiver) = unbounded_channel::<Inochan>();
                         let (search_sender, search_receiver) = unbounded_channel::<SearchEvent>();
                         let (rec_sender, rec_receiver) = unbounded_channel::<RecMsg>();
-                        messager.send(Message::Init((fi_sender, ino_sender, search_sender, rec_sender))).await.unwrap();
+                        let _ = messager.send(Message::Init((fi_sender, ino_sender, search_sender, rec_sender))).await;
                         state = SubState::Ready((fi_reciever,ino_receiver,search_receiver, rec_receiver));
                     }
                     SubState::Ready((thumb_recv, ino_recv, search_recv, rec_recv)) => {
@@ -1979,10 +2013,10 @@ impl Application for FilePicker {
                                 if let Some(msg) = more {
                                     match msg {
                                         RecMsg::NextItems(items, nav_id) => {
-                                            messager.send(Message::NextRecurse(items, nav_id)).await.unwrap();
+                                            let _ = messager.send(Message::NextRecurse(items, nav_id)).await;
                                         }
                                         RecMsg::Done(_nav_id) => {
-                                            messager.send(Message::RecurseDone).await.unwrap();
+                                            let _ = messager.send(Message::RecurseDone).await;
                                         }
                                         _ => {}
                                     }
@@ -1990,14 +2024,18 @@ impl Application for FilePicker {
                             },
                             res = search_recv.recv() => {
                                 if let Some(search_event) = res {
-                                    messager.send(Message::SearchResult(Box::new(search_event))).await.unwrap();
+                                    let _ = messager.send(Message::SearchResult(Box::new(search_event))).await;
                                 }
                             },
-                            item = thumb_recv.recv() => messager.send(Message::NextItem(item.unwrap())).await.unwrap(),
+                            item = thumb_recv.recv() => {
+                                if let Some(item) = item {
+                                    let _ = messager.send(Message::NextItem(item)).await;
+                                }
+                            },
                             evt = ino_recv.recv() => {
                                 match evt {
-                                    Some(Inochan::Delete(file)) => messager.send(Message::InoDelete(file)).await.unwrap(),
-                                    Some(Inochan::Create(file)) => messager.send(Message::InoCreate(file)).await.unwrap(),
+                                    Some(Inochan::Delete(file)) => { let _ = messager.send(Message::InoDelete(file)).await; },
+                                    Some(Inochan::Create(file)) => { let _ = messager.send(Message::InoCreate(file)).await; },
                                     _ => {},
                                 }
                             }
@@ -2960,7 +2998,8 @@ impl FItem {
                         if let Some(handle) = icons.lookup_themed_icon(&mime_type, ext, thumbsize) {
                             self.thumb_handle = Some(handle);
                             self.ftype = FType::File;
-                            chan.send(self).unwrap();
+                            // The receiver is dropped when the app closes; don't panic.
+                            let _ = chan.send(self);
                             return;
                         }
                     }
@@ -3059,7 +3098,8 @@ impl FItem {
                 }
             }
         }
-        chan.send(self).unwrap();
+        // The receiver is dropped when the app closes; don't panic.
+        let _ = chan.send(self);
     }
 }
 
@@ -3087,8 +3127,13 @@ async fn watch_inotify(mut rx: UReceiver<Inochan>, tx: USender<Inochan>) {
         tokio::select! {
             eopt = estream.next() => {
                 match eopt {
-                    Some(eres) => {
-                        let ev = eres.unwrap();
+                    Some(Ok(ev)) => {
+                        // A watch is dropped automatically when its directory
+                        // disappears; forget it here so that removing the
+                        // (already invalid) descriptor later can't fail with EINVAL.
+                        if ev.mask.contains(EventMask::IGNORED) {
+                            watches.remove(&ev.wd);
+                        }
                         let mut moved_file = false;
                         if ev.cookie != last_moved {
                             moved_file = ev.mask.contains(EventMask::MOVED_TO);
@@ -3104,40 +3149,51 @@ async fn watch_inotify(mut rx: UReceiver<Inochan>, tx: USender<Inochan>) {
                             (Some(name),Some(dir)) => {
                                 let path = Path::new(&dir.name).join(name.clone()).to_string_lossy().to_string();
                                     if create_dir {
-                                        tx.send(Inochan::Create(path)).unwrap();
+                                        let _ = tx.send(Inochan::Create(path));
                                     } else if create_file {
                                         dir.created.insert(name);
                                     } else if write_file && dir.created.contains(&name) {
                                         dir.created.remove(&name);
-                                        tx.send(Inochan::Create(path)).unwrap();
+                                        let _ = tx.send(Inochan::Create(path));
                                     } else if deleted {
-                                        tx.send(Inochan::Delete(path)).unwrap();
+                                        let _ = tx.send(Inochan::Delete(path));
                                     } else if moved_file {
-                                        tx.send(Inochan::Create(path)).unwrap();
+                                        let _ = tx.send(Inochan::Create(path));
                                     }
                             },
                             _ => {},
                         }
                     },
-                    None => {},
+                    _ => {},
                 }
             }
             dirs = rx.recv() => {
                 match dirs {
                     Some(Inochan::NewDirs(ls)) => {
-                        watches.iter().for_each(|(wd,_)| estream.watches().remove(wd.clone()).unwrap());
+                        // Watches for directories that vanished on their own were
+                        // already removed by inotify; removing them again fails
+                        // with EINVAL, so ignore the errors.
+                        for wd in watches.keys() {
+                            let _ = estream.watches().remove(wd.clone());
+                        }
                         watches.clear();
-                        ls.iter().for_each(|dir|{
-                            watches.insert(estream.watches().add(dir,
+                        // Adding a watch can fail too (e.g. the directory was
+                        // removed in the meantime, or the inotify limit was
+                        // reached); skip it rather than killing the watcher.
+                        for dir in &ls {
+                            if let Ok(wd) = estream.watches().add(dir,
                                                                  WatchMask::CREATE|
                                                                  WatchMask::MOVED_TO|
                                                                  WatchMask::MOVED_FROM|
                                                                  WatchMask::CLOSE_WRITE|
-                                                                 WatchMask::DELETE).unwrap(),
-                                           Dir{name:dir.to_string(), created:Default::default()});
-                        });
+                                                                 WatchMask::DELETE) {
+                                watches.insert(wd, Dir{name:dir.to_string(), created:Default::default()});
+                            }
+                        }
                     },
-                    _ => {},
+                    Some(_) => {},
+                    // The app is closing; stop watching.
+                    None => break,
                 }
             }
         }
@@ -3230,15 +3286,17 @@ impl FilePicker {
 
     #[inline]
     fn itopos(self: &Self, i: usize) -> Option<Rectangle> {
+        // `i` (e.g. last_clicked.iidx) may refer to an item that was removed
+        // since it was clicked; return None instead of indexing out of bounds.
+        let di = self.items.get(i).map(|item| item.display_idx)?;
         if !self.conf.icon_view {
-            let di = self.itod(i);
             let mut rect = Rectangle::default();
             rect.y = di as f32 * ROW_HEIGHT + self.content_y;
             rect.height = ROW_HEIGHT;
             return Some(rect)
         }
         let rs = self.row_sizes.borrow();
-        let ri = self.itod(i) / self.pos_state.borrow().max_cols;
+        let ri = di / self.pos_state.borrow().max_cols;
         if rs.rows.len() > ri {
             let r = &rs.rows[ri];
             if r.ready {
@@ -3497,7 +3555,12 @@ impl FilePicker {
             }
         }
         self.searchbar.clear();
-        self.ino_updater.as_ref().unwrap().send(Inochan::NewDirs(inodirs)).unwrap();
+        // The inotify watcher may already be gone; don't crash if the send fails.
+        if let Some(sender) = self.ino_updater.clone() {
+            if sender.send(Inochan::NewDirs(inodirs)).is_err() {
+                self.ino_updater = None;
+            }
+        }
         self.items = ret;
         self.end_idx = self.items.len();
         self.items.iter_mut().enumerate().for_each(|(i,item)|item.items_idx = i);
@@ -3507,16 +3570,21 @@ impl FilePicker {
     }
 
     fn update_searcher_items(self: &mut Self, searchable: Vec<String>) {
-        if let Some(ref mut sender) = self.search_commander {
-            sender.send(SearchEvent::NewItems(searchable, self.nav_id)).unwrap();
-            sender.send(SearchEvent::NewView(self.displayed.clone())).unwrap();
+        // The search loop may be gone; drop the message rather than crash.
+        if let Some(sender) = self.search_commander.clone() {
+            if sender.send(SearchEvent::NewItems(searchable, self.nav_id)).is_err()
+                || sender.send(SearchEvent::NewView(self.displayed.clone())).is_err() {
+                self.search_commander = None;
+            }
         }
     }
 
     fn update_searcher_visible(self: &mut Self, displaylist: Vec<usize>) {
-        if let Some(ref mut sender) = self.search_commander {
-            sender.send(SearchEvent::NewView(displaylist)).unwrap();
-            sender.send(SearchEvent::Search(self.searchbar.clone())).unwrap();
+        if let Some(sender) = self.search_commander.clone() {
+            if sender.send(SearchEvent::NewView(displaylist)).is_err()
+                || sender.send(SearchEvent::Search(self.searchbar.clone())).is_err() {
+                self.search_commander = None;
+            }
         }
     }
 
@@ -4085,9 +4153,11 @@ async fn search_loop(mut commands: UReceiver<SearchEvent>,
                     }
                 }).collect::<Vec<_>>();
                 results.sort_by(|a,b|b.1.cmp(&a.1));
-                result_sender.send(SearchEvent::Results(results, nav_id, items.len(), term)).unwrap();
+                let _ = result_sender.send(SearchEvent::Results(results, nav_id, items.len(), term));
             },
-            _ => unreachable!(),
+            Some(_) => {},
+            // The command channel is closed when the app is closing.
+            None => break,
         }
     }
 }
@@ -4125,7 +4195,7 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                 dirs = new_dirs;
                 ignores = dirs.iter().map(|_|vec![top_ignore.clone()]).collect();
                 nav_id = nid;
-                selfy.send(RecMsg::FetchMore(nid, false)).unwrap();
+                let _ = selfy.send(RecMsg::FetchMore(nid, false));
             }
             Some(RecMsg::FetchMore(nid, get_items)) => {
                 if nid != nav_id {
@@ -4136,10 +4206,10 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                 let mut next_ignores = vec![];
                 let semantics = indexer.update(&dirs).await;
                 if !semantics.is_empty() {
-                    semchan.send(SearchEvent::AddSemantics(semantics)).unwrap();
+                    let _ = semchan.send(SearchEvent::AddSemantics(semantics));
                 }
                 if !recursive {
-                    results.send(RecMsg::Done(nid)).unwrap();
+                    let _ = results.send(RecMsg::Done(nid));
                     continue;
                 }
                 for (i, dir) in dirs.iter().enumerate() {
@@ -4176,10 +4246,10 @@ async fn recursive_add(mut updates: UReceiver<RecMsg>,
                 dirs = next_dirs;
                 ignores = next_ignores;
                 if !new_items.is_empty() {
-                    results.send(RecMsg::NextItems(new_items, nid)).unwrap();
+                    let _ = results.send(RecMsg::NextItems(new_items, nid));
                 }
                 if dirs.is_empty() {
-                    results.send(RecMsg::Done(nid)).unwrap();
+                    let _ = results.send(RecMsg::Done(nid));
                 }
             },
             _ => {},
