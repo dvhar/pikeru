@@ -1857,7 +1857,10 @@ impl Application for FilePicker {
                 match self.clicktimer.click(iidx, always_valid) {
                     ClickType::Single => self.click_item(iidx, self.shift_pressed, self.ctrl_pressed, iidx == self.view_image.0),
                     ClickType::Double => {
+                        self.items.iter_mut().for_each(|item| item.sel = false);
                         self.items[iidx].sel = true;
+                        self.pathbar = self.items[iidx].path.clone();
+                        self.enable_sel_button = true;
                         return self.update(Message::Select(SelType::Click));
                     },
                     ClickType::Pass => {},
