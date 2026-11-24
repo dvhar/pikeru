@@ -1363,6 +1363,7 @@ impl Application for FilePicker {
                 }).collect();
                 if self.searchbar.is_empty() {
                     self.displayed = displayed;
+                    self.prune_selection();
                     return self.update(Message::Sort(self.conf.sort_by));
                 } else {
                     self.update_searcher_visible(displayed);
@@ -1590,15 +1591,12 @@ impl Application for FilePicker {
                 if self.searchbar.is_empty() {
                     self.search_running = false;
                     self.recurse_state = RecState::Stop;
-                    let mut have_sel = false;
                     self.displayed = self.items[..self.end_idx].iter().enumerate().filter_map(|(i,item)| {
                         if self.conf.show_hidden || !item.hidden {
-                            have_sel |= item.sel;
                             Some(i)
                         } else {None}
                     }).collect();
-                    self.show_goto = have_sel && self.dirs.len() > 1;
-                    self.enable_sel_button = self.conf.saving() || self.conf.dir() || have_sel;
+                    self.prune_selection();
                     return self.update(Message::Sort(self.conf.sort_by));
                 } else if !self.search_running{
                     if let Some(sc) = self.search_commander.as_ref() {
@@ -1625,6 +1623,7 @@ impl Application for FilePicker {
                                 ii.0
                             })
                         }).collect();
+                        self.prune_selection();
                         let _ = self.update(Message::LoadThumbs);
                         if term != self.searchbar || num_items != self.items.len() {
                             if let Some(sc) = self.search_commander.as_ref() {
@@ -3314,6 +3313,33 @@ impl FilePicker {
         self.displayed.len() / maxcols + if self.displayed.len() % maxcols != 0 { 1 } else { 0 }
     }
 
+    /// Drop selections on items that are no longer in `displayed`.
+    ///
+    /// `sel` lives on `self.items`, but only items in `self.displayed` are
+    /// rendered. Whenever `displayed` is rebuilt (search filtering, clearing
+    /// the search, toggling hidden, sorting) an item can leave the view while
+    /// still flagged `sel`, which would let `Select`/`Delete`/`RunCmd` act on
+    /// files the user can't see. Call this right after assigning `displayed`
+    /// so the printed set always matches the visible selection.
+    ///
+    /// Recomputes `enable_sel_button` and `show_goto` from the surviving
+    /// (visible) selections so those reflect reality too.
+    fn prune_selection(self: &mut Self) {
+        // First drop selections on items that left the view, so `have_sel`
+        // reflects only what is actually visible.
+        let vis: Vec<usize> = self.displayed.iter().copied().collect();
+        for item in self.items.iter_mut() {
+            if item.sel && !vis.contains(&item.items_idx) {
+                item.sel = false;
+            }
+        }
+        let have_sel = self.displayed.iter().any(|&ii| {
+            self.items.get(ii).map(|item| item.sel).unwrap_or(false)
+        });
+        self.enable_sel_button = self.conf.saving() || self.conf.dir() || have_sel;
+        self.show_goto = have_sel && self.dirs.len() > 1;
+    }
+
     fn run_command(self: &mut Self, icmd: usize) -> Command<Message> {
         let cmd = &self.conf.cmds[icmd];
         if cmd.builtin && cmd.label == "Terminal" {
@@ -3566,6 +3592,7 @@ impl FilePicker {
         self.items.iter_mut().enumerate().for_each(|(i,item)|item.items_idx = i);
         self.displayed = displayed;
         self.enable_sel_button = self.conf.saving() || self.conf.dir();
+        self.prune_selection();
         self.update_searcher_items(self.items.iter().map(|item|item.path.clone()).collect());
     }
 
