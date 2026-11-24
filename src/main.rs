@@ -3341,6 +3341,12 @@ impl FilePicker {
         });
         self.enable_sel_button = self.conf.saving() || self.conf.dir() || have_sel;
         self.show_goto = have_sel && self.dirs.len() > 1;
+        // If the previewed item is no longer visible (search filter or hidden
+        // toggle), close the preview so we don't keep rendering a file that
+        // isn't in the current view.
+        if !matches!(self.view_image.1, Preview::None) && !vis.contains(&self.view_image.0) {
+            self.view_image = (0, Preview::None);
+        }
     }
 
     fn run_command(self: &mut Self, icmd: usize) -> Command<Message> {
