@@ -1733,14 +1733,20 @@ impl Application for FilePicker {
                         }
                         self.last_loaded = prev_di + 1;
                     }
+                    // The slot may have been replaced by a blank placeholder
+                    // (LoadThumbs) or removed outright by inotify while the
+                    // thumbnail decoded. Reconcile by identity rather than
+                    // requiring a blank slot, so items created by inotify can
+                    // land their icon too. `get(j)` still guards the shifted /
+                    // shrunk vec, which is what the out-of-bounds crash was.
                     let j = doneitem.items_idx;
-                    let slot_di = match self.items.get(j) {
-                        Some(slot) if slot.path.is_empty() => Some(slot.display_idx),
-                        _ => None,
+                    let target = match self.items.get(j) {
+                        Some(slot) if slot.path == doneitem.path || slot.path.is_empty() => Some(j),
+                        _ => self.items.iter().position(|it| it.path == doneitem.path),
                     };
-                    if let Some(di) = slot_di {
-                        doneitem.display_idx = di;
-                        self.items[j] = doneitem;
+                    if let Some(k) = target {
+                        doneitem.display_idx = self.items[k].display_idx;
+                        self.items[k] = doneitem;
                     }
                 }
             },
