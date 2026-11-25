@@ -211,8 +211,6 @@ where
         _cursor: Cursor,
         viewport: &Rectangle,
     ) {
-        use std::f32;
-
         let bounds = layout.bounds();
         let option_height = self.text_size + (self.padding * 2.0);
         let offset = viewport.y - bounds.y;

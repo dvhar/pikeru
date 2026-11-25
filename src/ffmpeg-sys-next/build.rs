@@ -1592,6 +1592,20 @@ fn main() {
         // https://github.com/rust-lang/rust-bindgen/issues/550
         .blocklist_type("max_align_t")
         .blocklist_function("_.*")
+        // Blocklist libc functions that bindgen re-declares with `libc::c_ulong`
+        // instead of `usize`/`isize`. Since Rust 1.99 these collide with the
+        // runtime symbols std relies on, triggering
+        // `suspicious_runtime_symbol_definitions`.
+        // @see https://github.com/zmwangx/rust-ffmpeg-sys/pull/131
+        .blocklist_function("^memcpy$")
+        .blocklist_function("^memmove$")
+        .blocklist_function("^memset$")
+        .blocklist_function("^memcmp$")
+        .blocklist_function("^strlen$")
+        .blocklist_function("^malloc$")
+        .blocklist_function("^free$")
+        .blocklist_function("^realloc$")
+        .blocklist_function("^bcmp$")
         // Blocklist functions with u128 in signature.
         // https://github.com/zmwangx/rust-ffmpeg-sys/issues/1
         // https://github.com/rust-lang/rust-bindgen/issues/1549
